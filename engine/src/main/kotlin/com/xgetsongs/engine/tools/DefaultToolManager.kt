@@ -64,7 +64,13 @@ class DefaultToolManager(
         } catch (e: IOException) {
             throw ToolException("yt-dlp를 설치하지 못했습니다: ${e.message}")
         } finally {
-            withContext(NonCancellable + Dispatchers.IO) { Files.deleteIfExists(staged) }
+            // Best effort: a stale yt-dlp.new.exe is harmless (the next install overwrites it and ToolLocator ignores it).
+            withContext(NonCancellable + Dispatchers.IO) {
+                try {
+                    Files.deleteIfExists(staged)
+                } catch (ignored: IOException) {
+                }
+            }
         }
     }
 

@@ -160,15 +160,26 @@ class DefaultToolManagerTest {
     fun installReplacesAnExistingBinaryOnlyAfterTheNewOneRuns() = runTest {
         Files.createDirectories(binDir)
         Files.writeString(binDir.resolve("yt-dlp.exe"), "old")
+        var textWhenVerified: String? = null
+        val runner = FakeProcessRunner { command, onStdout, _ ->
+            if (command.first().endsWith("yt-dlp.new.exe")) {
+                textWhenVerified = Files.readString(binDir.resolve("yt-dlp.exe"))
+                onStdout("2026.10.01")
+                0
+            } else {
+                1
+            }
+        }
         val manager = DefaultToolManager(
             ToolPathProvider { paths() },
-            runnerFor(mapOf("yt-dlp" to "2026.10.01")),
+            runner,
             binDir,
             fetch = { ByteArray(2_000_000) },
         )
 
         manager.installYtDlp()
 
+        assertEquals("old", textWhenVerified)
         assertEquals(2_000_000L, Files.size(binDir.resolve("yt-dlp.exe")))
         assertFalse(Files.exists(binDir.resolve("yt-dlp.new.exe")))
         val names = Files.list(binDir).use { stream -> stream.map { it.fileName.toString() }.toList() }
@@ -189,6 +200,26 @@ class DefaultToolManagerTest {
         val error = assertFailsWith<ToolException> { manager.installYtDlp() }
 
         assertTrue(error.message!!.contains("\uc124\uce58\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4"))
+    }
+
+    @Test
+    fun installReportsAMoveFailureAndKeepsTheOldBinary() = runTest {
+        val target = binDir.resolve("yt-dlp.exe")
+        Files.createDirectories(target)
+        Files.writeString(target.resolve("inner.txt"), "keep")
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runnerFor(mapOf("yt-dlp" to "2026.10.01")),
+            binDir,
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        val error = assertFailsWith<ToolException> { manager.installYtDlp() }
+
+        assertTrue(error.message!!.contains("\uc124\uce58\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4"))
+        assertTrue(Files.isDirectory(target))
+        assertEquals("keep", Files.readString(target.resolve("inner.txt")))
+        assertFalse(Files.exists(binDir.resolve("yt-dlp.new.exe")))
     }
 
     @Test
@@ -230,6 +261,9 @@ class DefaultToolManagerTest {
             binDir,
         )
 
-        assertFailsWith<ToolException> { manager.updateYtDlp() }
+        val error = assertFailsWith<ToolException> { manager.updateYtDlp() }
+
+        assertTrue(error.message!!.contains("\uc2e4\ud589\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4"))
+        assertTrue(error.message!!.contains("Cannot run program"))
     }
 }
