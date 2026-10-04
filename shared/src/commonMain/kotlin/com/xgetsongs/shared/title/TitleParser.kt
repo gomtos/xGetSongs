@@ -99,9 +99,11 @@ object TitleParser {
         return sb.toString().trim()
     }
 
-    /** Drops leading emoji and symbols; stops at a letter, digit, bracket or quote. */
+    /** Drops leading emoji and pictographs (and whitespace); anything else, such as `&`, `*` or `$`, is kept. */
     private fun stripLeadingJunk(s: String): String {
-        val i = s.indexOfFirst { it.isLetterOrDigit() || it == '[' || it == '(' || it in ALL_QUOTES }
+        val i = s.indexOfFirst {
+            !(it.isWhitespace() || it.isSurrogate() || it == '\uFE0F' || it == '\u200D' || it in '\u2190'..'\u2BFF')
+        }
         return if (i <= 0) s else s.substring(i)
     }
 

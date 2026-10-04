@@ -169,4 +169,21 @@ class TitleParserTest {
     @Test
     fun unknownArtistWhenNothingIsAvailable() =
         assertParsed("Some Song", TitleParser.UNKNOWN_ARTIST, "Some Song", Confidence.LOW)
+
+    // ---- ASCII symbols at the start of an artist name are not junk -------------------------
+
+    @Test
+    fun ampersandStaysInArtistName() = assertParsed("&TEAM 'Go in Blind' MV", "&TEAM", "Go in Blind")
+
+    @Test
+    fun asteriskStaysInArtistName() = assertParsed("*NSYNC - Bye Bye Bye", "*NSYNC", "Bye Bye Bye")
+
+    @Test
+    fun dollarSignsStayInArtistName() = assertParsed("\$uicideboy\$ - Song", "\$uicideboy\$", "Song")
+
+    @Test
+    fun exclamationMarksAloneAreAnArtistName() = assertParsed("!!! - Song", "!!!", "Song")
+
+    @Test
+    fun emojiWithVariationSelectorIsStillStripped() = assertParsed("\u2764\uFE0F Artist - Song", "Artist", "Song")
 }
