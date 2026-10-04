@@ -11,6 +11,7 @@ import com.xgetsongs.shared.api.ResolvedItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -22,6 +23,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.AccessDeniedException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -33,10 +35,13 @@ private class FatalJobException(message: String) : Exception(message)
 
 private val DISK_FULL_MARKERS = listOf("no space left", "not enough space", "disk full", "공간이 부족")
 
-/** The JDK reports a full disk only through the message of a plain [IOException]. */
+/**
+ * The JDK reports a full disk only through text: the reason of a [FileSystemException] (its message also holds the
+ * file names, which must not be matched), else the message of any other [IOException].
+ */
 private fun isDiskFull(e: IOException): Boolean {
-    val message = e.message?.lowercase() ?: return false
-    return DISK_FULL_MARKERS.any { it in message }
+    val text = (if (e is FileSystemException) e.reason else e.message).orEmpty().lowercase()
+    return DISK_FULL_MARKERS.any { it in text }
 }
 
 class DefaultDownloadService(
@@ -46,6 +51,8 @@ class DefaultDownloadService(
     private val retryDelays: List<Duration> = listOf(2.seconds, 4.seconds),
 ) : DownloadService {
 
+    // ATOMIC is intentional: a job cancelled before its first dispatch must still run its finally, sending JobDone and closing the channel.
+    @OptIn(DelicateCoroutinesApi::class)
     override fun start(request: DownloadRequest): JobHandle {
         val events = Channel<JobEvent>(Channel.UNLIMITED)
         val job = scope.launch(start = CoroutineStart.ATOMIC) { runJob(request, events) }

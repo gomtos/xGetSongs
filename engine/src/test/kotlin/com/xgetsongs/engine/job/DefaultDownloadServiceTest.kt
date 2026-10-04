@@ -31,12 +31,15 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import java.nio.file.AccessDeniedException
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DefaultDownloadServiceTest {
@@ -345,11 +348,7 @@ class DefaultDownloadServiceTest {
         val events = handle.collect()
 
         assertEquals(JobStatus.CANCELLED, done(events).status)
-        if (Files.exists(tempRoot)) {
-            Files.list(tempRoot).use { stream ->
-                assertEquals(0, stream.filter { it.fileName.toString().startsWith("job-") }.count())
-            }
-        }
+        assertFalse(Files.exists(tempRoot), "no work folder is created when the job is cancelled before it starts")
     }
 
     @Test
@@ -411,5 +410,27 @@ class DefaultDownloadServiceTest {
             assertEquals(1, events.count { it is JobEvent.JobDone })
             assertTrue(events.last() is JobEvent.JobDone)
         }
+    }
+
+    @Test
+    fun aFileNamedLikeADiskFullErrorDoesNotAbortTheJob() = runTest {
+        // FileAlreadyExistsException's message is just the path: a file name containing disk-full words is not a full disk.
+        val sink = failingSink(FileAlreadyExistsException("C:/out/001 A - Disk Full No Space Left.mp3"))
+
+        val events = service(succeeding).start(request(item(1), item(2), sink = sink)).collect()
+
+        assertEquals(2, events.filterIsInstance<JobEvent.ItemFailed>().size)
+        assertEquals(JobStatus.COMPLETED, done(events).status)
+        assertEquals(2, succeeding.commands.size)
+    }
+
+    @Test
+    fun aRealDiskFullReasonInsideAFileSystemExceptionAbortsTheJob() = runTest {
+        val sink = failingSink(FileSystemException("C:/out/x.mp3", null, "No space left on device"))
+
+        val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
+
+        assertEquals(JobStatus.FAILED, done(events).status)
+        assertEquals(1, succeeding.commands.size)
     }
 }
