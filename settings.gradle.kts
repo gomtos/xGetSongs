@@ -18,3 +18,4 @@ dependencyResolutionManagement {
 include(":shared")
 include(":engine")
 include(":server")
+include(":app")
