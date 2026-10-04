@@ -59,4 +59,27 @@ class ErrorClassifierTest {
     fun emptyStderrStillGivesAMessage() {
         assertTrue(classify().message.isNotBlank())
     }
+
+    @Test
+    fun rateLimitedSessionIsTransientEvenThoughItSaysVideoUnavailable() {
+        val failure = classify(
+            "ERROR: [youtube] abc: Video unavailable. This content isn't available, try again later. " +
+                "The current session has been rate-limited by YouTube for up to an hour.",
+        )
+        assertEquals(FailureKind.TRANSIENT, failure.kind)
+        assertTrue(failure.message.contains("rate-limited"))
+    }
+
+    @Test
+    fun plainVideoUnavailableIsStillUnavailable() {
+        assertEquals(FailureKind.UNAVAILABLE, classify("ERROR: [youtube] abc: Video unavailable").kind)
+    }
+
+    @Test
+    fun fatalStillWinsOverRateLimit() {
+        assertEquals(
+            FailureKind.FATAL,
+            classify("ERROR: try again later", "OSError: [Errno 28] No space left on device").kind,
+        )
+    }
 }

@@ -24,6 +24,9 @@ object ErrorClassifier {
         "permission denied" to "출력 폴더에 쓸 권한이 없습니다.",
     )
 
+    /** A rate-limited session also says "Video unavailable", so this must be checked before [UNAVAILABLE]. */
+    private val RATE_LIMITED = listOf("try again later", "rate-limited", "rate limited")
+
     private val UNAVAILABLE = listOf(
         "private video" to "비공개 영상",
         "sign in to confirm your age" to "연령 제한 영상",
@@ -50,6 +53,7 @@ object ErrorClassifier {
     fun classify(stderrLines: List<String>): Failure {
         val text = stderrLines.joinToString("\n").lowercase()
         FATAL.firstOrNull { text.contains(it.first) }?.let { return Failure(FailureKind.FATAL, it.second) }
+        if (RATE_LIMITED.any { text.contains(it) }) return Failure(FailureKind.TRANSIENT, summarize(stderrLines))
         UNAVAILABLE.firstOrNull { text.contains(it.first) }?.let { return Failure(FailureKind.UNAVAILABLE, it.second) }
         val message = summarize(stderrLines)
         if (TRANSIENT.any { text.contains(it) }) return Failure(FailureKind.TRANSIENT, message)
