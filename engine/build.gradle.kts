@@ -17,5 +17,18 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    // Tests that need the real yt-dlp and the network run only through integrationTest.
+    useJUnitPlatform { excludeTags("integration") }
+}
+
+val integrationTest by tasks.registering(Test::class) {
+    description = "Runs the tests that talk to the real YouTube with the real yt-dlp and ffmpeg."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("integration") }
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed")
+    }
 }
