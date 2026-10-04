@@ -1,6 +1,7 @@
 package com.xgetsongs.app.state
 
 import com.xgetsongs.shared.api.JobStatus
+import com.xgetsongs.shared.filename.FilenameFormatter
 
 /** The text shown in an item's status cell. */
 fun statusLabel(status: ItemStatus): String = when (status) {
@@ -27,3 +28,10 @@ fun summaryText(state: UiState): String? {
 
 /** The zero-padded rank shown in the list, e.g. `007`. */
 fun rankLabel(rank: Int): String = rank.toString().padStart(3, '0')
+
+/** What the rank text field may hold while the user types: digits only, at most three of them. */
+fun rankInputText(raw: String): String = raw.filter(Char::isDigit).take(3)
+
+/** The rank typed so far, kept within the valid range; null while the field is empty. */
+fun rankFromInput(text: String): Int? =
+    text.toIntOrNull()?.coerceIn(FilenameFormatter.MIN_RANK, FilenameFormatter.MAX_RANK)

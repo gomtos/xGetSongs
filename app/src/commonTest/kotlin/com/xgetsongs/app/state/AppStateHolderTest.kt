@@ -423,4 +423,42 @@ class AppStateHolderTest {
         assertEquals(listOf(3), state.failedRanks)
         assertTrue(state.error.orEmpty().contains("boom"))
     }
+
+    @Test
+    fun aFailedSecondLookupKeepsThePreviewUsable() = runTest {
+        val (api, holder) = resolved()
+        val rowsBefore = holder.state.value.rows
+        api.resolveError = ApiError("x")
+
+        holder.onInput(playlistId)
+        holder.resolve()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.PREVIEW, state.phase)
+        assertEquals(rowsBefore.map { it.item.rank }, state.rows.map { it.item.rank })
+        assertEquals(rowsBefore.map { it.status }, state.rows.map { it.status })
+        assertEquals("x", state.error)
+    }
+
+    @Test
+    fun aFailedLookupAfterAFinishedJobKeepsTheResults() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+        api.resolveError = ApiError("x")
+
+        holder.resolve()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.FINISHED, state.phase)
+        assertEquals(JobSummary(1, 0, 0), state.summary)
+        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals("x", state.error)
+    }
 }

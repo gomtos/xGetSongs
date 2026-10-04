@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.xgetsongs.app.state.Phase
 import com.xgetsongs.app.state.UiState
 import com.xgetsongs.shared.api.ToolInfo
 
@@ -42,7 +43,7 @@ fun ToolsPanel(state: UiState, onInstall: () -> Unit, onUpdate: () -> Unit) {
                 if (!tools.ytDlp.found) {
                     Button(enabled = !state.toolBusy, onClick = { confirmInstall = true }) { Text("yt-dlp 설치") }
                 } else {
-                    OutlinedButton(enabled = !state.toolBusy, onClick = onUpdate) { Text("yt-dlp 업데이트") }
+                    OutlinedButton(enabled = !state.toolBusy && state.phase != Phase.RUNNING, onClick = onUpdate) { Text("yt-dlp 업데이트") }
                 }
                 if (!tools.ffmpeg.found) {
                     Text(

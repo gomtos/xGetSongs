@@ -120,6 +120,7 @@ class AppStateHolder(
     }
 
     private fun doResolve(input: String) {
+        val before = _state.value
         _state.update { it.copy(phase = Phase.RESOLVING, error = null) }
         scope.launch {
             try {
@@ -136,7 +137,9 @@ class AppStateHolder(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _state.update { it.copy(phase = Phase.IDLE, error = failureMessage(e)) }
+                // A failed lookup must not strip the buttons from a preview that is still on screen.
+                val phase = if (before.resolved != null) before.phase else Phase.IDLE
+                _state.update { it.copy(phase = phase, error = failureMessage(e)) }
             }
         }
     }

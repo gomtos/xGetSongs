@@ -12,6 +12,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.xgetsongs.app.state.UiState
 import com.xgetsongs.shared.api.InputKind
@@ -57,7 +58,13 @@ fun ResolveInfo(state: UiState, onSwitchToVideoOnly: () -> Unit) {
     ) {
         val title = resolved.playlistTitle ?: "단일 영상"
         val count = if (resolved.kind == InputKind.PLAYLIST) " · ${resolved.items.size}개" else ""
-        Text(title + count, style = MaterialTheme.typography.titleMedium)
+        Text(
+            title + count,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f, fill = false),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (resolved.truncated) {
             Text("999개를 넘어 앞 999개만 표시합니다.", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 4.dp))
         }

@@ -11,13 +11,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.state.Phase
 import com.xgetsongs.app.state.UiState
+import com.xgetsongs.app.state.rankFromInput
+import com.xgetsongs.app.state.rankInputText
 import com.xgetsongs.shared.api.InputKind
 import kotlinx.coroutines.launch
 
@@ -25,6 +32,11 @@ import kotlinx.coroutines.launch
 fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (String) -> String?) {
     val scope = rememberCoroutineScope()
     val enabled = state.phase != Phase.RUNNING
+    // The raw text is kept here so the field can be empty while the user retypes the number.
+    var rankText by remember { mutableStateOf(state.singleRank.toString()) }
+    LaunchedEffect(state.singleRank) {
+        if (rankFromInput(rankText) != state.singleRank) rankText = state.singleRank.toString()
+    }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -59,8 +71,11 @@ fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (St
             }
             if (state.resolved?.kind == InputKind.VIDEO) {
                 OutlinedTextField(
-                    value = state.singleRank.toString(),
-                    onValueChange = { holder.onSingleRank(it.filter(Char::isDigit).toIntOrNull() ?: 1) },
+                    value = rankText,
+                    onValueChange = { raw ->
+                        rankText = rankInputText(raw)
+                        rankFromInput(rankText)?.let(holder::onSingleRank)
+                    },
                     label = { Text("순위 번호") },
                     singleLine = true,
                     enabled = enabled,

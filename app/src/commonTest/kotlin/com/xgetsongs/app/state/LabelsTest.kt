@@ -38,4 +38,25 @@ class LabelsTest {
         assertEquals("007", rankLabel(7))
         assertEquals("999", rankLabel(999))
     }
+
+    @Test
+    fun rankInputKeepsOnlyUpToThreeDigits() {
+        assertEquals("123", rankInputText("12a3"))
+        assertEquals("500", rankInputText("5000"))
+        assertEquals("", rankInputText(""))
+        assertEquals("", rankInputText("abc"))
+    }
+
+    @Test
+    fun rankFromInputIsNullForEmptyText() {
+        assertNull(rankFromInput(""))
+    }
+
+    @Test
+    fun rankFromInputClampsToTheValidRange() {
+        assertEquals(1, rankFromInput("0"))
+        assertEquals(7, rankFromInput("7"))
+        assertEquals(999, rankFromInput("999"))
+        assertEquals(1, rankFromInput("000"))
+    }
 }
