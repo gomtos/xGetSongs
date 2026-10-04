@@ -7,6 +7,7 @@ import com.xgetsongs.shared.api.ActionResult
 import com.xgetsongs.shared.api.ToolInfo
 import com.xgetsongs.shared.api.ToolsStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -46,25 +47,39 @@ class DefaultToolManager(
             throw ToolException("yt-dlp 다운로드에 실패했습니다: ${e.message}")
         }
         if (bytes.size < MIN_YTDLP_BYTES) throw ToolException("내려받은 파일이 너무 작습니다. 다시 시도하세요.")
-        withContext(Dispatchers.IO) {
-            Files.createDirectories(binDir)
-            val partial = binDir.resolve("yt-dlp.exe.download")
-            Files.write(partial, bytes)
-            Files.move(partial, binDir.resolve("yt-dlp.exe"), StandardCopyOption.REPLACE_EXISTING)
+        // Stage next to the target, verify that it runs, and only then replace yt-dlp.exe, so a bad
+        // download never shadows (or overwrites) a working binary.
+        val staged = binDir.resolve("yt-dlp.new.exe")
+        try {
+            withContext(Dispatchers.IO) {
+                Files.createDirectories(binDir)
+                Files.write(staged, bytes)
+            }
+            val version = firstLine(staged, "--version")
+                ?: throw ToolException("내려받은 yt-dlp를 실행할 수 없습니다.")
+            withContext(Dispatchers.IO) {
+                Files.move(staged, binDir.resolve("yt-dlp.exe"), StandardCopyOption.REPLACE_EXISTING)
+            }
+            return ActionResult("yt-dlp $version 을(를) 설치했습니다.")
+        } catch (e: IOException) {
+            throw ToolException("yt-dlp를 설치하지 못했습니다: ${e.message}")
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) { Files.deleteIfExists(staged) }
         }
-        val version = status().ytDlp.version
-            ?: throw ToolException("설치한 yt-dlp를 실행할 수 없습니다.")
-        return ActionResult("yt-dlp $version 을(를) 설치했습니다.")
     }
 
     override suspend fun updateYtDlp(): ActionResult {
         val ytDlp = tools.current().ytDlp ?: throw ToolException("yt-dlp가 설치되어 있지 않습니다.")
         val lines = mutableListOf<String>()
-        val exitCode = runner.run(
-            listOf(ytDlp.toString(), "--ignore-config", "-U"),
-            onStdout = { synchronized(lines) { lines += it } },
-            onStderr = { synchronized(lines) { lines += it } },
-        )
+        val exitCode = try {
+            runner.run(
+                listOf(ytDlp.toString(), "--ignore-config", "-U"),
+                onStdout = { synchronized(lines) { lines += it } },
+                onStderr = { synchronized(lines) { lines += it } },
+            )
+        } catch (e: IOException) {
+            throw ToolException("yt-dlp를 실행할 수 없습니다: ${e.message}")
+        }
         val output = synchronized(lines) { lines.filter { it.isNotBlank() } }
         if (exitCode != 0) {
             throw ToolException(output.lastOrNull() ?: "yt-dlp 업데이트에 실패했습니다.")

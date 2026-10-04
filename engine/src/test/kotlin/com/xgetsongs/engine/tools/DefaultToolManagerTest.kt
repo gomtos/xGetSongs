@@ -24,7 +24,7 @@ class DefaultToolManagerTest {
 
     private fun runnerFor(outputs: Map<String, String>, exitCode: Int = 0) =
         FakeProcessRunner { command, onStdout, _ ->
-            val tool = Path.of(command.first()).fileName.toString().removeSuffix(".exe")
+            val tool = Path.of(command.first()).fileName.toString().substringBefore('.')
             outputs[tool]?.lines()?.forEach(onStdout)
             if (outputs.containsKey(tool)) exitCode else 1
         }
@@ -140,6 +140,58 @@ class DefaultToolManagerTest {
     }
 
     @Test
+    fun installRejectsADownloadThatDoesNotRunAndKeepsTheOldBinary() = runTest {
+        Files.createDirectories(binDir)
+        Files.writeString(binDir.resolve("yt-dlp.exe"), "old")
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runnerFor(emptyMap()),
+            binDir,
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        assertFailsWith<ToolException> { manager.installYtDlp() }
+
+        assertEquals("old", Files.readString(binDir.resolve("yt-dlp.exe")))
+        assertFalse(Files.exists(binDir.resolve("yt-dlp.new.exe")))
+    }
+
+    @Test
+    fun installReplacesAnExistingBinaryOnlyAfterTheNewOneRuns() = runTest {
+        Files.createDirectories(binDir)
+        Files.writeString(binDir.resolve("yt-dlp.exe"), "old")
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runnerFor(mapOf("yt-dlp" to "2026.10.01")),
+            binDir,
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        manager.installYtDlp()
+
+        assertEquals(2_000_000L, Files.size(binDir.resolve("yt-dlp.exe")))
+        assertFalse(Files.exists(binDir.resolve("yt-dlp.new.exe")))
+        val names = Files.list(binDir).use { stream -> stream.map { it.fileName.toString() }.toList() }
+        assertEquals(listOf("yt-dlp.exe"), names)
+    }
+
+    @Test
+    fun installReportsFileSystemFailuresAsToolExceptions() = runTest {
+        val blocker = root.resolve("blocker")
+        Files.writeString(blocker, "not a directory")
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runnerFor(mapOf("yt-dlp" to "2026.10.01")),
+            blocker.resolve("bin"),
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        val error = assertFailsWith<ToolException> { manager.installYtDlp() }
+
+        assertTrue(error.message!!.contains("\uc124\uce58\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4"))
+    }
+
+    @Test
     fun updateRunsYtDlpSelfUpdate() = runTest {
         val runner = runnerFor(mapOf("yt-dlp" to "Current version: 2026.10.01\nUpdated yt-dlp to 2026.11.02"))
         val manager = DefaultToolManager(ToolPathProvider { paths() }, runner, binDir)
@@ -166,6 +218,17 @@ class DefaultToolManagerTest {
     @Test
     fun updateNeedsAnInstalledYtDlp() = runTest {
         val manager = DefaultToolManager(ToolPathProvider { paths(ytDlp = false) }, runnerFor(emptyMap()), binDir)
+
+        assertFailsWith<ToolException> { manager.updateYtDlp() }
+    }
+
+    @Test
+    fun updateReportsAnExecutableThatCannotBeStarted() = runTest {
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            FakeProcessRunner { _, _, _ -> throw IOException("Cannot run program") },
+            binDir,
+        )
 
         assertFailsWith<ToolException> { manager.updateYtDlp() }
     }
