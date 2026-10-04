@@ -28,11 +28,11 @@ class TitleParserTest {
 
     @Test
     fun curlyQuotes() =
-        assertParsed("RESCENE (리센느) 'LOVE ATTACK' Official MV", "RESCENE (리센느)", "LOVE ATTACK")
+        assertParsed("RESCENE (리센느) ‘LOVE ATTACK’ Official MV", "RESCENE (리센느)", "LOVE ATTACK")
 
     @Test
     fun curlyQuotesWithApostropheInside() =
-        assertParsed("ILLIT (아일릿) 'It's Me' Official MV", "ILLIT (아일릿)", "It's Me")
+        assertParsed("ILLIT (아일릿) ‘It’s Me’ Official MV", "ILLIT (아일릿)", "It’s Me")
 
     @Test
     fun dashSeparatorWithTrailingMv() =
@@ -69,7 +69,7 @@ class TitleParserTest {
     @Test
     fun trailingBracketBlockAndPipeTail() =
         assertParsed(
-            "성시경 - 너의 모든 순간 [유희열의 스케치북/You Heeyeol's Sketchbook] | KBS 210528 방송",
+            "성시경 - 너의 모든 순간 [유희열의 스케치북/You Heeyeol’s Sketchbook] | KBS 210528 방송",
             "성시경", "너의 모든 순간",
         )
 
@@ -96,7 +96,7 @@ class TitleParserTest {
 
     @Test
     fun otherReferenceTitles() {
-        assertParsed("BIGBANG - 'BiiiG' M/V", "BIGBANG", "BiiiG")
+        assertParsed("BIGBANG - ‘BiiiG’ M/V", "BIGBANG", "BiiiG")
         assertParsed("[MV] 한로로 (HANRORO) - 사랑하게 될 거야 (Landing in Love)", "한로로 (HANRORO)", "사랑하게 될 거야 (Landing in Love)")
         assertParsed("Hearts2Hearts 하츠투하츠 'RUDE!' MV", "Hearts2Hearts 하츠투하츠", "RUDE!")
         assertParsed("IU '이 별로부터(Unknown Planet)' MV", "IU", "이 별로부터(Unknown Planet)")
