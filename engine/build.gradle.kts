@@ -24,6 +24,8 @@ tasks.test {
 val integrationTest by tasks.registering(Test::class) {
     description = "Runs the tests that talk to the real YouTube with the real yt-dlp and ffmpeg."
     group = "verification"
+    // The result depends on the installed tools and the network, which Gradle cannot see, so never skip a run.
+    outputs.upToDateWhen { false }
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath
     useJUnitPlatform { includeTags("integration") }
