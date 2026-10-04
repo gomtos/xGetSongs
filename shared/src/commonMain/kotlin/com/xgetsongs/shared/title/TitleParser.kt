@@ -16,12 +16,6 @@ object TitleParser {
     private const val TOPIC_SUFFIX = " - Topic"
     private const val VEVO_SUFFIX = "vevo"
 
-    private val LEADING_TAGS = setOf(
-        "mv", "m/v", "official mv", "official m/v", "official video", "official audio",
-        "official music video", "music video", "audio", "lyric video", "performance video",
-        "가사", "뮤직비디오",
-    )
-
     /** Longest first so "Official Music Video" is removed as a whole, not just "Music Video". */
     private val TRAILING_NOISE = listOf(
         "Official Music Video", "Official Video", "Official Audio", "Official MV", "Official M/V",
@@ -107,11 +101,14 @@ object TitleParser {
         return if (i <= 0) s else s.substring(i)
     }
 
+    /**
+     * Drops a leading `[...]` block of any kind (`[MV]`, `[LIVE]`, `[#2024MAMA]`, `[Ballad]`); stacked
+     * tags are removed one per pass of [clean]. A block that is the whole text is kept.
+     */
     private fun stripLeadingTag(s: String): String {
         if (!s.startsWith("[")) return s
         val end = s.indexOf(']')
         if (end < 0) return s
-        if (s.substring(1, end).trim().lowercase() !in LEADING_TAGS) return s
         return s.substring(end + 1).trim().ifEmpty { s }
     }
 

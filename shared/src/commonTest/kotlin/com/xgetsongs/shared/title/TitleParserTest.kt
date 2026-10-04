@@ -186,4 +186,56 @@ class TitleParserTest {
 
     @Test
     fun emojiWithVariationSelectorIsStillStripped() = assertParsed("\u2764\uFE0F Artist - Song", "Artist", "Song")
+
+    // ---- any leading [..] tag is dropped, not only known ones ------------------------------
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_mama() =
+        assertParsed(
+            "[#2024MAMA] G-DRAGON - HOME SWEET HOME (feat. Taeyang, Daesung) | Mnet 241123",
+            "G-DRAGON", "HOME SWEET HOME (feat. Taeyang, Daesung)",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_live() =
+        assertParsed(
+            "[LIVE] 이창섭 - 천상연 (선녀외전 OST) 라이브 (Full. ver)",
+            "이창섭", "천상연 (선녀외전 OST) 라이브 (Full. ver)",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_liveWithShowName() =
+        assertParsed(
+            "[LIVE] Car, the garden - 그대 작은 나의 세상이 되어 | 2026 단독공연 'BLUE HEART'",
+            "Car, the garden", "그대 작은 나의 세상이 되어",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_programName() =
+        assertParsed(
+            "[DJ티비씨] 폴킴(Paul Kim) - 모든 날, 모든 순간 \u266C #비긴어게인3 #DJ티비씨",
+            "폴킴(Paul Kim)", "모든 날, 모든 순간 \u266C #비긴어게인3 #DJ티비씨",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_genre() =
+        assertParsed(
+            "[Ballad] 임현정 - 사랑은 봄비처럼... 이별은 겨울비처럼...",
+            "임현정", "사랑은 봄비처럼... 이별은 겨울비처럼...",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_preRelease() =
+        assertParsed(
+            "[선공개] PLAVE - 이 밤을 빌려 말해요 MV (영화 '오늘 밤, 세계에서 이 사랑이 사라진다 해도')",
+            "PLAVE", "이 밤을 빌려 말해요 MV (영화 '오늘 밤, 세계에서 이 사랑이 사라진다 해도')",
+        )
+
+    @Test
+    fun aTitleThatIsOnlyABracketBlockIsKept() {
+        val parsed = TitleParser.parse("[MV]", "Some Channel")
+        assertEquals("Some Channel", parsed.artist)
+        assertEquals("[MV]", parsed.title)
+        assertEquals(Confidence.LOW, parsed.confidence)
+    }
 }
