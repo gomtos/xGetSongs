@@ -41,6 +41,9 @@ class FakeEngine {
         JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)),
     )
 
+    /** The events the fake job sends before it closes its channel. */
+    var eventsToSend: List<JobEvent> = finishedEvents
+
     val jobs = mutableListOf<Job>()
     var resolveError: ResolveException? = null
 
@@ -54,7 +57,7 @@ class FakeEngine {
     private val downloads = object : DownloadService {
         override fun start(request: DownloadRequest): JobHandle {
             val events = Channel<JobEvent>(Channel.UNLIMITED)
-            finishedEvents.forEach { events.trySend(it) }
+            eventsToSend.forEach { events.trySend(it) }
             events.close()
             return JobHandle(events, Job().also { jobs += it })
         }

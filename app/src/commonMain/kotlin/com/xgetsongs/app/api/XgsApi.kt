@@ -16,6 +16,7 @@ import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.sse.SSE
+import io.ktor.client.plugins.sse.SSEClientException
 import io.ktor.client.plugins.sse.sse
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -28,8 +29,10 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.serialization.SerializationException
 
 /** A failure reported by the server (or a lost connection) with a message fit for the user. */
 class ApiError(message: String) : Exception(message)
@@ -42,7 +45,11 @@ interface XgsApi {
     suspend fun resolve(input: String): ResolveResponse
     suspend fun startJob(request: JobRequest): JobCreated
 
-    /** Emits the job's events and completes when the stream ends; throws [ApiError] on a server-side error event. */
+    /**
+     * Emits the job's events and completes after the final `job-done` event. Throws [ApiError] on a server-side
+     * error event, when the stream cannot be opened (for example a non-200 answer) or cannot be decoded, and when
+     * it ends without `job-done`.
+     */
     fun events(jobId: String): Flow<JobEvent>
 
     suspend fun cancel(jobId: String)
@@ -82,17 +89,32 @@ class HttpXgsApi(private val client: HttpClient) : XgsApi {
     override fun events(jobId: String): Flow<JobEvent> = channelFlow {
         // The SSE client wraps anything thrown inside its block, so remember the error and throw it afterwards.
         var serverError: String? = null
-        client.sse("/jobs/$jobId/events") {
-            incoming.collect { event ->
-                val data = event.data.orEmpty()
-                if (event.event == "error") {
-                    serverError = json.decodeFromString(ErrorResponse.serializer(), data).message
-                } else {
-                    send(json.decodeFromString(JobEvent.serializer(), data))
+        var sawJobDone = false
+        try {
+            client.sse("/jobs/$jobId/events") {
+                incoming.collect { event ->
+                    val data = event.data.orEmpty()
+                    if (event.event == "error") {
+                        serverError = json.decodeFromString(ErrorResponse.serializer(), data).message
+                    } else {
+                        val jobEvent = json.decodeFromString(JobEvent.serializer(), data)
+                        if (jobEvent is JobEvent.JobDone) sawJobDone = true
+                        send(jobEvent)
+                    }
                 }
             }
+        } catch (e: SSEClientException) {
+            throw ApiError(
+                if (e.cause is SerializationException) {
+                    "서버 이벤트를 해석할 수 없습니다."
+                } else {
+                    "이벤트 스트림을 열 수 없습니다: ${e.message}"
+                },
+            )
         }
         serverError?.let { throw ApiError(it) }
+        // The engine always sends job-done before it closes the stream, so a stream without it was cut off.
+        if (!sawJobDone) throw ApiError("서버와의 연결이 끊어졌습니다.")
     }
 
     override suspend fun cancel(jobId: String) {
@@ -103,6 +125,8 @@ class HttpXgsApi(private val client: HttpClient) : XgsApi {
         if (status.isSuccess()) return this
         val message = try {
             body<ErrorResponse>().message
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             "서버 오류 (${status.value})"
         }

@@ -40,6 +40,7 @@ kotlin {
             dependencies {
                 implementation(libs.ktor.server.test.host)
                 implementation(libs.ktor.client.cio)
+                implementation(libs.ktor.client.mock)
             }
         }
     }
