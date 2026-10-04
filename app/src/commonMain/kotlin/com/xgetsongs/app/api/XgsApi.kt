@@ -104,8 +104,10 @@ class HttpXgsApi(private val client: HttpClient) : XgsApi {
                 }
             }
         } catch (e: SSEClientException) {
+            // Ktor wraps a failure inside the block more than once, so look through the whole cause chain.
+            val undecodable = generateSequence<Throwable>(e) { it.cause }.any { it is SerializationException }
             throw ApiError(
-                if (e.cause is SerializationException) {
+                if (undecodable) {
                     "서버 이벤트를 해석할 수 없습니다."
                 } else {
                     "이벤트 스트림을 열 수 없습니다: ${e.message}"

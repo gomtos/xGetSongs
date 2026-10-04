@@ -39,6 +39,7 @@ kotlin {
         val desktopTest by getting {
             dependencies {
                 implementation(libs.ktor.server.test.host)
+                implementation(libs.ktor.server.sse)
                 implementation(libs.ktor.client.cio)
                 implementation(libs.ktor.client.mock)
             }

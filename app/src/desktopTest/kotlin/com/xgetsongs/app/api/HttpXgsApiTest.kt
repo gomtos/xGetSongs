@@ -12,7 +12,12 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.server.application.install
+import io.ktor.server.routing.routing
+import io.ktor.server.sse.SSE
+import io.ktor.server.sse.sse
 import io.ktor.server.testing.testApplication
+import io.ktor.sse.ServerSentEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -20,6 +25,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -112,6 +118,23 @@ class HttpXgsApiTest {
     }
 
     @Test
+    fun eventsWithUndecodableDataFailWithAnApiErrorAboutTheEvent() = testApplication {
+        application {
+            install(SSE)
+            routing {
+                sse("/jobs/bad/events") {
+                    send(ServerSentEvent(data = "{broken", event = "job-done"))
+                }
+            }
+        }
+        val api = HttpXgsApi(createClient { configureXgs("t") })
+
+        val error = assertFailsWith<ApiError> { api.events("bad").toList() }
+
+        assertEquals("\uc11c\ubc84 \uc774\ubca4\ud2b8\ub97c \ud574\uc11d\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4.", error.message)
+    }
+
+    @Test
     fun cancellationWhileReadingAnErrorBodyIsNotTurnedIntoAnApiError() = runBlocking {
         val mock = MockEngine {
             respond(
@@ -131,7 +154,7 @@ class HttpXgsApiTest {
 
         supervisorScope {
             val call = async { HttpXgsApi(client).tools() }
-            reading.await()
+            withTimeout(30_000) { reading.await() }
             call.cancel()
 
             // Not an ApiError: the caller was cancelled and has to see that.
