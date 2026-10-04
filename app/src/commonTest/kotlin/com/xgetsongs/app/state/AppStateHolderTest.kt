@@ -314,4 +314,113 @@ class AppStateHolderTest {
         assertEquals(false, holder.state.value.toolBusy)
         assertEquals(api.toolsStatus, holder.state.value.tools)
     }
+
+    // ---- job endings and failures ---------------------------------------------------------
+
+    private suspend fun TestScope.finishedWithOneFailure(): Pair<FakeApi, AppStateHolder> {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
+        api.eventChannel.close()
+        runCurrent()
+        return api to holder
+    }
+
+    @Test
+    fun rowsInFlightGoBackToReadyWhenACancelledJobEnds() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.Progress(1, Stage.DOWNLOADING, 40.0))
+        runCurrent()
+        assertEquals(ItemStatus.Downloading(40.0), holder.row(1).status)
+
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.CANCELLED, JobSummary(0, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+
+        assertEquals(ItemStatus.Ready, holder.row(1).status)
+        assertEquals(Phase.FINISHED, holder.state.value.phase)
+        assertEquals(JobStatus.CANCELLED, holder.state.value.jobStatus)
+    }
+
+    @Test
+    fun rowsInFlightGoBackToReadyWhenTheStreamBreaks() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.Progress(1, Stage.CONVERTING))
+        runCurrent()
+        assertEquals(ItemStatus.Converting, holder.row(1).status)
+
+        api.eventChannel.close()
+        runCurrent()
+
+        assertEquals(Phase.FINISHED, holder.state.value.phase)
+        assertEquals("\uc11c\ubc84\uc640\uc758 \uc5f0\uacb0\uc774 \ub04a\uc5b4\uc84c\uc2b5\ub2c8\ub2e4.", holder.state.value.error)
+        assertEquals(ItemStatus.Ready, holder.row(1).status)
+    }
+
+    @Test
+    fun aRawExceptionDuringResolveDoesNotLeaveTheScreenResolving() = runTest {
+        val api = FakeApi().apply { resolveError = IllegalStateException("boom") }
+        val (_, holder) = resolved(api)
+
+        assertEquals(Phase.IDLE, holder.state.value.phase)
+        assertTrue(holder.state.value.error.orEmpty().contains("boom"))
+    }
+
+    @Test
+    fun aRawExceptionFromToolActionsClearsTheBusyFlag() = runTest {
+        val api = FakeApi().apply { toolsError = IllegalStateException("boom") }
+        val (_, holder) = holder(api)
+
+        holder.installYtDlp()
+        runCurrent()
+
+        assertEquals(false, holder.state.value.toolBusy)
+        assertTrue(holder.state.value.toolMessage.orEmpty().contains("boom"))
+
+        holder.refreshTools()
+        runCurrent()
+
+        assertTrue(holder.state.value.error.orEmpty().contains("boom"))
+    }
+
+    @Test
+    fun aFailedStartFromFinishedKeepsThePreviousResults() = runTest {
+        val (api, holder) = finishedWithOneFailure()
+        api.startError = ApiError("\ucd9c\ub825 \ud3f4\ub354\ub97c \ub9cc\ub4e4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4")
+
+        holder.retryFailed()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.FINISHED, state.phase)
+        assertEquals(ItemStatus.Failed("boom"), holder.row(3).status)
+        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals(JobSummary(1, 0, 1), state.summary)
+        assertEquals(JobStatus.COMPLETED, state.jobStatus)
+        assertEquals(listOf(3), state.failedRanks)
+        assertEquals("\ucd9c\ub825 \ud3f4\ub354\ub97c \ub9cc\ub4e4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4", state.error)
+    }
+
+    @Test
+    fun aRawExceptionWhileStartingARetryRestoresThePreviousScreen() = runTest {
+        val (api, holder) = finishedWithOneFailure()
+        api.startError = IllegalStateException("boom")
+
+        holder.retryFailed()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.FINISHED, state.phase)
+        assertEquals(listOf(3), state.failedRanks)
+        assertTrue(state.error.orEmpty().contains("boom"))
+    }
 }

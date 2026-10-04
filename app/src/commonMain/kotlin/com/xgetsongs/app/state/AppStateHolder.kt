@@ -73,8 +73,10 @@ class AppStateHolder(
             try {
                 val tools = api.tools()
                 _state.update { it.copy(tools = tools) }
-            } catch (e: ApiError) {
-                _state.update { it.copy(error = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = failureMessage(e)) }
             }
         }
     }
@@ -90,8 +92,10 @@ class AppStateHolder(
                 val message = action()
                 val tools = api.tools()
                 _state.update { it.copy(toolBusy = false, toolMessage = message, tools = tools) }
-            } catch (e: ApiError) {
-                _state.update { it.copy(toolBusy = false, toolMessage = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(toolBusy = false, toolMessage = failureMessage(e)) }
             }
         }
     }
@@ -129,8 +133,10 @@ class AppStateHolder(
                         jobStatus = null,
                     )
                 }
-            } catch (e: ApiError) {
-                _state.update { it.copy(phase = Phase.IDLE, error = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(phase = Phase.IDLE, error = failureMessage(e)) }
             }
         }
     }
@@ -168,7 +174,7 @@ class AppStateHolder(
                 rows = s.rows.map { if (it.item.available) it.copy(status = ItemStatus.Waiting) else it },
             )
         }
-        runJob(JobRequest(resolved.resolveId, jobOptions(state)), fallbackPhase = state.phase)
+        runJob(JobRequest(resolved.resolveId, jobOptions(state)), before = state)
     }
 
     /** Runs a new job for just the items that failed last time. */
@@ -185,7 +191,7 @@ class AppStateHolder(
         }
         // A single video is always re-run as a whole; its rank is chosen by the user, not by the list.
         val retryRanks = ranks.takeIf { resolved.kind != InputKind.VIDEO }
-        runJob(JobRequest(resolved.resolveId, jobOptions(state), ranks = retryRanks), fallbackPhase = state.phase)
+        runJob(JobRequest(resolved.resolveId, jobOptions(state), ranks = retryRanks), before = state)
     }
 
     fun cancel() {
@@ -193,8 +199,10 @@ class AppStateHolder(
         scope.launch {
             try {
                 api.cancel(id)
-            } catch (e: ApiError) {
-                _state.update { it.copy(error = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = failureMessage(e)) }
             }
         }
     }
@@ -206,8 +214,11 @@ class AppStateHolder(
         concurrency = state.concurrency,
     )
 
-    /** [fallbackPhase] is where the screen returns to when the job cannot even be started. */
-    private fun runJob(request: JobRequest, fallbackPhase: Phase) {
+    /**
+     * [before] is the screen as it was when the user pressed the button. It is restored when the job cannot even be
+     * started, so a failed retry does not wipe the results of the previous run.
+     */
+    private fun runJob(request: JobRequest, before: UiState) {
         jobTask = scope.launch {
             var started = false
             try {
@@ -217,29 +228,51 @@ class AppStateHolder(
                 api.events(created.jobId).collect { event -> _state.update { apply(it, event) } }
                 _state.update { state ->
                     if (state.phase == Phase.RUNNING) {
-                        state.copy(phase = Phase.FINISHED, error = "서버와의 연결이 끊어졌습니다.")
+                        state.copy(
+                            phase = Phase.FINISHED,
+                            error = "서버와의 연결이 끊어졌습니다.",
+                            rows = state.rows.map(::resetTransient),
+                        )
                     } else {
                         state
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: ApiError) {
-                _state.update { state ->
-                    state.copy(
-                        phase = if (started) Phase.FINISHED else fallbackPhase,
-                        error = e.message,
-                        rows = state.rows.map(::resetWaiting),
-                    )
-                }
             } catch (e: Exception) {
-                _state.update { it.copy(phase = Phase.FINISHED, error = "서버와 통신 중 오류가 발생했습니다: ${e.message}") }
+                _state.update { state ->
+                    if (started) {
+                        state.copy(
+                            phase = Phase.FINISHED,
+                            error = failureMessage(e),
+                            rows = state.rows.map(::resetTransient),
+                        )
+                    } else {
+                        state.copy(
+                            phase = before.phase,
+                            rows = before.rows,
+                            summary = before.summary,
+                            jobStatus = before.jobStatus,
+                            error = failureMessage(e),
+                        )
+                    }
+                }
             }
         }
     }
 
-    private fun resetWaiting(row: ItemRow): ItemRow =
-        if (row.status is ItemStatus.Waiting) row.copy(status = ItemStatus.Ready) else row
+    /** What the user sees for a failure: the server's own message, or a generic one for transport/decoding errors. */
+    private fun failureMessage(e: Exception): String =
+        if (e is ApiError) e.message.orEmpty() else "서버와 통신 중 오류가 발생했습니다: ${e.message}"
+
+    /**
+     * A cancelled or aborted job sends no final event for the items that were still waiting or in flight, so those
+     * rows go back to [ItemStatus.Ready]. Finished, skipped and failed rows keep their result.
+     */
+    private fun resetTransient(row: ItemRow): ItemRow = when (row.status) {
+        ItemStatus.Waiting, is ItemStatus.Downloading, ItemStatus.Converting -> row.copy(status = ItemStatus.Ready)
+        else -> row
+    }
 
     private fun apply(state: UiState, event: JobEvent): UiState = when (event) {
         is JobEvent.ItemStarted ->
@@ -259,7 +292,7 @@ class AppStateHolder(
             phase = Phase.FINISHED,
             jobStatus = event.status,
             summary = event.summary,
-            rows = state.rows.map(::resetWaiting),
+            rows = state.rows.map(::resetTransient),
         )
     }
 

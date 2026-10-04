@@ -1,6 +1,5 @@
 package com.xgetsongs.app.state
 
-import com.xgetsongs.app.api.ApiError
 import com.xgetsongs.app.api.XgsApi
 import com.xgetsongs.shared.api.ActionResult
 import com.xgetsongs.shared.api.InputKind
@@ -18,8 +17,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 class FakeApi : XgsApi {
     var toolsStatus = ToolsStatus(ToolInfo(true, "1"), ToolInfo(true, "1"), ToolInfo(true, "24"))
     var resolveResponse: ResolveResponse = playlist()
-    var resolveError: ApiError? = null
-    var startError: ApiError? = null
+    var resolveError: Exception? = null
+    var startError: Exception? = null
+    var toolsError: Exception? = null
     var installMessage = "installed"
 
     val resolveInputs = mutableListOf<String>()
@@ -30,9 +30,13 @@ class FakeApi : XgsApi {
     /** What the "server" sends for the running job. Close it to end the stream. */
     var eventChannel = Channel<JobEvent>(Channel.UNLIMITED)
 
-    override suspend fun tools(): ToolsStatus = toolsStatus
+    override suspend fun tools(): ToolsStatus {
+        toolsError?.let { throw it }
+        return toolsStatus
+    }
 
     override suspend fun installYtDlp(): ActionResult {
+        toolsError?.let { throw it }
         installCalls++
         return ActionResult(installMessage)
     }
