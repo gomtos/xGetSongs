@@ -10,6 +10,7 @@ import com.xgetsongs.shared.api.JobSummary
 import com.xgetsongs.shared.api.ResolvedItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -20,6 +21,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -28,6 +30,14 @@ import kotlin.time.Duration.Companion.seconds
 
 /** Aborts the whole job (disk full, no permission...). */
 private class FatalJobException(message: String) : Exception(message)
+
+private val DISK_FULL_MARKERS = listOf("no space left", "not enough space", "disk full", "공간이 부족")
+
+/** The JDK reports a full disk only through the message of a plain [IOException]. */
+private fun isDiskFull(e: IOException): Boolean {
+    val message = e.message?.lowercase() ?: return false
+    return DISK_FULL_MARKERS.any { it in message }
+}
 
 class DefaultDownloadService(
     private val downloader: ItemDownloader,
@@ -38,7 +48,7 @@ class DefaultDownloadService(
 
     override fun start(request: DownloadRequest): JobHandle {
         val events = Channel<JobEvent>(Channel.UNLIMITED)
-        val job = scope.launch { runJob(request, events) }
+        val job = scope.launch(start = CoroutineStart.ATOMIC) { runJob(request, events) }
         return JobHandle(events, job)
     }
 
@@ -50,27 +60,33 @@ class DefaultDownloadService(
     }
 
     private suspend fun runJob(request: DownloadRequest, events: Channel<JobEvent>) {
-        val workRoot = withContext(Dispatchers.IO) {
-            Files.createDirectories(tempRoot)
-            Files.createTempDirectory(tempRoot, "job-")
-        }
         val counters = Counters()
-        var status = JobStatus.COMPLETED
+        var status = JobStatus.FAILED
+        var workRoot: Path? = null
         try {
+            // Assigned inside the block so that the finally clause sees the folder even if cancellation follows.
+            val root = withContext(Dispatchers.IO) {
+                Files.createDirectories(tempRoot)
+                Files.createTempDirectory(tempRoot, "job-").also { workRoot = it }
+            }
             coroutineScope {
                 val gate = Semaphore(request.concurrency.coerceIn(MIN_CONCURRENCY, MAX_CONCURRENCY))
                 for (item in request.items) {
-                    launch { gate.withPermit { processItem(item, request, workRoot, events, counters) } }
+                    launch { gate.withPermit { processItem(item, request, root, events, counters) } }
                 }
             }
+            status = JobStatus.COMPLETED
         } catch (e: FatalJobException) {
             status = JobStatus.FAILED
         } catch (e: CancellationException) {
             status = JobStatus.CANCELLED
             throw e
+        } catch (e: IOException) {
+            // The work folder could not be set up: no item was started, so there is no per-item event.
+            status = JobStatus.FAILED
         } finally {
             withContext(NonCancellable) {
-                workRoot.toFile().deleteRecursively()
+                withContext(Dispatchers.IO) { workRoot?.toFile()?.deleteRecursively() }
                 events.trySend(JobEvent.JobDone(status, counters.summary()))
                 events.close()
             }
@@ -92,7 +108,7 @@ class DefaultDownloadService(
                 counters.skipped.incrementAndGet()
                 return
             }
-            val itemDir = withContext(Dispatchers.IO) { Files.createDirectories(workRoot.resolve(item.videoId)) }
+            val itemDir = withContext(Dispatchers.IO) { Files.createDirectories(workRoot.resolve(item.rank.toString())) }
             var retries = 0
             while (true) {
                 when (val result = downloader.download(prepared, itemDir) { events.trySend(it) }) {
@@ -135,7 +151,14 @@ class DefaultDownloadService(
             throw e
         } catch (e: FatalJobException) {
             throw e
+        } catch (e: AccessDeniedException) {
+            fail(item, "출력 폴더에 쓸 권한이 없습니다.", events, counters)
+            throw FatalJobException("출력 폴더에 쓸 권한이 없습니다.")
         } catch (e: IOException) {
+            if (isDiskFull(e)) {
+                fail(item, "디스크 공간이 부족합니다.", events, counters)
+                throw FatalJobException("디스크 공간이 부족합니다.")
+            }
             fail(item, "파일 처리 중 오류: ${e.message}", events, counters)
         } catch (e: Exception) {
             fail(item, e.message ?: e::class.simpleName.orEmpty(), events, counters)

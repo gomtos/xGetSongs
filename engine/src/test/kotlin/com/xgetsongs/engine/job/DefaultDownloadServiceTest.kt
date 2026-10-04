@@ -7,6 +7,7 @@ import com.xgetsongs.engine.output.OutputSink
 import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.testutil.FakeProcessRunner
 import com.xgetsongs.engine.testutil.TEST_TOOLS
+import com.xgetsongs.engine.testutil.outputDirOf
 import com.xgetsongs.engine.testutil.toolsOf
 import com.xgetsongs.engine.testutil.writeFakeMp3
 import com.xgetsongs.engine.tools.ToolPathProvider
@@ -29,6 +30,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.IOException
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -63,7 +65,8 @@ class DefaultDownloadServiceTest {
         runner: ProcessRunner,
         tools: ToolPathProvider = toolsOf(),
         metadata: VideoMetadataSource = VideoMetadataSource { null },
-    ) = DefaultDownloadService(ItemDownloader(runner, tools, metadata), tempRoot, this)
+        workDir: Path = tempRoot,
+    ) = DefaultDownloadService(ItemDownloader(runner, tools, metadata), workDir, this)
 
     private fun request(
         vararg items: ResolvedItem,
@@ -113,7 +116,7 @@ class DefaultDownloadServiceTest {
     @Test
     fun progressEventsAreThrottledToWholePercents() = runTest {
         val noisy = FakeProcessRunner { command, onStdout, _ ->
-            repeat(1000) { onStdout("XGSP|downloading|${it / 10}|100|NA") }
+            repeat(1000) { onStdout("XGSP|downloading|$it|1000|NA") }
             writeFakeMp3(command)
             0
         }
@@ -325,5 +328,88 @@ class DefaultDownloadServiceTest {
         val failed = events.filterIsInstance<JobEvent.ItemFailed>().single()
         assertTrue(failed.message.contains("disk on fire"))
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(0, 0, 1)), done(events))
+    }
+
+    private fun failingSink(error: IOException) = object : OutputSink {
+        override suspend fun exists(fileName: String) = false
+        override suspend fun put(fileName: String, source: Path, overwrite: Boolean) {
+            throw error
+        }
+    }
+
+    @Test
+    fun cancellingRightAfterStartStillEndsWithJobDoneCancelled() = runTest {
+        val handle = service(succeeding).start(request(item(1)))
+        handle.cancel()
+
+        val events = handle.collect()
+
+        assertEquals(JobStatus.CANCELLED, done(events).status)
+        if (Files.exists(tempRoot)) {
+            Files.list(tempRoot).use { stream ->
+                assertEquals(0, stream.filter { it.fileName.toString().startsWith("job-") }.count())
+            }
+        }
+    }
+
+    @Test
+    fun anUnusableWorkFolderEndsTheJobWithJobDoneFailed() = runTest {
+        val blocker = Files.writeString(root.resolve("blocker"), "a file, not a folder")
+
+        val events = service(succeeding, workDir = blocker.resolve("work")).start(request(item(1))).collect()
+
+        assertEquals(JobEvent.JobDone(JobStatus.FAILED, JobSummary(0, 0, 0)), done(events))
+        assertEquals(0, succeeding.commands.size)
+    }
+
+    @Test
+    fun sameVideoTwiceUsesSeparateWorkFolders() = runTest {
+        val first = item(1)
+        val second = item(2).copy(videoId = first.videoId)
+
+        val events = service(succeeding).start(request(first, second, concurrency = 2)).collect()
+
+        assertEquals(setOf(1, 2), events.filterIsInstance<JobEvent.ItemDone>().map { it.rank }.toSet())
+        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
+        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.mp3")))
+        assertEquals(2, succeeding.commands.map { outputDirOf(it) }.distinct().size)
+    }
+
+    @Test
+    fun accessDeniedFromTheSinkAbortsTheJob() = runTest {
+        val sink = failingSink(AccessDeniedException("x"))
+
+        val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
+
+        assertEquals(JobStatus.FAILED, done(events).status)
+        assertEquals(1, events.filterIsInstance<JobEvent.ItemFailed>().size)
+        assertEquals(1, succeeding.commands.size)
+    }
+
+    @Test
+    fun diskFullFromTheSinkAbortsTheJob() = runTest {
+        val sink = failingSink(IOException("No space left on device"))
+
+        val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
+
+        assertEquals(JobStatus.FAILED, done(events).status)
+        assertEquals(1, events.filterIsInstance<JobEvent.ItemFailed>().size)
+        assertEquals(1, succeeding.commands.size)
+    }
+
+    @Test
+    fun jobDoneIsSentExactlyOnce() = runTest {
+        val completed = service(succeeding).start(request(item(1), item(2))).collect()
+        // A second sink: the first job already put "001 A1 - T1.mp3" into outDir, so the items would be skipped there.
+        val aborted = service(failingWith("OSError: [Errno 28] No space left on device"))
+            .start(request(item(1), item(2), sink = LocalFolderSink(root.resolve("out-aborted"))))
+            .collect()
+
+        assertEquals(JobStatus.COMPLETED, done(completed).status)
+        assertEquals(JobStatus.FAILED, done(aborted).status)
+        for (events in listOf(completed, aborted)) {
+            assertEquals(1, events.count { it is JobEvent.JobDone })
+            assertTrue(events.last() is JobEvent.JobDone)
+        }
     }
 }
