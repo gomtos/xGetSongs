@@ -7,6 +7,7 @@ import com.xgetsongs.engine.testutil.toolsOf
 import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.input.RejectReason
 import kotlinx.coroutines.test.runTest
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -181,5 +182,48 @@ class YtDlpResolverTest {
     @Test
     fun fetchReturnsNullWhenYtDlpFails() = runTest {
         assertNull(resolver(runnerReturning("", exitCode = 1, stderr = listOf("ERROR: boom"))).fetch("dQw4w9WgXcQ"))
+    }
+
+    @Test
+    fun nonPublicAvailabilityMakesAnItemUnavailableAndKeepsItsRank() = runTest {
+        val runner = runnerReturning(
+            """{"title":"T","entries":[
+              {"id":"vid00000001","title":"Song A","availability":"premium_only"},
+              {"id":"vid00000002","title":"Song B","availability":"subscriber_only"},
+              {"id":"vid00000003","title":"Song C","availability":"needs_auth"},
+              {"id":"vid00000004","title":"Artist - Song D","availability":"public"},
+              {"id":"vid00000005","title":"Artist - Song E","availability":"unlisted"}
+            ]}""",
+        )
+
+        val items = resolver(runner).resolve(playlistUrl).items
+
+        assertEquals(listOf(1, 2, 3, 4, 5), items.map { it.rank })
+        listOf("premium_only", "subscriber_only", "needs_auth").forEachIndexed { index, availability ->
+            val item = items[index]
+            assertFalse(item.available)
+            assertNull(item.expectedFileName)
+            assertTrue(item.unavailableReason!!.contains(availability))
+        }
+        listOf(items[3], items[4]).forEach { item ->
+            assertTrue(item.available)
+            assertNotNull(item.expectedFileName)
+        }
+    }
+
+    @Test
+    fun ytDlpThatCannotBeStartedBecomesAResolveException() = runTest {
+        val runner = FakeProcessRunner { _, _, _ -> throw IOException("Cannot run program") }
+
+        val error = assertFailsWith<ResolveException> { resolver(runner).resolve(playlistUrl) }
+
+        assertTrue(error.message!!.contains("yt-dlp"))
+    }
+
+    @Test
+    fun fetchReturnsNullWhenYtDlpCannotBeStarted() = runTest {
+        val runner = FakeProcessRunner { _, _, _ -> throw IOException("Cannot run program") }
+
+        assertNull(resolver(runner).fetch("dQw4w9WgXcQ"))
     }
 }

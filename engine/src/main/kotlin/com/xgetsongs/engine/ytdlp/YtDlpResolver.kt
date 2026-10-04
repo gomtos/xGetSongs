@@ -18,6 +18,7 @@ import com.xgetsongs.shared.title.TitleParser
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.IOException
 
 /** The metadata of one video that the title parser can use. */
 data class VideoMeta(val title: String?, val channel: String?, val artist: String?, val track: String?)
@@ -143,11 +144,15 @@ class YtDlpResolver(
     private suspend fun runYtDlp(command: List<String>): String {
         val stdout = StringBuilder()
         val stderr = mutableListOf<String>()
-        val exitCode = runner.run(
-            command,
-            onStdout = { synchronized(stdout) { stdout.append(it).append('\n') } },
-            onStderr = { synchronized(stderr) { stderr += it } },
-        )
+        val exitCode = try {
+            runner.run(
+                command,
+                onStdout = { synchronized(stdout) { stdout.append(it).append('\n') } },
+                onStderr = { synchronized(stderr) { stderr += it } },
+            )
+        } catch (e: IOException) {
+            throw ResolveException("yt-dlp를 실행할 수 없습니다: ${e.message}")
+        }
         if (exitCode != 0) {
             val failure = synchronized(stderr) { ErrorClassifier.classify(stderr.toList()) }
             throw ResolveException(failure.message)
