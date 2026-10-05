@@ -26,7 +26,6 @@ object TitleParser {
     private val SEPARATORS = listOf(" - ", " – ", " — ", "_ ")
     private val SINGLE_QUOTES = charArrayOf('\'', '‘', '’')
     private val DOUBLE_QUOTES = charArrayOf('"', '“', '”')
-    private val ALL_QUOTES = SINGLE_QUOTES + DOUBLE_QUOTES
 
     fun parse(
         rawTitle: String,

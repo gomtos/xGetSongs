@@ -54,6 +54,8 @@ compose.desktop {
             targetFormats(TargetFormat.Msi)
             packageName = "xGetSongs"
             packageVersion = "1.0.0"
+            // The default jlink runtime lacks these: java.net.http (yt-dlp download) and jdk.unsupported (Netty).
+            modules("java.net.http", "jdk.unsupported")
         }
     }
 }
