@@ -24,8 +24,8 @@ internal object Id3Frames {
     // field is a hint, there is no detection beyond this).
     private const val LANGUAGE_KOREAN = "kor"
     private const val LANGUAGE_ENGLISH = "eng"
-    private const val HANGUL_SYLLABLES_FIRST = '가' // 가
-    private const val HANGUL_SYLLABLES_LAST = '힣' // 힣
+    private const val HANGUL_SYLLABLES_FIRST = '가' // U+AC00
+    private const val HANGUL_SYLLABLES_LAST = '힣' // U+D7A3
 
     // The flags byte of an ID3v2.3 header is %abc00000: a = unsynchronisation, b = extended header, c = experimental.
     // Only the experimental bit (0x20) leaves the layout alone, so it passes through. The other two change how the tag

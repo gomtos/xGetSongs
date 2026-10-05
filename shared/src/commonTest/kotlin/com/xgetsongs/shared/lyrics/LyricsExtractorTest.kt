@@ -81,6 +81,27 @@ class LyricsExtractorTest {
     }
 
     @Test
+    fun aHashtagLineIsNeverAMarker() {
+        // `#Lyrics #가사` would be the marker `lyrics가사` once the symbols are gone, but it is a line of hashtags.
+        val hashtags = listOf("#Lyrics", "#가사", "#Lyrics #가사", "  #lyrics  ", "##가사", "#Lyrics\t#가사")
+        for (line in hashtags) {
+            assertNull(LyricsExtractor.extract(text(line, "Line one", "Line two", "Line three")), "hashtags only: [$line]")
+        }
+    }
+
+    @Test
+    fun aHashtagLineBeforeTheRealMarkerIsSkipped() {
+        val description = text("Example Song", "#Lyrics #가사", "", "=======", "[Lyrics]", "Line one", "Line two", "Line three", "=======", "Tail")
+
+        assertEquals("Line one\nLine two\nLine three", LyricsExtractor.extract(description))
+    }
+
+    @Test
+    fun aHashFollowedByASpaceCanStillBeAMarker() {
+        assertEquals(block, LyricsExtractor.extract("# 가사\n$block"))
+    }
+
+    @Test
     fun theFirstMarkerWinsAndALaterBlockIsIgnored() {
         val description = text(
             "[Lyrics]", "Line one", "Line two", "Line three",
@@ -113,7 +134,7 @@ class LyricsExtractorTest {
 
     @Test
     fun blankAndSeparatorLinesDirectlyAfterTheMarkerAreSkipped() {
-        val description = text("Lyrics", "", "=======", "", "-----", "   ", "Line one", "Line two", "Line three")
+        val description = text("Lyrics", "", "=======", "", "-----", "   ", "=-=-=", "\u3161\u3161\u3161\u3161", "Line one", "Line two", "Line three")
 
         assertEquals("Line one\nLine two\nLine three", LyricsExtractor.extract(description))
     }
@@ -138,6 +159,32 @@ class LyricsExtractorTest {
         for (separator in separators) {
             assertEquals("Line one\nLine two\n\nLine three", LyricsExtractor.extract(withTerminator(separator)), "separator: [$separator]")
         }
+    }
+
+    @Test
+    fun separatorCharactersInAnyMixEndTheBlock() {
+        val separators = listOf(
+            "=-=-=", "-=-", "=-_*~#.+", "+-+", "~-~-~-~", "*=*", "._.", "-_-_-", "━─═", "═══─", "=━=",
+            "\u3161\u3161\u3161\u3161", // U+3161 four times: the Hangul letter EU typed as a dash
+            "\u2014\u2014\u2014", // em dashes
+            "\u25AC\u25AC\u25AC", // black rectangles
+            "\uFF1D\uFF1D\uFF1D", // fullwidth equals signs
+            "\u3161=\u2014\u25AC\uFF1D-", // all the look-alikes in one line
+            "  \u3161\u3161\u3161  ",
+        )
+        for (separator in separators) {
+            assertEquals("Line one\nLine two\n\nLine three", LyricsExtractor.extract(withTerminator(separator)), "separator: [$separator]")
+        }
+    }
+
+    @Test
+    fun aLineWithAnOrdinaryCharacterAmongSeparatorCharactersIsALyricLine() {
+        val description = text("Lyrics", "Line one", "===x===", "--- ---", "= = =", "\u3161\u3161a", "\u2014\u2014", "Line two", "Line three")
+
+        assertEquals(
+            "Line one\n===x===\n--- ---\n= = =\n\u3161\u3161a\n\u2014\u2014\nLine two\nLine three",
+            LyricsExtractor.extract(description),
+        )
     }
 
     @Test
@@ -176,12 +223,31 @@ class LyricsExtractorTest {
     @Test
     fun aBracketedHeadingOfAnotherSectionEndsTheBlock() {
         val headings = listOf(
-            "[Rom]", "[Romanized]", "[Romanization]", "[English Translation]", "[Eng]", "【번역】", "(Translation)", "[Translated]",
+            "[Rom]", "[Romanized]", "[Romanization]", "[English Translation]", "[Eng]", "【번역】", "[Translated]",
             "[Credits]", "[Info]", "[Staff]", "[Links]", "[SNS]", "[Follow us]", "[번역]", "[해석]", "[영문]", "[로마자]",
-            "[크레딧]", "[정보]", "  [ROM]  ", "[Lyrics]", "【가사】", "(Lyrics)", "[Lyrics / 가사]",
+            "[크레딧]", "[정보]", "  [ROM]  ", "[Lyrics]", "【가사】", "[Lyrics / 가사]",
         )
         for (heading in headings) {
             assertEquals("Line one\nLine two\n\nLine three", LyricsExtractor.extract(withTerminator(heading)), "heading: [$heading]")
+        }
+    }
+
+    @Test
+    fun aLineInParenthesesIsNeverTheHeadingOfAnotherSection() {
+        // Echo and background lines look like these; only `[ ]` and `【 】` mark a section.
+        val echoes = listOf(
+            "(Follow me)", "(Romantic)", "(English)", "(Translation)", "(Credits)", "(Info)", "(Link my hands)", "(Rom)", "(Lyrics)",
+            "(가사)", "(번역)", "  (Staff)  ",
+        )
+        val description = text("[Lyrics]", "Line one", *echoes.toTypedArray(), "Line two", "Line three", "=======", "Tail")
+
+        assertEquals(text("Line one", *echoes.map { it.trimEnd() }.toTypedArray(), "Line two", "Line three"), LyricsExtractor.extract(description))
+    }
+
+    @Test
+    fun aLineInParenthesesStillEndsTheBlockWhenItIsACopyrightNoticeOrBoilerplate() {
+        for (line in listOf("(c) 2024 Example", "(Provided to YouTube by Example Label)", "(https://example.invalid)")) {
+            assertEquals("Line one\nLine two\n\nLine three", LyricsExtractor.extract(withTerminator(line)), "line: [$line]")
         }
     }
 
@@ -215,9 +281,9 @@ class LyricsExtractorTest {
 
     @Test
     fun almostASeparatorIsALyricLine() {
-        val description = text("Lyrics", "Line one", "==", "=-=", "Line two", "Line three")
+        val description = text("Lyrics", "Line one", "==", "=-", "..", "Line two", "Line three")
 
-        assertEquals("Line one\n==\n=-=\nLine two\nLine three", LyricsExtractor.extract(description))
+        assertEquals("Line one\n==\n=-\n..\nLine two\nLine three", LyricsExtractor.extract(description))
     }
 
     @Test
@@ -271,9 +337,74 @@ class LyricsExtractorTest {
     }
 
     @Test
-    fun aByteOrderMarkInFrontIsStripped() {
-        assertEquals(block, LyricsExtractor.extract("﻿[Lyrics]\n$block"))
-        assertEquals(block, LyricsExtractor.extract("﻿가사\r\n$block"))
+    fun aByteOrderMarkIsGoneWhereverItIs() {
+        // One at the very start of the description and one inside a lyric line: both must be absent from the result.
+        val description = "\uFEFF[Lyrics]\nLine\uFEFF one\nLine two\n\uFEFFLine three\uFEFF"
+
+        val result = LyricsExtractor.extract(description)!!
+
+        assertEquals("Line one\nLine two\nLine three", result)
+        assertTrue('\uFEFF' !in result)
+        assertEquals(block, LyricsExtractor.extract("\uFEFF가사\r\n$block"))
+    }
+
+    @Test
+    fun zeroWidthCharactersAreRemovedFromTheResult() {
+        val invisible = listOf('\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF')
+        val description = text(
+            "Lyrics",
+            "Li\u200Bne\u200C o\u200Dne\u2060",
+            "\u2060Line two\uFEFF",
+            "Lin\u200B\u200C\u200D\u2060\uFEFFe three",
+        )
+
+        val result = LyricsExtractor.extract(description)!!
+
+        assertEquals("Line one\nLine two\nLine three", result)
+        assertTrue(invisible.none { it in result })
+    }
+
+    @Test
+    fun aLineOfOnlyZeroWidthCharactersIsBlank() {
+        val description = text("Lyrics", "\u200B", "\u200C\u200D", "Line one", "\u2060", "\uFEFF", "\u200B", "\u200B", "Line two", "Line three", "\u200B")
+
+        // Blank at the start and the end is dropped; the run of three blank lines inside shrinks to two.
+        assertEquals("Line one\n\n\nLine two\nLine three", LyricsExtractor.extract(description))
+    }
+
+    @Test
+    fun zeroWidthCharactersDoNotHideAMarkerASeparatorOrAHashtag() {
+        assertEquals(block, LyricsExtractor.extract("Ly\u200Bric\u200Cs\u200D\n$block"))
+        assertEquals(block, LyricsExtractor.extract("\u200B가\u2060사\u200B\n$block"))
+
+        val tail = text("Line one", "Line two", "Line three")
+        assertEquals(tail, LyricsExtractor.extract(text("Lyrics", tail, "=\u200B==\u200B", "Tail")))
+        assertEquals(tail, LyricsExtractor.extract(text("Lyrics", tail, "\u200B#example", "Tail")))
+        assertNull(LyricsExtractor.extract(text("\u200B#Lyrics", tail)))
+    }
+
+    // ---- the Hangul filler (U+3164) ----
+
+    @Test
+    fun aMarkerFollowedByTheHangulFillerIsStillAMarker() {
+        assertEquals(block, LyricsExtractor.extract("가사\u3164\n$block"))
+        assertEquals(block, LyricsExtractor.extract("\u3164[가사]\u3164\u3164\n$block"))
+        assertEquals(block, LyricsExtractor.extract("Lyrics\u3164\n$block"))
+    }
+
+    @Test
+    fun aLineOfOnlyTheHangulFillerIsBlank() {
+        val description = text("Lyrics", "\u3164", "Line one", "\u3164", "\u3164\u3164", "\u3164 ", "Line two", "Line three", "\u3164")
+
+        assertEquals("Line one\n\n\nLine two\nLine three", LyricsExtractor.extract(description))
+        assertNull(LyricsExtractor.extract(text("[Lyrics]", "Line one", "\u3164", "Line two", "\u3164")))
+    }
+
+    @Test
+    fun theHangulFillerBecomesASpaceAndItsTrailingOnesAreTrimmed() {
+        val description = text("Lyrics", "Line\u3164one\u3164", "\u3164Line two", "Line three\u3164\u3164")
+
+        assertEquals("Line one\n Line two\nLine three", LyricsExtractor.extract(description))
     }
 
     @Test
