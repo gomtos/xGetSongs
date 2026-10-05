@@ -42,6 +42,22 @@ class YtDlpCommandsTest {
     }
 
     @Test
+    fun downloadSavesTheThumbnailAsJpgNextToTheMp3() {
+        val command = YtDlpCommands.download(TEST_TOOLS, url, Path.of("C:/work/job-1"), "dQw4w9WgXcQ")
+        assertContains(command, "--write-thumbnail")
+        assertEquals("jpg", command[command.indexOf("--convert-thumbnails") + 1])
+        assertEquals(1, command.count { it == "--write-thumbnail" })
+        assertEquals(1, command.count { it == "--convert-thumbnails" })
+    }
+
+    @Test
+    fun thumbnailOptionsComeBeforeTheOutputTemplate() {
+        val command = YtDlpCommands.download(TEST_TOOLS, url, Path.of("C:/work/job-1"), "dQw4w9WgXcQ")
+        assertTrue(command.indexOf("--write-thumbnail") < command.indexOf("-o"))
+        assertTrue(command.indexOf("--convert-thumbnails") < command.indexOf("-o"))
+    }
+
+    @Test
     fun denoIsPassedWithItsPath() {
         val tools = TEST_TOOLS.copy(jsRuntime = Path.of("C:/tools/deno.exe"))
         val command = YtDlpCommands.resolveVideo(tools, url)

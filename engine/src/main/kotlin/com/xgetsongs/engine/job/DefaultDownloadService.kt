@@ -108,7 +108,7 @@ class DefaultDownloadService(
         counters: Counters,
     ) {
         try {
-            val prepared = downloader.prepare(item)
+            val prepared = downloader.prepare(item, request.album)
             events.trySend(JobEvent.ItemStarted(item.rank, item.videoId, prepared.fileName))
             if (!request.overwrite && request.sink.exists(prepared.fileName)) {
                 events.trySend(JobEvent.ItemSkipped(item.rank, "이미 존재"))

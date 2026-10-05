@@ -21,7 +21,10 @@ object YtDlpCommands {
     fun resolveVideo(tools: ToolPaths, url: String): List<String> =
         listOf(ytDlp(tools)) + COMMON + jsRuntimeArgs(tools) + listOf("--no-playlist", "-J", "--", url)
 
-    /** Downloads the audio of [url] as `<outputDir>/<videoId>.mp3`. */
+    /**
+     * Downloads the audio of [url] as `<outputDir>/<videoId>.mp3` and leaves the thumbnail, converted to JPEG, as
+     * `<outputDir>/<videoId>.jpg` (the cover for the ID3 tags).
+     */
     fun download(tools: ToolPaths, url: String, outputDir: Path, videoId: String): List<String> {
         val progress = "download:$PROGRESS_PREFIX|%(progress.status)s|%(progress.downloaded_bytes)s|" +
             "%(progress.total_bytes)s|%(progress.total_bytes_estimate)s"
@@ -33,6 +36,7 @@ object YtDlpCommands {
             "--progress-template", progress,
             "--progress-template", postprocess,
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
+            "--write-thumbnail", "--convert-thumbnails", "jpg",
             "-o", output,
             "--", url,
         )

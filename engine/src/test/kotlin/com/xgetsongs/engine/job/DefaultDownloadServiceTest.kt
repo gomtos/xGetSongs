@@ -5,11 +5,19 @@ import com.xgetsongs.engine.JobHandle
 import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.engine.output.OutputSink
 import com.xgetsongs.engine.process.ProcessRunner
+import com.xgetsongs.engine.testutil.FAKE_TAGGED_MP3
 import com.xgetsongs.engine.testutil.FakeProcessRunner
 import com.xgetsongs.engine.testutil.TEST_TOOLS
+import com.xgetsongs.engine.testutil.downloadRunner
+import com.xgetsongs.engine.testutil.ffmetadataTextOf
+import com.xgetsongs.engine.testutil.ffmpegCommands
+import com.xgetsongs.engine.testutil.isFfmpegCommand
 import com.xgetsongs.engine.testutil.outputDirOf
 import com.xgetsongs.engine.testutil.toolsOf
+import com.xgetsongs.engine.testutil.writeFakeCover
 import com.xgetsongs.engine.testutil.writeFakeMp3
+import com.xgetsongs.engine.testutil.writeFakeTagged
+import com.xgetsongs.engine.testutil.ytDlpCommands
 import com.xgetsongs.engine.tools.ToolPathProvider
 import com.xgetsongs.engine.ytdlp.VideoMeta
 import com.xgetsongs.engine.ytdlp.VideoMetadataSource
@@ -76,11 +84,12 @@ class DefaultDownloadServiceTest {
         overwrite: Boolean = false,
         concurrency: Int = 1,
         sink: OutputSink = LocalFolderSink(outDir),
-    ) = DownloadRequest(items.toList(), sink, overwrite, concurrency)
+        album: String? = null,
+    ) = DownloadRequest(items.toList(), sink, overwrite, concurrency, album)
 
     private suspend fun JobHandle.collect(): List<JobEvent> = events.receiveAsFlow().toList()
 
-    private val succeeding = FakeProcessRunner { command, onStdout, _ ->
+    private val succeeding = downloadRunner { command, onStdout, _ ->
         onStdout("XGSP|downloading|50|100|NA")
         onStdout("XGSPP|started|ExtractAudio")
         writeFakeMp3(command)
@@ -118,7 +127,7 @@ class DefaultDownloadServiceTest {
 
     @Test
     fun progressEventsAreThrottledToWholePercents() = runTest {
-        val noisy = FakeProcessRunner { command, onStdout, _ ->
+        val noisy = downloadRunner { command, onStdout, _ ->
             repeat(1000) { onStdout("XGSP|downloading|$it|1000|NA") }
             writeFakeMp3(command)
             0
@@ -140,13 +149,13 @@ class DefaultDownloadServiceTest {
         assertEquals(1, done(skipped).summary.skipped)
 
         service(succeeding).start(request(item(1), overwrite = true)).collect()
-        assertEquals("mp3-data", Files.readString(outDir.resolve("001 A1 - T1.mp3")))
+        assertEquals(FAKE_TAGGED_MP3, Files.readString(outDir.resolve("001 A1 - T1.mp3")))
     }
 
     @Test
     fun transientFailuresAreRetriedWithBackoff() = runTest {
         val calls = AtomicInteger()
-        val flaky = FakeProcessRunner { command, _, onStderr ->
+        val flaky = downloadRunner { command, _, onStderr ->
             if (calls.incrementAndGet() == 1) {
                 onStderr("ERROR: unable to download video data: HTTP Error 503: Service Unavailable")
                 1
@@ -158,7 +167,8 @@ class DefaultDownloadServiceTest {
 
         val events = service(flaky).start(request(item(1))).collect()
 
-        assertEquals(2, flaky.commands.size)
+        assertEquals(2, flaky.ytDlpCommands.size)
+        assertEquals(1, flaky.ffmpegCommands.size, "only the successful attempt is tagged")
         assertTrue(events.none { it is JobEvent.ItemFailed })
         assertEquals(JobSummary(1, 0, 0), done(events).summary)
     }
@@ -187,7 +197,7 @@ class DefaultDownloadServiceTest {
 
     @Test
     fun otherFailuresDoNotStopTheRemainingItems() = runTest {
-        val runner = FakeProcessRunner { command, _, onStderr ->
+        val runner = downloadRunner { command, _, onStderr ->
             if (command.any { it.contains("vid00000001") }) {
                 onStderr("ERROR: something odd")
                 1
@@ -272,7 +282,7 @@ class DefaultDownloadServiceTest {
     @Test
     fun concurrencyIsLimitedToTheRequestedNumber() = runTest {
         val gate = CompletableDeferred<Unit>()
-        val held = FakeProcessRunner { command, _, _ ->
+        val held = downloadRunner { command, _, _ ->
             gate.await()
             writeFakeMp3(command)
             0
@@ -285,13 +295,14 @@ class DefaultDownloadServiceTest {
         handle.collect()
 
         assertEquals(2, held.maxActive.get())
-        assertEquals(6, held.commands.size)
+        assertEquals(6, held.ytDlpCommands.size)
+        assertEquals(6, held.ffmpegCommands.size)
     }
 
     @Test
     fun concurrencyIsClampedToFour() = runTest {
         val gate = CompletableDeferred<Unit>()
-        val held = FakeProcessRunner { command, _, _ ->
+        val held = downloadRunner { command, _, _ ->
             gate.await()
             writeFakeMp3(command)
             0
@@ -371,7 +382,7 @@ class DefaultDownloadServiceTest {
         assertEquals(setOf(1, 2), events.filterIsInstance<JobEvent.ItemDone>().map { it.rank }.toSet())
         assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
         assertTrue(Files.exists(outDir.resolve("002 A2 - T2.mp3")))
-        assertEquals(2, succeeding.commands.map { outputDirOf(it) }.distinct().size)
+        assertEquals(2, succeeding.ytDlpCommands.map { outputDirOf(it) }.distinct().size)
     }
 
     @Test
@@ -382,7 +393,7 @@ class DefaultDownloadServiceTest {
 
         assertEquals(JobStatus.FAILED, done(events).status)
         assertEquals(1, events.filterIsInstance<JobEvent.ItemFailed>().size)
-        assertEquals(1, succeeding.commands.size)
+        assertEquals(1, succeeding.ytDlpCommands.size)
     }
 
     @Test
@@ -393,7 +404,7 @@ class DefaultDownloadServiceTest {
 
         assertEquals(JobStatus.FAILED, done(events).status)
         assertEquals(1, events.filterIsInstance<JobEvent.ItemFailed>().size)
-        assertEquals(1, succeeding.commands.size)
+        assertEquals(1, succeeding.ytDlpCommands.size)
     }
 
     @Test
@@ -421,7 +432,7 @@ class DefaultDownloadServiceTest {
 
         assertEquals(2, events.filterIsInstance<JobEvent.ItemFailed>().size)
         assertEquals(JobStatus.COMPLETED, done(events).status)
-        assertEquals(2, succeeding.commands.size)
+        assertEquals(2, succeeding.ytDlpCommands.size)
     }
 
     @Test
@@ -431,6 +442,170 @@ class DefaultDownloadServiceTest {
         val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
 
         assertEquals(JobStatus.FAILED, done(events).status)
-        assertEquals(1, succeeding.commands.size)
+        assertEquals(1, succeeding.ytDlpCommands.size)
+    }
+
+    // ---- ID3 tagging ----
+
+    /** A runner whose yt-dlp writes the mp3 (and a cover when [withCover]) and whose ffmpeg records its ffmetadata. */
+    private fun taggingRunner(metadataTexts: MutableList<String>, withCover: Boolean = false) =
+        FakeProcessRunner { command, _, _ ->
+            if (isFfmpegCommand(command)) {
+                metadataTexts += ffmetadataTextOf(command)
+                writeFakeTagged(command)
+            } else {
+                writeFakeMp3(command)
+                if (withCover) writeFakeCover(command)
+            }
+            0
+        }
+
+    @Test
+    fun taggingRunsOncePerItemRightAfterItsDownload() = runTest {
+        val runner = taggingRunner(mutableListOf())
+
+        service(runner).start(request(item(1), item(2))).collect()
+
+        assertEquals(listOf(false, true, false, true), runner.commands.map { isFfmpegCommand(it) })
+        assertEquals(2, runner.ffmpegCommands.size)
+        val tagged = runner.ffmpegCommands.map { command -> Path.of(command[command.indexOf("-i") + 1]).fileName.toString() }
+        assertEquals(listOf("vid00000001.mp3", "vid00000002.mp3"), tagged)
+    }
+
+    @Test
+    fun theTaggedFileIsWhatReachesTheSink() = runTest {
+        service(succeeding).start(request(item(1))).collect()
+
+        assertEquals(FAKE_TAGGED_MP3, Files.readString(outDir.resolve("001 A1 - T1.mp3")))
+    }
+
+    @Test
+    fun theMetadataFileCarriesTheParsedArtistTitleTrackAndAlbum() = runTest {
+        val texts = mutableListOf<String>()
+        val runner = taggingRunner(texts)
+
+        service(runner).start(request(item(5, artist = "Artist Five", track = "Song Five"), album = "My List")).collect()
+
+        assertEquals(
+            listOf(
+                ";FFMETADATA1",
+                "title=Song Five",
+                "artist=Artist Five",
+                "album_artist=Artist Five",
+                "album=My List",
+                "track=5",
+                "comment=https://www.youtube.com/watch?v\\=vid00000005",
+            ),
+            texts.single().removeSuffix("\n").split("\n"),
+        )
+    }
+
+    @Test
+    fun noAlbumLineIsWrittenWhenTheRequestHasNoAlbum() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(taggingRunner(texts)).start(request(item(1))).collect()
+
+        val lines = texts.single().lines()
+        assertTrue(lines.none { it.startsWith("album=") }, texts.single())
+        assertTrue("track=1" in lines)
+    }
+
+    @Test
+    fun tagsKeepTheOriginalTextEvenWhenTheFileNameIsSanitized() = runTest {
+        val texts = mutableListOf<String>()
+
+        val events = service(taggingRunner(texts))
+            .start(request(item(1, artist = "AC/DC", track = "Who Made Who?")))
+            .collect()
+
+        val lines = texts.single().lines()
+        assertTrue("title=Who Made Who?" in lines, texts.single())
+        assertTrue("artist=AC/DC" in lines, texts.single())
+        val fileName = events.filterIsInstance<JobEvent.ItemStarted>().single().fileName
+        assertEquals(FilenameFormatter.format(1, "AC/DC", "Who Made Who?"), fileName)
+        assertFalse('/' in fileName || '?' in fileName, fileName)
+    }
+
+    @Test
+    fun lowConfidenceItemsAreTaggedWithTheSecondParse() = runTest {
+        val texts = mutableListOf<String>()
+        val metadata = VideoMetadataSource { VideoMeta("Dynamite", "BTS - Topic", "BTS", "Dynamite") }
+        val lowConfidence = item(1, artist = "BTS - Topic", track = "Dynamite (Official)", lowConfidence = true)
+
+        service(taggingRunner(texts), metadata = metadata).start(request(lowConfidence)).collect()
+
+        val lines = texts.single().lines()
+        assertTrue("title=Dynamite" in lines, texts.single())
+        assertTrue("artist=BTS" in lines, texts.single())
+        assertTrue("album_artist=BTS" in lines, texts.single())
+    }
+
+    @Test
+    fun aThumbnailLeftByYtDlpBecomesTheCover() = runTest {
+        val runner = taggingRunner(mutableListOf(), withCover = true)
+
+        service(runner).start(request(item(1))).collect()
+
+        val command = runner.ffmpegCommands.single()
+        val inputs = command.indices.filter { command[it] == "-i" }.map { Path.of(command[it + 1]).fileName.toString() }
+        assertEquals(listOf("vid00000001.mp3", "vid00000001.jpg", "vid00000001.ffmeta"), inputs)
+        assertTrue("attached_pic" in command)
+    }
+
+    @Test
+    fun withoutAThumbnailTheTagsAreWrittenWithoutACover() = runTest {
+        val runner = taggingRunner(mutableListOf(), withCover = false)
+
+        val events = service(runner).start(request(item(1))).collect()
+
+        val command = runner.ffmpegCommands.single()
+        assertEquals(2, command.count { it == "-i" })
+        assertFalse("-vf" in command)
+        assertEquals(JobSummary(1, 0, 0), done(events).summary)
+    }
+
+    @Test
+    fun aTaggingFailureFailsOnlyThatItem() = runTest {
+        val runner = FakeProcessRunner { command, _, onStderr ->
+            when {
+                !isFfmpegCommand(command) -> {
+                    writeFakeMp3(command)
+                    0
+                }
+                command.any { it.contains("vid00000001") } -> {
+                    onStderr("Error while writing the tag")
+                    1
+                }
+                else -> {
+                    writeFakeTagged(command)
+                    0
+                }
+            }
+        }
+
+        val events = service(runner).start(request(item(1), item(2))).collect()
+
+        assertEquals(
+            listOf(JobEvent.ItemFailed(1, "ID3 태그를 쓰지 못했습니다: Error while writing the tag")),
+            events.filterIsInstance<JobEvent.ItemFailed>(),
+        )
+        assertEquals(listOf(2), events.filterIsInstance<JobEvent.ItemDone>().map { it.rank })
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)), done(events))
+        assertFalse(Files.exists(outDir.resolve("001 A1 - T1.mp3")), "an untagged file must not reach the sink")
+        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.mp3")))
+        assertEquals(2, runner.ytDlpCommands.size, "a tagging failure is not retried")
+    }
+
+    @Test
+    fun missingFfmpegAbortsTheJob() = runTest {
+        val runner = taggingRunner(mutableListOf())
+
+        val events = service(runner, tools = toolsOf(TEST_TOOLS.copy(ffmpeg = null))).start(request(item(1), item(2))).collect()
+
+        assertEquals(JobStatus.FAILED, done(events).status)
+        assertTrue(events.filterIsInstance<JobEvent.ItemFailed>().single().message.contains("ffmpeg"))
+        assertEquals(1, runner.ytDlpCommands.size)
+        assertEquals(0, runner.ffmpegCommands.size)
     }
 }

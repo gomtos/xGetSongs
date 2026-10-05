@@ -1,6 +1,8 @@
 package com.xgetsongs.engine.job
 
 import com.xgetsongs.engine.process.ProcessRunner
+import com.xgetsongs.engine.tags.Id3Tagger
+import com.xgetsongs.engine.tags.TrackTags
 import com.xgetsongs.engine.tools.ToolPathProvider
 import com.xgetsongs.engine.ytdlp.ErrorClassifier
 import com.xgetsongs.engine.ytdlp.Failure
@@ -18,8 +20,17 @@ import com.xgetsongs.shared.title.TitleParser
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** An item whose final file name is settled. */
-data class PreparedItem(val item: ResolvedItem, val fileName: String)
+/**
+ * An item whose final file name is settled. [artist] and [track] are the parsed originals the file name was made from
+ * (the ID3 tags use them as they are); [album] is the playlist title, or null for a single video.
+ */
+data class PreparedItem(
+    val item: ResolvedItem,
+    val fileName: String,
+    val artist: String,
+    val track: String,
+    val album: String?,
+)
 
 sealed interface DownloadResult {
     /** The finished mp3, still inside the job's work directory. */
@@ -28,17 +39,22 @@ sealed interface DownloadResult {
     data class Failed(val failure: Failure) : DownloadResult
 }
 
-/** Downloads one video's audio with yt-dlp. Knows nothing about concurrency, retries or sinks. */
+/**
+ * Downloads one video's audio with yt-dlp and writes its ID3 tags. Knows nothing about concurrency, retries or sinks.
+ */
 class ItemDownloader(
     private val runner: ProcessRunner,
     private val tools: ToolPathProvider,
     private val metadata: VideoMetadataSource,
 ) {
+    private val tagger = Id3Tagger(runner, tools)
+
     /**
      * Settles the final file name. Items whose artist came from the channel name get a second chance:
-     * the full metadata (yt-dlp `artist`/`track`) is fetched and the title is parsed again.
+     * the full metadata (yt-dlp `artist`/`track`) is fetched and the title is parsed again. [album] is the playlist
+     * title for the ID3 tags, or null for a single video.
      */
-    suspend fun prepare(item: ResolvedItem): PreparedItem {
+    suspend fun prepare(item: ResolvedItem, album: String? = null): PreparedItem {
         var artist = item.artist
         var track = item.track
         if (item.lowConfidence) {
@@ -48,10 +64,13 @@ class ItemDownloader(
                 track = parsed.title
             }
         }
-        return PreparedItem(item, FilenameFormatter.format(item.rank, artist, track))
+        return PreparedItem(item, FilenameFormatter.format(item.rank, artist, track), artist, track, album)
     }
 
-    /** Runs yt-dlp once. [emit] receives throttled [JobEvent.Progress] events. */
+    /**
+     * Runs yt-dlp once, then writes the ID3 tags and the cover (the thumbnail yt-dlp left next to the mp3) into the
+     * mp3. [emit] receives throttled [JobEvent.Progress] events.
+     */
     suspend fun download(prepared: PreparedItem, workDir: Path, emit: (JobEvent) -> Unit): DownloadResult {
         val paths = tools.current()
         if (paths.ytDlp == null) {
@@ -80,6 +99,16 @@ class ItemDownloader(
         if (!Files.isRegularFile(file)) {
             return DownloadResult.Failed(Failure(FailureKind.OTHER, "변환된 mp3 파일을 찾을 수 없습니다."))
         }
+        val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
+        val tags = TrackTags(
+            title = prepared.track,
+            artist = prepared.artist,
+            album = prepared.album,
+            albumArtist = prepared.artist,
+            trackNumber = rank,
+            comment = ParsedInput.Video(videoId).canonicalUrl,
+        )
+        tagger.tag(file, cover, tags)?.let { return DownloadResult.Failed(it) }
         return DownloadResult.Downloaded(file)
     }
 

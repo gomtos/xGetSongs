@@ -20,6 +20,7 @@ import java.nio.file.Path
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -65,6 +66,9 @@ class RealYtDlpIntegrationTest {
     // runBlocking block is a Boolean, so the return type must be declared Unit explicitly.
     @Test
     fun downloadsAShortVideoAsMp3(): Unit = runBlocking {
+        val ffprobePath = Ffprobe.besides(locator.current().ffmpeg)
+        assumeTrue(ffprobePath != null, "ffprobe must be installed next to ffmpeg")
+        val ffprobe = Ffprobe(ffprobePath!!, runner)
         withTimeout(180_000) {
             // "Me at the zoo": the first video ever uploaded to YouTube, 19 seconds long.
             val resolver = YtDlpResolver(runner, locator)
@@ -75,7 +79,11 @@ class RealYtDlpIntegrationTest {
 
                 val service = DefaultDownloadService(ItemDownloader(runner, locator, resolver), root.resolve("work"), this)
                 val events = service
-                    .start(DownloadRequest(resolved.items, LocalFolderSink(outDir), overwrite = false, concurrency = 1))
+                    .start(
+                        DownloadRequest(
+                            resolved.items, LocalFolderSink(outDir), overwrite = false, concurrency = 1, album = "Test Album",
+                        ),
+                    )
                     .events.receiveAsFlow().toList()
 
                 val done = events.last() as JobEvent.JobDone
@@ -85,6 +93,20 @@ class RealYtDlpIntegrationTest {
                 println("downloaded: ${file.fileName} (${Files.size(file)} bytes)")
                 assertTrue(Regex("""001 .+ - .+\.mp3""").matches(file.fileName.toString()), file.fileName.toString())
                 assertTrue(Files.size(file) > 50_000)
+
+                val probed = ffprobe.probe(file)
+                println("tags: ${probed.tags}; streams: ${probed.streams}")
+                assertEquals("Me at the zoo", probed.tags["title"])
+                assertEquals("jawed", probed.tags["artist"])
+                assertEquals("jawed", probed.tags["album_artist"])
+                assertEquals("Test Album", probed.tags["album"])
+                assertEquals("1", probed.tags["track"])
+                assertTrue(probed.tags["comment"].orEmpty().startsWith("https://www.youtube.com/watch?v="), probed.tags.toString())
+                assertEquals(listOf("audio", "video"), probed.streams.map { it.codecType }.sorted(), probed.streams.toString())
+                val cover = probed.streams.single { it.codecType == "video" }
+                assertTrue(cover.attachedPic, "the picture must be an attached cover")
+                assertNotNull(cover.width)
+                assertEquals(cover.width, cover.height, "the cover is cropped to a square")
             } finally {
                 root.toFile().deleteRecursively()
             }
