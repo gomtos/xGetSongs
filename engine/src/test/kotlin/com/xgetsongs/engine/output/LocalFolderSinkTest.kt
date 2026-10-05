@@ -1,6 +1,10 @@
 package com.xgetsongs.engine.output
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -57,6 +61,38 @@ class LocalFolderSinkTest {
 
         sink.put("a.mp3", source("new"), overwrite = true)
         assertEquals("new", Files.readString(target.resolve("a.mp3")))
+    }
+
+    // Replacing a file is not atomic on Windows, so puts of one name that overlap must not fail each other.
+    private suspend fun putTogether(sink: LocalFolderSink, count: Int, overwrite: Boolean): List<Result<Unit>> =
+        withContext(Dispatchers.Default) {
+            val sources = (1..count).map { source("data-$it") }
+            sources.map { async { runCatching { sink.put("same.mp3", it, overwrite) } } }.awaitAll()
+        }
+
+    @Test
+    fun overlappingPutsOfOneNameWithOverwriteAllSucceed() = runTest {
+        val sink = LocalFolderSink(target)
+
+        repeat(20) {
+            val results = putTogether(sink, count = 8, overwrite = true)
+
+            assertEquals(emptyList(), results.mapNotNull { it.exceptionOrNull() })
+            assertTrue(Files.readString(target.resolve("same.mp3")).startsWith("data-"))
+        }
+    }
+
+    @Test
+    fun overlappingPutsOfOneNameWithoutOverwriteLetExactlyOneWin() = runTest {
+        val sink = LocalFolderSink(target)
+
+        repeat(20) {
+            Files.deleteIfExists(target.resolve("same.mp3"))
+            val results = putTogether(sink, count = 8, overwrite = false)
+
+            assertEquals(1, results.count { it.isSuccess })
+            assertTrue(results.mapNotNull { it.exceptionOrNull() }.all { it is FileAlreadyExistsException }, results.toString())
+        }
     }
 
     @Test

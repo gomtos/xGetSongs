@@ -23,6 +23,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.AccessDeniedException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -108,11 +109,10 @@ class DefaultDownloadService(
         counters: Counters,
     ) {
         try {
-            val prepared = downloader.prepare(item, request.album)
+            val prepared = downloader.prepare(item, request.album, request.includeRank)
             events.trySend(JobEvent.ItemStarted(item.rank, item.videoId, prepared.fileName))
             if (!request.overwrite && request.sink.exists(prepared.fileName)) {
-                events.trySend(JobEvent.ItemSkipped(item.rank, "이미 존재"))
-                counters.skipped.incrementAndGet()
+                skip(item, ALREADY_EXISTS, events, counters)
                 return
             }
             val itemDir = withContext(Dispatchers.IO) { Files.createDirectories(workRoot.resolve(item.rank.toString())) }
@@ -120,7 +120,15 @@ class DefaultDownloadService(
             while (true) {
                 when (val result = downloader.download(prepared, itemDir) { events.trySend(it) }) {
                     is DownloadResult.Downloaded -> {
-                        request.sink.put(prepared.fileName, result.file, request.overwrite)
+                        try {
+                            request.sink.put(prepared.fileName, result.file, request.overwrite)
+                        } catch (e: FileAlreadyExistsException) {
+                            // Free when the item started, taken now: another item of this job with the same name (the rank
+                            // is not part of it) or another program was faster. Same outcome as finding it taken up front.
+                            if (request.overwrite || !request.sink.exists(prepared.fileName)) throw e
+                            skip(item, ALREADY_EXISTS, events, counters)
+                            return
+                        }
                         events.trySend(JobEvent.ItemDone(item.rank, prepared.fileName))
                         counters.succeeded.incrementAndGet()
                         return
@@ -129,8 +137,7 @@ class DefaultDownloadService(
                         val failure = result.failure
                         when (failure.kind) {
                             FailureKind.UNAVAILABLE -> {
-                                events.trySend(JobEvent.ItemSkipped(item.rank, failure.message))
-                                counters.skipped.incrementAndGet()
+                                skip(item, failure.message, events, counters)
                                 return
                             }
                             FailureKind.TRANSIENT -> {
@@ -172,6 +179,11 @@ class DefaultDownloadService(
         }
     }
 
+    private fun skip(item: ResolvedItem, reason: String, events: Channel<JobEvent>, counters: Counters) {
+        events.trySend(JobEvent.ItemSkipped(item.rank, reason))
+        counters.skipped.incrementAndGet()
+    }
+
     private fun fail(item: ResolvedItem, message: String, events: Channel<JobEvent>, counters: Counters) {
         events.trySend(JobEvent.ItemFailed(item.rank, message))
         counters.failed.incrementAndGet()
@@ -180,5 +192,6 @@ class DefaultDownloadService(
     private companion object {
         const val MIN_CONCURRENCY = 1
         const val MAX_CONCURRENCY = 4
+        const val ALREADY_EXISTS = "이미 존재"
     }
 }

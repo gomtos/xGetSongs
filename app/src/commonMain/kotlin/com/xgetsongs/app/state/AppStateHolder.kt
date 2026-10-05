@@ -41,6 +41,18 @@ class AppStateHolder(
 
     fun onOverwrite(value: Boolean) = _state.update { it.copy(overwrite = value) }
 
+    /**
+     * Turning the rank in the file name on or off rewrites the names shown in the preview. Rows of a running or finished
+     * job show the names the server really used, so they are left alone.
+     */
+    fun onIncludeRank(value: Boolean) = _state.update { state ->
+        if (state.phase != Phase.PREVIEW) {
+            state.copy(includeRank = value)
+        } else {
+            state.copy(includeRank = value, rows = state.rows.map { it.withFileName(value) })
+        }
+    }
+
     fun onConcurrency(value: Int) = _state.update { it.copy(concurrency = value.coerceIn(1, 4)) }
 
     /** Changing the rank of a single video rewrites its file name in the preview. */
@@ -49,7 +61,7 @@ class AppStateHolder(
         if (state.resolved?.kind != InputKind.VIDEO) {
             state.copy(singleRank = rank)
         } else {
-            state.copy(singleRank = rank, rows = state.rows.map { it.withRank(rank) })
+            state.copy(singleRank = rank, rows = state.rows.map { it.withRank(rank, state.includeRank) })
         }
     }
 
@@ -60,8 +72,8 @@ class AppStateHolder(
         jobId = null
         _state.update {
             UiState(
-                outputDir = it.outputDir, overwrite = it.overwrite, concurrency = it.concurrency,
-                tools = it.tools,
+                outputDir = it.outputDir, overwrite = it.overwrite, includeRank = it.includeRank,
+                concurrency = it.concurrency, tools = it.tools,
             )
         }
     }
@@ -129,7 +141,7 @@ class AppStateHolder(
                     state.copy(
                         phase = Phase.PREVIEW,
                         resolved = response,
-                        rows = response.items.map { previewRow(it, state.singleRank, response.kind) },
+                        rows = response.items.map { previewRow(it, state.singleRank, response.kind, state.includeRank) },
                         summary = null,
                         jobStatus = null,
                     )
@@ -144,21 +156,24 @@ class AppStateHolder(
         }
     }
 
-    private fun previewRow(item: ResolvedItem, singleRank: Int, kind: InputKind): ItemRow {
+    /** The server's `expectedFileName` always carries the rank, so the shown name is built here to honour [includeRank]. */
+    private fun previewRow(item: ResolvedItem, singleRank: Int, kind: InputKind, includeRank: Boolean): ItemRow {
         val row = ItemRow(
             item = item,
             fileName = item.expectedFileName,
             status = if (item.available) ItemStatus.Ready else ItemStatus.Skipped(item.unavailableReason.orEmpty()),
         )
-        return if (kind == InputKind.VIDEO) row.withRank(singleRank) else row
+        return if (kind == InputKind.VIDEO) row.withRank(singleRank, includeRank) else row.withFileName(includeRank)
     }
 
-    private fun ItemRow.withRank(rank: Int): ItemRow {
+    private fun ItemRow.withRank(rank: Int, includeRank: Boolean): ItemRow {
         if (!item.available) return this
-        return copy(
-            item = item.copy(rank = rank),
-            fileName = FilenameFormatter.format(rank, item.artist, item.track),
-        )
+        return copy(item = item.copy(rank = rank)).withFileName(includeRank)
+    }
+
+    private fun ItemRow.withFileName(includeRank: Boolean): ItemRow {
+        if (!item.available) return this
+        return copy(fileName = FilenameFormatter.format(item.rank, item.artist, item.track, includeRank))
     }
 
     // ---- downloading ----------------------------------------------------------------------
@@ -215,6 +230,7 @@ class AppStateHolder(
         overwrite = state.overwrite,
         singleRank = state.singleRank,
         concurrency = state.concurrency,
+        includeRank = state.includeRank,
     )
 
     /**

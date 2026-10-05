@@ -52,9 +52,10 @@ class ItemDownloader(
     /**
      * Settles the final file name. Items whose artist came from the channel name get a second chance:
      * the full metadata (yt-dlp `artist`/`track`) is fetched and the title is parsed again. [album] is the playlist
-     * title for the ID3 tags, or null for a single video.
+     * title for the ID3 tags, or null for a single video. [includeRank] puts the rank in front of the file name; the
+     * tags keep the rank as the track number either way.
      */
-    suspend fun prepare(item: ResolvedItem, album: String? = null): PreparedItem {
+    suspend fun prepare(item: ResolvedItem, album: String? = null, includeRank: Boolean = true): PreparedItem {
         var artist = item.artist
         var track = item.track
         if (item.lowConfidence) {
@@ -64,7 +65,7 @@ class ItemDownloader(
                 track = parsed.title
             }
         }
-        return PreparedItem(item, FilenameFormatter.format(item.rank, artist, track), artist, track, album)
+        return PreparedItem(item, FilenameFormatter.format(item.rank, artist, track, includeRank), artist, track, album)
     }
 
     /**

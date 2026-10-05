@@ -1,7 +1,7 @@
 package com.xgetsongs.shared.filename
 
 /**
- * Builds `{rank 3 digits} {artist} - {title}.mp3` file names and playlist folder names
+ * Builds `{rank 3 digits} {artist} - {title}.mp3` file names (the rank is optional) and playlist folder names
  * that are safe on Windows.
  */
 object FilenameFormatter {
@@ -30,10 +30,16 @@ object FilenameFormatter {
     private val RESERVED_DEVICE_NAMES = setOf("CON", "PRN", "AUX", "NUL") +
         (1..9).flatMap { listOf("COM$it", "LPT$it") }
 
-    fun format(rank: Int, artist: String, title: String): String {
+    /**
+     * Builds `{rank 3 digits} {artist} - {title}.mp3`, or `{artist} - {title}.mp3` when [includeRank] is false. The length
+     * limits are the same either way ([MAX_BASE_LENGTH] for the whole name, so the title gets what the prefix leaves).
+     * [rank] must be in [MIN_RANK]..[MAX_RANK] even when it is not printed.
+     */
+    fun format(rank: Int, artist: String, title: String, includeRank: Boolean = true): String {
         require(rank in MIN_RANK..MAX_RANK) { "rank must be in $MIN_RANK..$MAX_RANK but was $rank" }
         val cleanArtist = truncate(sanitize(artist), MAX_ARTIST_LENGTH)
-        val prefix = "${rank.toString().padStart(3, '0')} $cleanArtist - "
+        val rankPrefix = if (includeRank) "${rank.toString().padStart(3, '0')} " else ""
+        val prefix = "$rankPrefix$cleanArtist - "
         val cleanTitle = sanitize(title).ifEmpty { EMPTY_TITLE_PLACEHOLDER }
         val titleBudget = MAX_BASE_LENGTH - prefix.length
         val base = (prefix + truncate(cleanTitle, titleBudget)).trimEnd('.', ' ')

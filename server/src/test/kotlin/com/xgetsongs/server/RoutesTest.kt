@@ -28,6 +28,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import kotlinx.serialization.builtins.serializer
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -52,7 +53,8 @@ class RoutesTest {
             setBody(request)
         }
 
-    private fun options(dir: Path? = outDir, singleRank: Int = 1) = JobOptions(outputDir = dir?.toString(), singleRank = singleRank)
+    private fun options(dir: Path? = outDir, singleRank: Int = 1, includeRank: Boolean = true) =
+        JobOptions(outputDir = dir?.toString(), singleRank = singleRank, includeRank = includeRank)
 
     // ---- /resolve --------------------------------------------------------------------------
 
@@ -124,6 +126,50 @@ class RoutesTest {
         val request = fakes.downloads.requests.single()
         assertTrue(request.overwrite)
         assertEquals(3, request.concurrency)
+    }
+
+    @Test
+    fun theRankGoesIntoFileNamesUnlessTheClientTurnsItOff() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+        // A client that never heard of the option sends no key at all.
+        client.post("/jobs") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"resolveId":"${resolved.resolveId}","options":{"outputDir":${ApiJson.instance.encodeToString(String.serializer(), outDir.toString())}}}""")
+        }
+
+        assertEquals(listOf(true, true), fakes.downloads.requests.map { it.includeRank })
+    }
+
+    @Test
+    fun theIncludeRankOptionReachesTheEngineForAPlaylist() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(includeRank = false)))
+        client.startJob(JobRequest(resolved.resolveId, options(includeRank = false), ranks = listOf(3)))
+
+        assertEquals(listOf(false, false), fakes.downloads.requests.map { it.includeRank })
+    }
+
+    @Test
+    fun theIncludeRankOptionReachesTheEngineForASingleVideoAndKeepsItsRank() = testApplication {
+        val fakes = TestServices(resolver = FakeResolver(response = sampleVideo()))
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(singleRank = 42, includeRank = false)))
+
+        val request = fakes.downloads.requests.single()
+        assertFalse(request.includeRank)
+        assertEquals(listOf(42), request.items.map { it.rank }, "the rank is still passed on: it is the ID3 track number")
     }
 
     @Test

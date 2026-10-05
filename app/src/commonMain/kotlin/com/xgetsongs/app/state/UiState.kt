@@ -34,6 +34,8 @@ data class UiState(
     val input: String = "",
     val outputDir: String = "",
     val overwrite: Boolean = false,
+    /** Whether file names start with the rank (`001 `). Sent with the job; the preview names follow it. */
+    val includeRank: Boolean = true,
     val concurrency: Int = 2,
     val singleRank: Int = 1,
     val resolved: ResolveResponse? = null,

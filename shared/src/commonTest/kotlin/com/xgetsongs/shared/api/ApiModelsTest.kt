@@ -2,6 +2,7 @@ package com.xgetsongs.shared.api
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ApiModelsTest {
@@ -46,6 +47,26 @@ class ApiModelsTest {
         assertEquals(JobRequest("r1", JobOptions(), null), request)
         assertEquals(2, request.options.concurrency)
         assertEquals(1, request.options.singleRank)
+    }
+
+    @Test
+    fun theRankStaysInTheFileNameUnlessTheOptionIsTurnedOff() {
+        assertTrue(JobOptions().includeRank)
+        val omitted = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"outputDir":"D:/Music"}}""")
+        assertTrue(omitted.options.includeRank, "a client that does not know the option keeps the old behaviour")
+        val off = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"includeRank":false}}""")
+        assertFalse(off.options.includeRank)
+    }
+
+    @Test
+    fun theIncludeRankOptionSurvivesARoundTrip() {
+        for (value in listOf(true, false)) {
+            val request = JobRequest("r1", JobOptions(outputDir = "D:/Music", overwrite = true, includeRank = value), listOf(3))
+            val encoded = json.encodeToString(JobRequest.serializer(), request)
+
+            assertTrue(encoded.contains("\"includeRank\":$value"), encoded)
+            assertEquals(request, json.decodeFromString(JobRequest.serializer(), encoded))
+        }
     }
 
     @Test

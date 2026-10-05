@@ -86,7 +86,8 @@ class DefaultDownloadServiceTest {
         concurrency: Int = 1,
         sink: OutputSink = LocalFolderSink(outDir),
         album: String? = null,
-    ) = DownloadRequest(items.toList(), sink, overwrite, concurrency, album)
+        includeRank: Boolean = true,
+    ) = DownloadRequest(items.toList(), sink, overwrite, concurrency, album, includeRank)
 
     private suspend fun JobHandle.collect(): List<JobEvent> = events.receiveAsFlow().toList()
 
@@ -650,5 +651,179 @@ class DefaultDownloadServiceTest {
         )
         assertEquals(emptyList<List<String>>(), runner.commands.toList(), "no process may be started without ffmpeg")
         assertEquals(JobSummary(0, 0, 1), done(events).summary)
+    }
+
+    // ---- file names without the rank ----
+
+    private fun filesIn(dir: Path): List<String> =
+        if (Files.isDirectory(dir)) Files.list(dir).use { files -> files.map { it.fileName.toString() }.sorted().toList() } else emptyList()
+
+    @Test
+    fun withoutTheRankTheFileIsNamedArtistDashTitleButTheTagKeepsTheRank() = runTest {
+        val texts = mutableListOf<String>()
+        val recorded = mutableListOf<String>()
+        val recordingSink = object : OutputSink {
+            private val inner = LocalFolderSink(outDir)
+            override suspend fun exists(fileName: String): Boolean {
+                recorded += "exists:$fileName"
+                return inner.exists(fileName)
+            }
+
+            override suspend fun put(fileName: String, source: Path, overwrite: Boolean) {
+                recorded += "put:$fileName"
+                inner.put(fileName, source, overwrite)
+            }
+        }
+
+        val events = service(taggingRunner(texts))
+            .start(request(item(5, artist = "Artist Five", track = "Song Five"), sink = recordingSink, album = "My List", includeRank = false))
+            .collect()
+
+        val name = "Artist Five - Song Five.mp3"
+        assertEquals(listOf("exists:$name", "put:$name"), recorded)
+        assertEquals(listOf(name), filesIn(outDir))
+        assertEquals(JobEvent.ItemStarted(5, "vid00000005", name), events.filterIsInstance<JobEvent.ItemStarted>().single())
+        assertEquals(JobEvent.ItemDone(5, name), events.filterIsInstance<JobEvent.ItemDone>().single())
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
+        val lines = texts.single().lines()
+        assertTrue("track=5" in lines, "the track number is the rank whatever the file name says: ${texts.single()}")
+        assertTrue("title=Song Five" in lines, texts.single())
+        assertTrue("artist=Artist Five" in lines, texts.single())
+    }
+
+    @Test
+    fun withoutTheRankLowConfidenceItemsAreRenamedFromFullMetadataToo() = runTest {
+        val metadata = VideoMetadataSource { VideoMeta("Dynamite", "BTS - Topic", "BTS", "Dynamite") }
+        val lowConfidence = item(1, artist = "BTS - Topic", track = "Dynamite", lowConfidence = true)
+
+        val events = service(succeeding, metadata = metadata).start(request(lowConfidence, includeRank = false)).collect()
+
+        assertEquals("BTS - Dynamite.mp3", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
+        assertEquals(listOf("BTS - Dynamite.mp3"), filesIn(outDir))
+    }
+
+    @Test
+    fun withTheRankTurnedOnTheNameKeepsTheRankPrefix() = runTest {
+        val events = service(succeeding).start(request(item(5, artist = "Artist Five", track = "Song Five"), includeRank = true)).collect()
+
+        assertEquals("005 Artist Five - Song Five.mp3", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
+        assertEquals(listOf("005 Artist Five - Song Five.mp3"), filesIn(outDir))
+    }
+
+    // ---- two items of one job with the same file name ----
+
+    /** Two entries that parse to the same artist and title: without the rank their file names are equal. */
+    private val firstTwin = item(1, artist = "Same", track = "Song")
+    private val secondTwin = item(2, artist = "Same", track = "Song")
+
+    /** A runner whose yt-dlp calls all wait for [gate], so every item has passed its existence check before any file is put. */
+    private fun heldRunner(gate: CompletableDeferred<Unit>) = downloadRunner { command, _, _ ->
+        gate.await()
+        writeFakeMp3(command)
+        0
+    }
+
+    @Test
+    fun twoItemsWithTheSameNameOneAfterAnotherWriteOneFileAndSkipTheSecond() = runTest {
+        val runner = taggingRunner(mutableListOf())
+
+        val events = service(runner).start(request(firstTwin, secondTwin, concurrency = 1, includeRank = false)).collect()
+
+        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
+        assertEquals(listOf(JobEvent.ItemDone(1, "Same - Song.mp3")), events.filterIsInstance<JobEvent.ItemDone>())
+        assertEquals(listOf(JobEvent.ItemSkipped(2, "이미 존재")), events.filterIsInstance<JobEvent.ItemSkipped>())
+        assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 1, 0)), done(events))
+    }
+
+    @Test
+    fun twoItemsWithTheSameNameDownloadedAtTheSameTimeWriteOneFileAndSkipTheOther() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val held = heldRunner(gate)
+        val handle = service(held).start(request(firstTwin, secondTwin, concurrency = 2, includeRank = false))
+        awaitStarted(held, 2)
+        gate.complete(Unit)
+
+        val events = handle.collect()
+
+        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
+        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")), "the delivered file is the tagged one")
+        assertEquals(1, events.count { it is JobEvent.ItemDone }, events.toString())
+        assertEquals(1, events.filterIsInstance<JobEvent.ItemSkipped>().size, events.toString())
+        assertEquals("이미 존재", events.filterIsInstance<JobEvent.ItemSkipped>().single().reason)
+        assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 1, 0)), done(events))
+    }
+
+    @Test
+    fun withOverwriteTwoItemsWithTheSameNameOneAfterAnotherBothFinishAndOneFileRemains() = runTest {
+        val events = service(succeeding).start(request(firstTwin, secondTwin, overwrite = true, concurrency = 1, includeRank = false)).collect()
+
+        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
+        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")))
+        assertEquals(
+            listOf(JobEvent.ItemDone(1, "Same - Song.mp3"), JobEvent.ItemDone(2, "Same - Song.mp3")),
+            events.filterIsInstance<JobEvent.ItemDone>().sortedBy { it.rank },
+            events.toString(),
+        )
+        assertTrue(events.none { it is JobEvent.ItemSkipped || it is JobEvent.ItemFailed }, events.toString())
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(2, 0, 0)), done(events))
+    }
+
+    @Test
+    fun withOverwriteTwoItemsWithTheSameNameDownloadedAtTheSameTimeBothFinishAndOneFileRemains() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val held = heldRunner(gate)
+        val handle = service(held).start(request(firstTwin, secondTwin, overwrite = true, concurrency = 2, includeRank = false))
+        awaitStarted(held, 2)
+        gate.complete(Unit)
+
+        val events = handle.collect()
+
+        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
+        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")))
+        assertEquals(
+            listOf(JobEvent.ItemDone(1, "Same - Song.mp3"), JobEvent.ItemDone(2, "Same - Song.mp3")),
+            events.filterIsInstance<JobEvent.ItemDone>().sortedBy { it.rank },
+            events.toString(),
+        )
+        assertTrue(events.none { it is JobEvent.ItemSkipped || it is JobEvent.ItemFailed }, events.toString())
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(2, 0, 0)), done(events))
+    }
+
+    @Test
+    fun aNameTakenBetweenTheCheckAndThePutIsSkippedNotFailed() = runTest {
+        // What another item of the job, or another program, causes: the check says free, the put finds the name taken.
+        val racedSink = object : OutputSink {
+            private var taken = false
+
+            override suspend fun exists(fileName: String) = taken
+
+            override suspend fun put(fileName: String, source: Path, overwrite: Boolean) {
+                taken = true
+                throw FileAlreadyExistsException(outDir.resolve(fileName).toString())
+            }
+        }
+
+        val events = service(succeeding).start(request(item(1), sink = racedSink)).collect()
+
+        assertEquals(listOf(JobEvent.ItemSkipped(1, "이미 존재")), events.filterIsInstance<JobEvent.ItemSkipped>())
+        assertTrue(events.none { it is JobEvent.ItemFailed || it is JobEvent.ItemDone }, events.toString())
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(0, 1, 0)), done(events))
+    }
+
+    @Test
+    fun withOverwriteAFileThatCannotBeReplacedStillFailsTheItem() = runTest {
+        val sink = object : OutputSink {
+            override suspend fun exists(fileName: String) = true
+            override suspend fun put(fileName: String, source: Path, overwrite: Boolean) {
+                throw FileAlreadyExistsException(outDir.resolve(fileName).toString())
+            }
+        }
+
+        val events = service(succeeding).start(request(item(1), overwrite = true, sink = sink)).collect()
+
+        assertEquals(listOf(1), events.filterIsInstance<JobEvent.ItemFailed>().map { it.rank })
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(0, 0, 1)), done(events))
     }
 }

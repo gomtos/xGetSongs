@@ -9,6 +9,10 @@ import java.nio.file.Path
 interface OutputSink {
     suspend fun exists(fileName: String): Boolean
 
-    /** Moves the finished file at [source] into the sink under [fileName]. */
+    /**
+     * Moves the finished file at [source] into the sink under [fileName].
+     *
+     * @throws java.nio.file.FileAlreadyExistsException when [overwrite] is false and [fileName] is already taken
+     */
     suspend fun put(fileName: String, source: Path, overwrite: Boolean)
 }

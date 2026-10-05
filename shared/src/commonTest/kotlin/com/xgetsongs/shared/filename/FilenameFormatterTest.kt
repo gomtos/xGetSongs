@@ -3,6 +3,7 @@ package com.xgetsongs.shared.filename
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class FilenameFormatterTest {
@@ -71,6 +72,105 @@ class FilenameFormatterTest {
         val name = FilenameFormatter.format(1, "A", "😀".repeat(200))
         val base = name.removeSuffix(".mp3")
         assertTrue(base.length <= FilenameFormatter.MAX_BASE_LENGTH)
+        base.forEachIndexed { i, c ->
+            if (c.isHighSurrogate()) assertTrue(base.getOrNull(i + 1)?.isLowSurrogate() == true, "lone high surrogate at $i")
+            if (c.isLowSurrogate()) assertTrue(base.getOrNull(i - 1)?.isHighSurrogate() == true, "lone low surrogate at $i")
+        }
+    }
+
+    // ---- without the rank ----
+
+    @Test
+    fun theRankIsIncludedUnlessTheCallerLeavesItOut() {
+        assertEquals("001 A - B.mp3", FilenameFormatter.format(1, "A", "B"))
+        assertEquals("001 A - B.mp3", FilenameFormatter.format(1, "A", "B", includeRank = true))
+        assertEquals(FilenameFormatter.format(42, "소연", "노래"), FilenameFormatter.format(42, "소연", "노래", true))
+    }
+
+    @Test
+    fun withoutTheRankTheNameIsArtistDashTitle() {
+        val name = FilenameFormatter.format(1, "A", "B", includeRank = false)
+
+        assertEquals("A - B.mp3", name)
+        assertFalse(name.startsWith(" "), "no leading space where the rank would have been")
+    }
+
+    @Test
+    fun withoutTheRankTheDocumentedExampleLosesOnlyThePrefix() {
+        assertEquals(
+            "소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).mp3",
+            FilenameFormatter.format(1, "소연 (SOYEON)", "퇴사할게여 (Narr. 기안84)", includeRank = false),
+        )
+    }
+
+    @Test
+    fun withoutTheRankTheNameDoesNotDependOnTheRank() {
+        val names = listOf(1, 7, 999).map { FilenameFormatter.format(it, "A", "B", includeRank = false) }
+
+        assertEquals(listOf("A - B.mp3"), names.distinct())
+    }
+
+    @Test
+    fun withoutTheRankTheRankIsStillValidated() {
+        assertFailsWith<IllegalArgumentException> { FilenameFormatter.format(0, "A", "B", includeRank = false) }
+        assertFailsWith<IllegalArgumentException> { FilenameFormatter.format(1000, "A", "B", includeRank = false) }
+    }
+
+    @Test
+    fun withoutTheRankForbiddenCharactersAreStillReplaced() {
+        assertEquals("A - ＼／：＊？＂＜＞｜.mp3", FilenameFormatter.format(1, "A", "\\/:*?\"<>|", includeRank = false))
+        assertEquals("AC／DC - Who Made Who？.mp3", FilenameFormatter.format(1, "AC/DC", "Who Made Who?", includeRank = false))
+    }
+
+    @Test
+    fun withoutTheRankControlCharactersAndTrailingDotsAndSpacesAreStillDropped() {
+        assertEquals("A - Mr.mp3", FilenameFormatter.format(1, "A", "Mr.\t\n. ", includeRank = false))
+        assertEquals("A - B.C.mp3", FilenameFormatter.format(1, "A", "B.C", includeRank = false))
+    }
+
+    @Test
+    fun withoutTheRankAnEmptyTitleStillGetsAPlaceholder() {
+        assertEquals("A - untitled.mp3", FilenameFormatter.format(1, "A", "  ", includeRank = false))
+        assertEquals("A - untitled.mp3", FilenameFormatter.format(1, "A", "", includeRank = false))
+    }
+
+    @Test
+    fun withoutTheRankALongTitleFillsTheWholeBaseBudget() {
+        val name = FilenameFormatter.format(12, "ARTIST", "가".repeat(500), includeRank = false)
+        val base = name.removeSuffix(".mp3")
+
+        assertEquals(FilenameFormatter.MAX_BASE_LENGTH, base.length)
+        assertTrue(base.startsWith("ARTIST - 가"), base)
+        assertTrue(base.endsWith("…"))
+        // 180 - "ARTIST - ".length = 171 title units: 170 characters and the ellipsis.
+        assertEquals("ARTIST - " + "가".repeat(170) + "…", base)
+    }
+
+    @Test
+    fun withoutTheRankAnArtistOfEightyCharactersIsKeptAndTheTitleGetsTheRest() {
+        val artist = "A".repeat(FilenameFormatter.MAX_ARTIST_LENGTH)
+
+        val base = FilenameFormatter.format(1, artist, "T".repeat(500), includeRank = false).removeSuffix(".mp3")
+
+        assertEquals(FilenameFormatter.MAX_BASE_LENGTH, base.length)
+        assertTrue(base.startsWith("$artist - T"), base)
+        assertEquals("$artist - " + "T".repeat(96) + "…", base)
+    }
+
+    @Test
+    fun withoutTheRankAnArtistOverEightyCharactersIsCutWithAnEllipsis() {
+        val expected = "A".repeat(FilenameFormatter.MAX_ARTIST_LENGTH - 1) + "… - Song.mp3"
+
+        assertEquals(expected, FilenameFormatter.format(1, "A".repeat(300), "Song", includeRank = false))
+        assertEquals(expected, FilenameFormatter.format(1, "A".repeat(81), "Song", includeRank = false))
+    }
+
+    @Test
+    fun withoutTheRankTruncationNeverSplitsASurrogatePair() {
+        val base = FilenameFormatter.format(1, "A", "😀".repeat(200), includeRank = false).removeSuffix(".mp3")
+
+        assertTrue(base.length <= FilenameFormatter.MAX_BASE_LENGTH)
+        assertTrue(base.startsWith("A - 😀"), base)
         base.forEachIndexed { i, c ->
             if (c.isHighSurrogate()) assertTrue(base.getOrNull(i + 1)?.isLowSurrogate() == true, "lone high surrogate at $i")
             if (c.isLowSurrogate()) assertTrue(base.getOrNull(i - 1)?.isHighSurrogate() == true, "lone low surrogate at $i")

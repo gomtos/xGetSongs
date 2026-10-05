@@ -6,6 +6,7 @@ import com.xgetsongs.app.api.ApiError
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.Stage
 import com.xgetsongs.shared.input.RejectReason
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -110,6 +111,186 @@ class AppStateHolderTest {
         assertEquals(1, holder.state.value.singleRank)
         holder.onSingleRank(5000)
         assertEquals(999, holder.state.value.singleRank)
+    }
+
+    // ---- rank in the file name ------------------------------------------------------------
+
+    @Test
+    fun theRankIsPartOfTheFileNameUnlessTheUserTurnsItOff() = runTest {
+        val (_, holder) = holder()
+
+        assertTrue(holder.state.value.includeRank)
+        holder.onIncludeRank(false)
+        assertEquals(false, holder.state.value.includeRank)
+        holder.onIncludeRank(true)
+        assertTrue(holder.state.value.includeRank)
+    }
+
+    @Test
+    fun turningTheRankOffRewritesTheFileNamesOfThePreview() = runTest {
+        val (_, holder) = resolved()
+
+        holder.onIncludeRank(false)
+
+        assertEquals(Phase.PREVIEW, holder.state.value.phase)
+        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals(listOf(1, 2, 3), holder.state.value.rows.map { it.item.rank }, "the position column stays")
+        assertEquals(ItemStatus.Ready, holder.row(1).status)
+    }
+
+    @Test
+    fun turningTheRankBackOnRestoresTheRankedFileNames() = runTest {
+        val (_, holder) = resolved()
+
+        holder.onIncludeRank(false)
+        holder.onIncludeRank(true)
+
+        assertEquals("001 A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("003 A3 - T3.mp3", holder.row(3).fileName)
+    }
+
+    @Test
+    fun unavailableRowsKeepTheirTextWhenTheOptionChanges() = runTest {
+        val unavailable = ResolvedItem(
+            rank = 2, videoId = "vid00000002", title = "[Private video]", available = false,
+            unavailableReason = "비공개 영상", expectedFileName = "kept as it was.mp3",
+        )
+        val api = FakeApi().apply { resolveResponse = FakeApi.playlist().copy(items = listOf(FakeApi.item(1), unavailable)) }
+        val (_, holder) = resolved(api)
+
+        holder.onIncludeRank(false)
+
+        assertEquals("kept as it was.mp3", holder.row(2).fileName)
+        assertEquals(ItemStatus.Skipped("비공개 영상"), holder.row(2).status)
+        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
+    }
+
+    @Test
+    fun resolvingWithTheRankOffShowsFileNamesWithoutTheRank() = runTest {
+        val (_, holder) = holder()
+        holder.onIncludeRank(false)
+        holder.onInput(playlistId)
+
+        holder.resolve()
+        runCurrent()
+
+        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("A3 - T3.mp3", holder.row(3).fileName)
+        assertNull(holder.row(2).fileName)
+    }
+
+    @Test
+    fun aVideoResolvedWithTheRankOffShowsAFileNameWithoutTheRank() = runTest {
+        val api = FakeApi().apply { resolveResponse = FakeApi.video() }
+        val (_, holder) = holder(api)
+        holder.onIncludeRank(false)
+        holder.onSingleRank(42)
+        holder.onInput("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+        holder.resolve()
+        runCurrent()
+
+        assertEquals("IU - Love.mp3", holder.row(42).fileName)
+    }
+
+    @Test
+    fun changingTheSingleVideoRankKeepsTheOption() = runTest {
+        val api = FakeApi().apply { resolveResponse = FakeApi.video() }
+        val (_, holder) = resolved(api)
+        holder.onIncludeRank(false)
+
+        holder.onSingleRank(42)
+
+        assertEquals("IU - Love.mp3", holder.row(42).fileName)
+        assertEquals(42, holder.state.value.singleRank)
+        holder.onIncludeRank(true)
+        assertEquals("042 IU - Love.mp3", holder.row(42).fileName, "the rank typed by the user is what comes back")
+    }
+
+    @Test
+    fun theOptionChosenWhileResolvingAppliesToTheResult() = runTest {
+        val (api, holder) = holder()
+        holder.onInput(playlistId)
+        holder.resolve()
+        holder.onIncludeRank(false) // the lookup has not finished yet: there is nothing to rewrite
+        runCurrent()
+
+        assertEquals(Phase.PREVIEW, holder.state.value.phase)
+        assertEquals(listOf(playlistId), api.resolveInputs)
+        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
+    }
+
+    @Test
+    fun startingSendsTheIncludeRankOption() = runTest {
+        val (api, holder) = resolved()
+
+        holder.startDownload()
+        runCurrent()
+        assertTrue(api.jobRequests.single().options.includeRank, "on by default")
+    }
+
+    @Test
+    fun startingWithTheRankOffSendsIt() = runTest {
+        val (api, holder) = resolved()
+        holder.onIncludeRank(false)
+
+        holder.startDownload()
+        runCurrent()
+
+        assertEquals(false, api.jobRequests.single().options.includeRank)
+    }
+
+    @Test
+    fun aRetrySendsTheOptionToo() = runTest {
+        val (api, holder) = finishedWithOneFailure()
+        holder.onIncludeRank(false)
+
+        holder.retryFailed()
+        runCurrent()
+
+        assertEquals(listOf(3), api.jobRequests.last().ranks)
+        assertEquals(false, api.jobRequests.last().options.includeRank)
+    }
+
+    @Test
+    fun turningTheRankOffWhileAJobRunsLeavesTheRowsOfThatJobAlone() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Real - Name.mp3"))
+        runCurrent()
+
+        holder.onIncludeRank(false)
+
+        assertEquals(Phase.RUNNING, holder.state.value.phase)
+        assertEquals(false, holder.state.value.includeRank)
+        assertEquals("001 Real - Name.mp3", holder.row(1).fileName)
+        assertEquals("003 A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals(ItemStatus.Downloading(null), holder.row(1).status)
+    }
+
+    @Test
+    fun turningTheRankOffAfterAJobFinishedLeavesTheRealFileNamesAlone() = runTest {
+        val (_, holder) = finishedWithOneFailure()
+
+        holder.onIncludeRank(false)
+
+        assertEquals(Phase.FINISHED, holder.state.value.phase)
+        assertEquals("001 A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("003 A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals(false, holder.state.value.includeRank)
+    }
+
+    @Test
+    fun resetKeepsTheIncludeRankOption() = runTest {
+        val (_, holder) = resolved()
+        holder.onIncludeRank(false)
+
+        holder.reset()
+
+        assertEquals(Phase.IDLE, holder.state.value.phase)
+        assertEquals(false, holder.state.value.includeRank)
     }
 
     // ---- downloading ----------------------------------------------------------------------

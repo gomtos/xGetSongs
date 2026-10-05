@@ -72,6 +72,10 @@ fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (St
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = state.overwrite, onCheckedChange = holder::onOverwrite, enabled = enabled)
             Text("기존 파일 덮어쓰기")
+            Checkbox(checked = state.includeRank, onCheckedChange = holder::onIncludeRank, enabled = enabled)
+            Text("파일명에 순번 포함")
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("동시 다운로드", modifier = Modifier.width(100.dp))
             (1..4).forEach { n ->
                 FilterChip(
