@@ -16,7 +16,7 @@ data class TrackTags(
     /** TRCK: the playlist position, written without leading zeros. */
     val trackNumber: Int,
     /**
-     * COMM: the video URL. Written as a real `COMM` frame by [Id3Comment] after ffmpeg is done (ffmpeg itself can only
+     * COMM: the video URL. Written as a real `COMM` frame by [Id3Frames] after ffmpeg is done (ffmpeg itself can only
      * write a comment as a `TXXX` frame); a null or blank comment writes no frame.
      */
     val comment: String?,

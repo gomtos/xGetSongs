@@ -9,15 +9,23 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
 /**
- * Adds a `COMM` (comment) frame to the ID3v2.3 tag at the start of an mp3. ffmpeg's ID3 muxer cannot write one: it
- * turns a `comment` entry into a user-defined `TXXX` frame, which most players do not show as the comment. So the
- * engine patches the tag after ffmpeg has finished. Everything else in the file is copied byte for byte.
+ * Adds a `COMM` (comment) frame and a `USLT` (unsynchronised lyrics) frame to the ID3v2.3 tag at the start of an mp3.
+ * ffmpeg's ID3 muxer cannot write either: it turns a `comment` or `lyrics` entry into a user-defined `TXXX` frame,
+ * which most players do not show as the comment or the lyrics. So the engine patches the tag after ffmpeg has
+ * finished. Everything else in the file is copied byte for byte.
  */
-internal object Id3Comment {
+internal object Id3Frames {
     private const val HEADER_SIZE = 10
     private const val FRAME_HEADER_SIZE = 10
     private const val MAX_TAG_SIZE = 0x0FFFFFFF // 4 bytes of 7 bits
     private const val UNSUPPORTED = "unsupported ID3 tag layout"
+
+    // The language of a lyrics frame: Korean when the text has a Hangul syllable, else English (the tag's language
+    // field is a hint, there is no detection beyond this).
+    private const val LANGUAGE_KOREAN = "kor"
+    private const val LANGUAGE_ENGLISH = "eng"
+    private const val HANGUL_SYLLABLES_FIRST = '가' // 가
+    private const val HANGUL_SYLLABLES_LAST = '힣' // 힣
 
     // The flags byte of an ID3v2.3 header is %abc00000: a = unsynchronisation, b = extended header, c = experimental.
     // Only the experimental bit (0x20) leaves the layout alone, so it passes through. The other two change how the tag
@@ -25,21 +33,28 @@ internal object Id3Comment {
     private const val FLAGS_WE_CANNOT_REWRITE = 0x80 or 0x40 or 0x1F
 
     /**
-     * Rewrites [file] so that its ID3v2.3 tag also holds a `COMM` frame with [text]; the frame goes right after the
-     * last existing frame, in front of any padding. A file without an ID3v2 tag gets a new tag holding only the
-     * comment. Blocking.
+     * Rewrites [file] so that its ID3v2.3 tag also holds a `COMM` frame with [comment] and a `USLT` frame with
+     * [lyrics], in one pass. The frames go right after the last existing frame, in front of any padding, `COMM` first.
+     * A file without an ID3v2 tag gets a new tag holding only the new frames. A null or blank value writes no frame;
+     * when both are null or blank nothing is done and the file is not even opened. Blocking.
      *
      * @throws IOException when the file cannot be read or written, or its tag is one that is not safe to extend
      * (another version, unsynchronisation, an extended header, flag bits that v2.3 does not define, or broken sizes).
      * The file is left untouched.
      */
-    fun addComment(file: Path, text: String) {
+    fun add(file: Path, comment: String?, lyrics: String?) {
+        val frames = listOfNotNull(
+            comment?.takeIf { it.isNotBlank() }?.let(::commentFrame),
+            lyrics?.takeIf { it.isNotBlank() }?.let(::lyricsFrame),
+        ).fold(ByteArray(0)) { all, next -> all + next }
+        if (frames.isEmpty()) return
+
         val temp = file.resolveSibling(file.fileName.toString() + ".id3tmp")
         var failure: Throwable? = null
         try {
             val fileSize = Files.size(file)
             Files.newInputStream(file).use { input ->
-                Files.newOutputStream(temp).use { output -> rewrite(input, output, fileSize, commentFrame(text)) }
+                Files.newOutputStream(temp).use { output -> rewrite(input, output, fileSize, frames) }
             }
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING)
         } catch (e: Throwable) {
@@ -56,12 +71,12 @@ internal object Id3Comment {
         }
     }
 
-    private fun rewrite(input: InputStream, output: OutputStream, fileSize: Long, frame: ByteArray) {
+    private fun rewrite(input: InputStream, output: OutputStream, fileSize: Long, frames: ByteArray) {
         val header = input.readNBytes(HEADER_SIZE)
         if (!hasId3Magic(header)) {
-            // No tag at all: a new one that only holds the comment, then the file as it was.
-            output.write(newHeader(frame.size))
-            output.write(frame)
+            // No tag at all: a new one that only holds the new frames, then the file as it was.
+            output.write(newHeader(frames.size))
+            output.write(frames)
             output.write(header)
             input.transferTo(output)
             return
@@ -76,14 +91,14 @@ internal object Id3Comment {
         if (tagSize > fileSize - HEADER_SIZE) throw IOException("invalid ID3 tag: the file ends inside the tag")
         val tag = input.readNBytes(tagSize)
         val framesEnd = endOfFrames(tag)
-        val newSize = tagSize + frame.size
+        val newSize = tagSize + frames.size
         if (newSize > MAX_TAG_SIZE) throw IOException("invalid ID3 tag: too large")
 
-        // The frame goes after the last real frame; the padding that followed it keeps following.
+        // The new frames go after the last real frame; the padding that followed it keeps following.
         output.write(header.copyOfRange(0, 6))
         output.write(syncsafe(newSize))
         output.write(tag, 0, framesEnd)
-        output.write(frame)
+        output.write(frames)
         output.write(tag, framesEnd, tagSize - framesEnd)
         input.transferTo(output)
     }
@@ -149,8 +164,30 @@ internal object Id3Comment {
             body.write(text.toByteArray(Charsets.UTF_16LE))
         }
         val payload = body.toByteArray()
-        return "COMM".toByteArray(Charsets.ISO_8859_1) + bigEndian(payload.size) + byteArrayOf(0, 0) + payload
+        return frame("COMM", payload)
     }
+
+    /**
+     * A `USLT` frame: id, big-endian size, no flags, then encoding byte 1 (UTF-16 with a byte order mark), the language
+     * (`kor` when the text has a Hangul syllable, else `eng`), an empty content descriptor (its own mark, then the two
+     * zero bytes that end it) and the lyrics (their own mark, UTF-16LE, no terminator). Line breaks are written as
+     * CR LF; a CR LF that is already there stays one.
+     */
+    private fun lyricsFrame(text: String): ByteArray {
+        val lyrics = text.replace("\r\n", "\n").replace("\n", "\r\n")
+        val language = if (lyrics.any { it in HANGUL_SYLLABLES_FIRST..HANGUL_SYLLABLES_LAST }) LANGUAGE_KOREAN else LANGUAGE_ENGLISH
+        val body = ByteArrayOutputStream()
+        body.write(1)
+        body.write(language.toByteArray(Charsets.ISO_8859_1))
+        body.write(byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0, 0))
+        body.write(byteArrayOf(0xFF.toByte(), 0xFE.toByte()))
+        body.write(lyrics.toByteArray(Charsets.UTF_16LE))
+        return frame("USLT", body.toByteArray())
+    }
+
+    /** An ID3v2.3 frame: the 4-character [id], the plain big-endian size of [payload] (not syncsafe), two zero flag bytes, [payload]. */
+    private fun frame(id: String, payload: ByteArray) =
+        id.toByteArray(Charsets.ISO_8859_1) + bigEndian(payload.size) + byteArrayOf(0, 0) + payload
 
     private fun bigEndian(value: Int) = byteArrayOf(
         (value ushr 24).toByte(),

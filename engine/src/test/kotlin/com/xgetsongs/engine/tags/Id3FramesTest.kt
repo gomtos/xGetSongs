@@ -15,8 +15,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class Id3CommentTest {
-    private val dir: Path = Files.createTempDirectory("xgs-id3comment")
+class Id3FramesTest {
+    private val dir: Path = Files.createTempDirectory("xgs-id3frames")
     private val file = dir.resolve("track.mp3")
 
     @AfterTest
@@ -74,7 +74,7 @@ class Id3CommentTest {
     fun addsAnAsciiCommentRightAfterTheLastFrameAndBeforeThePadding() {
         Files.write(file, tagged(listOf(title, artist), padding = 10, audio = audio))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         assertContentEquals(tagged(listOf(title, artist, commHi), padding = 10, audio = audio), Files.readAllBytes(file))
         assertEquals(
@@ -87,7 +87,7 @@ class Id3CommentTest {
     fun addsANonAsciiCommentAsUtf16WithAByteOrderMarkAndAnEmptyDescription() {
         Files.write(file, tagged(listOf(title, artist), padding = 10, audio = audio))
 
-        Id3Comment.addComment(file, "한")
+        Id3Frames.add(file, "한", null)
 
         assertContentEquals(tagged(listOf(title, artist, commHan), padding = 10, audio = audio), Files.readAllBytes(file))
         assertEquals(
@@ -100,7 +100,7 @@ class Id3CommentTest {
     fun aTextWithASingleNonAsciiCharacterUsesUtf16ForTheWholeText() {
         Files.write(file, tagged(listOf(title), padding = 0, audio = audio))
 
-        Id3Comment.addComment(file, "café \"x\" https://www.youtube.com/watch?v=abc\r\nline two 🎵")
+        Id3Frames.add(file, "café \"x\" https://www.youtube.com/watch?v=abc\r\nline two 🎵", null)
 
         assertEquals(
             listOf(Id3v2Tag.Comment(1, "eng", "", "café \"x\" https://www.youtube.com/watch?v=abc\r\nline two 🎵")),
@@ -112,7 +112,7 @@ class Id3CommentTest {
     fun worksWhenTheTagHasNoPadding() {
         Files.write(file, tagged(listOf(title), padding = 0, audio = audio))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         assertContentEquals(tagged(listOf(title, commHi), padding = 0, audio = audio), Files.readAllBytes(file))
     }
@@ -123,7 +123,7 @@ class Id3CommentTest {
         val big = frame("TIT2", bytes(0) + ascii("x".repeat(109)))
         Files.write(file, tagged(listOf(big), padding = 0, audio = audio))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         val result = Files.readAllBytes(file)
         assertContentEquals(bytes(0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 1, 9), result.copyOfRange(0, 10))
@@ -137,7 +137,7 @@ class Id3CommentTest {
         val frames = listOf(title, artist, textFrame("TALB", "Album"), picture)
         Files.write(file, tagged(frames, padding = 10, audio = mp3Audio))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         val result = Files.readAllBytes(file)
         assertContentEquals(tagged(frames + listOf(commHi), padding = 10, audio = mp3Audio), result)
@@ -148,7 +148,7 @@ class Id3CommentTest {
     fun aFileWithoutAnId3HeaderGetsAFreshTagWithOnlyTheComment() {
         Files.write(file, audio)
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         assertContentEquals(ascii("ID3") + bytes(3, 0, 0) + syncsafe(commHi.size) + commHi + audio, Files.readAllBytes(file))
         assertEquals(listOf("COMM"), Id3v2Tag.read(file).ids)
@@ -158,7 +158,7 @@ class Id3CommentTest {
     fun anEmptyFileGetsAFreshTagToo() {
         Files.write(file, ByteArray(0))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         assertContentEquals(ascii("ID3") + bytes(3, 0, 0) + syncsafe(commHi.size) + commHi, Files.readAllBytes(file))
     }
@@ -167,7 +167,7 @@ class Id3CommentTest {
     fun noTemporaryFileStaysBehind() {
         Files.write(file, tagged(listOf(title), padding = 10, audio = audio))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         assertEquals(listOf("track.mp3"), filesInDir())
     }
@@ -187,7 +187,7 @@ class Id3CommentTest {
         for ((name, content) in cases) {
             Files.write(file, content)
 
-            val error = assertFailsWith<IOException>(name) { Id3Comment.addComment(file, "hi") }
+            val error = assertFailsWith<IOException>(name) { Id3Frames.add(file, "hi", null) }
 
             assertEquals("unsupported ID3 tag layout", error.message, name)
             assertContentEquals(content, Files.readAllBytes(file), name)
@@ -199,7 +199,7 @@ class Id3CommentTest {
     fun theExperimentalFlagDoesNotChangeTheLayoutAndIsKept() {
         Files.write(file, tagged(listOf(title, artist), padding = 10, audio = audio, flags = 0x20))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         val result = Files.readAllBytes(file)
         assertContentEquals(tagged(listOf(title, artist, commHi), padding = 10, audio = audio, flags = 0x20), result)
@@ -211,7 +211,7 @@ class Id3CommentTest {
     fun aTagWithAHeaderOnlyGetsTheCommentAndACorrectSize() {
         Files.write(file, tagged(emptyList(), padding = 0, audio = audio))
 
-        Id3Comment.addComment(file, "hi")
+        Id3Frames.add(file, "hi", null)
 
         val result = Files.readAllBytes(file)
         assertContentEquals(tagged(listOf(commHi), padding = 0, audio = audio), result)
@@ -227,7 +227,7 @@ class Id3CommentTest {
         val blocker = Files.createDirectory(dir.resolve("track.mp3.id3tmp"))
         Files.write(blocker.resolve("keep.txt"), bytes(1))
 
-        val error = assertFailsWith<IOException> { Id3Comment.addComment(file, "hi") }
+        val error = assertFailsWith<IOException> { Id3Frames.add(file, "hi", null) }
 
         assertFalse(error is DirectoryNotEmptyException, "the cleanup failure replaced the real error: $error")
         assertTrue(error.suppressed.any { it is DirectoryNotEmptyException }, "the cleanup failure is attached: ${error.suppressed.toList()}")
@@ -245,7 +245,7 @@ class Id3CommentTest {
         for ((name, content) in cases) {
             Files.write(file, content)
 
-            assertFailsWith<IOException>(name) { Id3Comment.addComment(file, "hi") }
+            assertFailsWith<IOException>(name) { Id3Frames.add(file, "hi", null) }
 
             assertContentEquals(content, Files.readAllBytes(file), name)
             assertEquals(listOf("track.mp3"), filesInDir(), name)
@@ -254,7 +254,7 @@ class Id3CommentTest {
 
     @Test
     fun aMissingFileIsAnIoException() {
-        assertFailsWith<NoSuchFileException> { Id3Comment.addComment(dir.resolve("missing.mp3"), "hi") }
+        assertFailsWith<NoSuchFileException> { Id3Frames.add(dir.resolve("missing.mp3"), "hi", null) }
         assertEquals(emptyList<String>(), filesInDir())
     }
 }
