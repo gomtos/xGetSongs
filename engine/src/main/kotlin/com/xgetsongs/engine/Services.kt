@@ -22,9 +22,11 @@ interface Resolver {
 
 /**
  * [items] must already carry their final ranks. [concurrency] is clamped to 1..4 by the service. [album] is the
- * playlist title written into every file's ID3 tags, or null for a single video. [includeRank] says whether the file
- * names start with the rank; the ID3 track number is the rank either way. Without the rank two items can end up with
- * the same file name: the first one to finish wins, the other is skipped (or, with [overwrite], replaces it).
+ * fallback for the ID3 album tag: a file gets the video's own album when yt-dlp knows one, else this playlist title.
+ * It is null for a single video, which then gets no album tag unless it has an album of its own. [includeRank] says
+ * whether the file names start with the rank; the ID3 track number is the rank either way. Without the rank two items
+ * can end up with the same file name: the first one to finish wins, the other is skipped (or, with [overwrite],
+ * replaces it).
  */
 data class DownloadRequest(
     val items: List<ResolvedItem>,

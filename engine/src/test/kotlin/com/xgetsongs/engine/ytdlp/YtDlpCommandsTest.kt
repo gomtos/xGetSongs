@@ -58,6 +58,20 @@ class YtDlpCommandsTest {
     }
 
     @Test
+    fun downloadWritesTheInfoJsonBeforeTheOutputTemplate() {
+        val command = YtDlpCommands.download(TEST_TOOLS, url, Path.of("C:/work/job-1"), "dQw4w9WgXcQ")
+        assertEquals(1, command.count { it == "--write-info-json" })
+        assertTrue(command.indexOf("--write-info-json") < command.indexOf("-o"))
+        assertContains(command, "--no-playlist") // keeps it to one video, so one info file
+    }
+
+    @Test
+    fun onlyTheDownloadCommandWritesAnInfoJson() {
+        assertFalse(YtDlpCommands.resolveVideo(TEST_TOOLS, url).contains("--write-info-json"))
+        assertFalse(YtDlpCommands.resolvePlaylist(TEST_TOOLS, url).contains("--write-info-json"))
+    }
+
+    @Test
     fun denoIsPassedWithItsPath() {
         val tools = TEST_TOOLS.copy(jsRuntime = Path.of("C:/tools/deno.exe"))
         val command = YtDlpCommands.resolveVideo(tools, url)

@@ -9,6 +9,7 @@ import com.xgetsongs.engine.ytdlp.Failure
 import com.xgetsongs.engine.ytdlp.FailureKind
 import com.xgetsongs.engine.ytdlp.ProgressParser
 import com.xgetsongs.engine.ytdlp.ProgressUpdate
+import com.xgetsongs.engine.ytdlp.VideoInfoFile
 import com.xgetsongs.engine.ytdlp.VideoMetadataSource
 import com.xgetsongs.engine.ytdlp.YtDlpCommands
 import com.xgetsongs.shared.api.JobEvent
@@ -22,7 +23,8 @@ import java.nio.file.Path
 
 /**
  * An item whose final file name is settled. [artist] and [track] are the parsed originals the file name was made from
- * (the ID3 tags use them as they are); [album] is the playlist title, or null for a single video.
+ * (the ID3 tags use them as they are); [album] is only the fallback for the album tag, used when the video has no
+ * album of its own: the playlist title, or null for a single video.
  */
 data class PreparedItem(
     val item: ResolvedItem,
@@ -51,9 +53,9 @@ class ItemDownloader(
 
     /**
      * Settles the final file name. Items whose artist came from the channel name get a second chance:
-     * the full metadata (yt-dlp `artist`/`track`) is fetched and the title is parsed again. [album] is the playlist
-     * title for the ID3 tags, or null for a single video. [includeRank] puts the rank in front of the file name; the
-     * tags keep the rank as the track number either way.
+     * the full metadata (yt-dlp `artist`/`track`) is fetched and the title is parsed again. [album] is the fallback
+     * for the album tag (the playlist title, or null for a single video), used when the video has no album of its own.
+     * [includeRank] puts the rank in front of the file name; the tags keep the rank as the track number either way.
      */
     suspend fun prepare(item: ResolvedItem, album: String? = null, includeRank: Boolean = true): PreparedItem {
         var artist = item.artist
@@ -70,7 +72,9 @@ class ItemDownloader(
 
     /**
      * Runs yt-dlp once, then writes the ID3 tags and the cover (the thumbnail yt-dlp left next to the mp3) into the
-     * mp3. [emit] receives throttled [JobEvent.Progress] events.
+     * mp3. The album tag is the video's own album from the info file yt-dlp left next to the mp3, else
+     * [PreparedItem.album]; a missing or broken info file never fails the item. [emit] receives throttled
+     * [JobEvent.Progress] events.
      */
     suspend fun download(prepared: PreparedItem, workDir: Path, emit: (JobEvent) -> Unit): DownloadResult {
         val paths = tools.current()
@@ -105,10 +109,11 @@ class ItemDownloader(
             return DownloadResult.Failed(Failure(FailureKind.OTHER, "변환된 mp3 파일을 찾을 수 없습니다."))
         }
         val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
+        val album = VideoInfoFile.readAlbum(workDir.resolve("$videoId.info.json")) ?: prepared.album
         val tags = TrackTags(
             title = prepared.track,
             artist = prepared.artist,
-            album = prepared.album,
+            album = album,
             albumArtist = prepared.artist,
             trackNumber = rank,
             comment = ParsedInput.Video(videoId).canonicalUrl,

@@ -59,6 +59,11 @@ fun writeFakeCover(command: List<String>) {
     Files.writeString(outputDirOf(command).resolve("${videoIdOf(command)}.jpg"), "jpg-data")
 }
 
+/** Pretends yt-dlp also wrote the video's info file: creates `<dir>/<id>.info.json` holding [json]. */
+fun writeFakeInfo(command: List<String>, json: String) {
+    Files.writeString(outputDirOf(command).resolve("${videoIdOf(command)}.info.json"), json)
+}
+
 /** The audio bytes of what the fake ffmpeg writes. Nothing after ffmpeg may change them. */
 const val FAKE_AUDIO = "tagged-mp3-data"
 

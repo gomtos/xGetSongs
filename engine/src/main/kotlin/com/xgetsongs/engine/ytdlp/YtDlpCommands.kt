@@ -23,7 +23,8 @@ object YtDlpCommands {
 
     /**
      * Downloads the audio of [url] as `<outputDir>/<videoId>.mp3` and leaves the thumbnail, converted to JPEG, as
-     * `<outputDir>/<videoId>.jpg` (the cover for the ID3 tags).
+     * `<outputDir>/<videoId>.jpg` (the cover for the ID3 tags) and the video's info as `<outputDir>/<videoId>.info.json`
+     * (where [VideoInfoFile] reads the album from).
      */
     fun download(tools: ToolPaths, url: String, outputDir: Path, videoId: String): List<String> {
         val progress = "download:$PROGRESS_PREFIX|%(progress.status)s|%(progress.downloaded_bytes)s|" +
@@ -37,6 +38,7 @@ object YtDlpCommands {
             "--progress-template", postprocess,
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--write-thumbnail", "--convert-thumbnails", "jpg",
+            "--write-info-json",
             "-o", output,
             "--", url,
         )

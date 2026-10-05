@@ -7,14 +7,20 @@ import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.process.SystemProcessRunner
 import com.xgetsongs.engine.tools.ToolLocator
+import com.xgetsongs.engine.ytdlp.VideoInfoFile
+import com.xgetsongs.engine.ytdlp.YtDlpCommands
 import com.xgetsongs.engine.ytdlp.YtDlpResolver
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.Stage
+import com.xgetsongs.shared.input.ParsedInput
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Tag
 import java.nio.file.Files
@@ -24,6 +30,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -88,8 +95,67 @@ class RealYtDlpIntegrationTest {
         }
     }
 
-    // JUnit does not discover test methods with a non-void return type, and the last expression of this
-    // runBlocking block is a Boolean, so the return type must be declared Unit explicitly.
+    /**
+     * Runs the real [YtDlpCommands.download] command for [videoId] into [dir], with [extraOptions] put in front of the `--`
+     * separator, and prints what yt-dlp left in [dir].
+     */
+    private suspend fun runDownload(videoId: String, dir: Path, extraOptions: List<String> = emptyList()) {
+        val base = YtDlpCommands.download(locator.current(), ParsedInput.Video(videoId).canonicalUrl, dir, videoId)
+        val separator = base.lastIndexOf("--")
+        val command = base.take(separator) + extraOptions + base.drop(separator)
+        val output = CopyOnWriteArrayList<String>()
+        val exitCode = runner.run(command, onStdout = { output += it }, onStderr = { output += it })
+        assertEquals(0, exitCode, "yt-dlp failed: $output")
+        println("yt-dlp left in the work folder: " + Files.list(dir).use { files -> files.map { "${it.fileName} (${Files.size(it)} bytes)" }.sorted().toList() })
+    }
+
+    // JUnit does not discover test methods with a non-void return type, and the last expression of the runBlocking
+    // blocks below is not Unit, so the return type must be declared Unit explicitly.
+    @Test
+    fun writesTheInfoFileNextToTheMp3AndTheTestVideoHasNoAlbum(): Unit = runBlocking {
+        withTimeout(180_000) {
+            // "Me at the zoo" again: 19 seconds, uploaded by a person, so YouTube knows no album for it.
+            val videoId = "jNQXAC9IVRw"
+            val dir = Files.createTempDirectory("xgs-info-integration")
+            try {
+                runDownload(videoId, dir)
+
+                val info = dir.resolve("$videoId.info.json")
+                assertTrue(Files.isRegularFile(dir.resolve("$videoId.mp3")), "the mp3 must be there: ${Files.list(dir).use { it.toList() }}")
+                assertTrue(Files.isRegularFile(info), "yt-dlp must write <videoId>.info.json next to the mp3: ${Files.list(dir).use { it.toList() }}")
+                val root = Json.parseToJsonElement(Files.readString(info)).jsonObject
+                assertEquals(videoId, root.getValue("id").jsonPrimitive.content)
+                println("info file: ${Files.size(info)} bytes; album=${root["album"]}, artist=${root["artist"]}, track=${root["track"]}")
+                assertNull(VideoInfoFile.readAlbum(info), "the test video has no album")
+            } finally {
+                dir.toFile().deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun readsTheAlbumOfAMusicVideoFromItsInfoFileWithoutDownloadingAudio(): Unit = runBlocking {
+        withTimeout(120_000) {
+            // Metadata only: --skip-download keeps yt-dlp from fetching any audio.
+            // This depends on the music metadata YouTube currently shows for this video; if it changes, pick another track
+            // that YouTube lists with an album.
+            val videoId = "kcx0a2OAhN0"
+            val dir = Files.createTempDirectory("xgs-info-integration")
+            try {
+                runDownload(videoId, dir, listOf("--skip-download"))
+
+                val info = dir.resolve("$videoId.info.json")
+                assertTrue(Files.isRegularFile(info), "yt-dlp must write <videoId>.info.json: ${Files.list(dir).use { it.toList() }}")
+                assertTrue(Files.notExists(dir.resolve("$videoId.mp3")), "no audio may be downloaded")
+                val root = Json.parseToJsonElement(Files.readString(info)).jsonObject
+                println("info file: ${Files.size(info)} bytes; album=${root["album"]}, artist=${root["artist"]}, track=${root["track"]}")
+                assertEquals("Love poem", VideoInfoFile.readAlbum(info))
+            } finally {
+                dir.toFile().deleteRecursively()
+            }
+        }
+    }
+
     @Test
     fun downloadsAShortVideoAsMp3(): Unit = runBlocking {
         val ffprobePath = Ffprobe.besides(locator.current().ffmpeg)

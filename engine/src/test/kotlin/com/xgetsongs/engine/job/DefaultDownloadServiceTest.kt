@@ -16,6 +16,7 @@ import com.xgetsongs.engine.testutil.isFfmpegCommand
 import com.xgetsongs.engine.testutil.outputDirOf
 import com.xgetsongs.engine.testutil.toolsOf
 import com.xgetsongs.engine.testutil.writeFakeCover
+import com.xgetsongs.engine.testutil.writeFakeInfo
 import com.xgetsongs.engine.testutil.writeFakeMp3
 import com.xgetsongs.engine.testutil.writeFakeTagged
 import com.xgetsongs.engine.testutil.ytDlpCommands
@@ -651,6 +652,94 @@ class DefaultDownloadServiceTest {
         )
         assertEquals(emptyList<List<String>>(), runner.commands.toList(), "no process may be started without ffmpeg")
         assertEquals(JobSummary(0, 0, 1), done(events).summary)
+    }
+
+    // ---- the album tag: the video's own album, else the request's album ----
+
+    /** Like [taggingRunner], and yt-dlp also writes the video's info file holding [infoJson] (no file when null). */
+    private fun infoRunner(metadataTexts: MutableList<String>, infoJson: String?) =
+        FakeProcessRunner { command, _, _ ->
+            if (isFfmpegCommand(command)) {
+                metadataTexts += ffmetadataTextOf(command)
+                writeFakeTagged(command)
+            } else {
+                writeFakeMp3(command)
+                if (infoJson != null) writeFakeInfo(command, infoJson)
+            }
+            0
+        }
+
+    private fun albumLines(metadataText: String) = metadataText.lines().filter { it.startsWith("album=") }
+
+    @Test
+    fun theVideosOwnAlbumBeatsThePlaylistTitle() = runTest {
+        val texts = mutableListOf<String>()
+        val runner = infoRunner(texts, """{"id":"vid00000001","album":"Palette"}""")
+
+        val events = service(runner).start(request(item(1), album = "My List")).collect()
+
+        assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
+        assertTrue("album_artist=A1" in texts.single().lines(), "the album artist stays the per-track artist: ${texts.single()}")
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
+        assertEquals(listOf("001 A1 - T1.mp3"), filesIn(outDir), "the info file stays in the work folder")
+    }
+
+    @Test
+    fun withoutAnInfoFileTheAlbumIsThePlaylistTitle() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, infoJson = null)).start(request(item(1), album = "My List")).collect()
+
+        assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
+    }
+
+    @Test
+    fun anInfoFileWithoutAnAlbumFallsBackToThePlaylistTitle() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"id":"vid00000001","title":"x","artist":"A1"}""")).start(request(item(1), album = "My List")).collect()
+
+        assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
+    }
+
+    @Test
+    fun aBlankInfoAlbumFallsBackToThePlaylistTitle() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"album":"   "}""")).start(request(item(1), album = "My List")).collect()
+
+        assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
+    }
+
+    @Test
+    fun aSingleVideoWithAnInfoAlbumGetsThatAlbum() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"album":"Palette"}""")).start(request(item(1), album = null)).collect()
+
+        assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
+    }
+
+    @Test
+    fun aSingleVideoWithoutAnyAlbumGetsNoAlbumLine() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"id":"vid00000001"}""")).start(request(item(1), album = null)).collect()
+
+        assertEquals(emptyList<String>(), albumLines(texts.single()), texts.single())
+        assertTrue("track=1" in texts.single().lines(), texts.single())
+    }
+
+    @Test
+    fun aCorruptInfoFileFallsBackAndTheItemStillSucceeds() = runTest {
+        val texts = mutableListOf<String>()
+
+        val events = service(infoRunner(texts, """{"album":"Pal""")).start(request(item(1), album = "My List")).collect()
+
+        assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
+        assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
+        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
     }
 
     // ---- file names without the rank ----

@@ -9,7 +9,7 @@ data class TrackTags(
     val title: String,
     /** TPE1. */
     val artist: String,
-    /** TALB: the playlist title, or null for a single video. */
+    /** TALB: the video's own album, else the playlist title; null (no frame) for a single video without an album. */
     val album: String?,
     /** TPE2. */
     val albumArtist: String,
