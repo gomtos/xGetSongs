@@ -165,3 +165,43 @@ git commit -m "feat(engine): write ID3 tags and cover art after each download" -
 git add server app engine README.md
 git commit -m "feat: save playlists in a folder named after them and show the destination" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 4: Option to leave the rank out of the file name
+
+Added after the user's request "파일명에 순번(001 ~ 999) 포함 여부를 옵션으로 처리해". Default stays "include" (nothing changes unless the user turns it off).
+
+**Files:**
+- Modify: `shared/src/commonMain/kotlin/com/xgetsongs/shared/filename/FilenameFormatter.kt`, `shared/src/commonMain/kotlin/com/xgetsongs/shared/api/ApiModels.kt`
+- Modify: `engine/src/main/kotlin/com/xgetsongs/engine/Services.kt`, `engine/.../job/ItemDownloader.kt`, `engine/.../job/DefaultDownloadService.kt`
+- Modify: `server/src/main/kotlin/com/xgetsongs/server/Application.kt`
+- Modify: `app/src/commonMain/kotlin/com/xgetsongs/app/state/UiState.kt`, `.../state/AppStateHolder.kt`, `.../ui/OptionsPanel.kt`
+- Modify tests next to each changed class; Modify: `README.md`
+
+**Interfaces:**
+- Produces: `FilenameFormatter.format(rank: Int, artist: String, title: String, includeRank: Boolean = true): String`; `JobOptions.includeRank: Boolean = true` (last parameter); `DownloadRequest.includeRank: Boolean = true` (last parameter); `ItemDownloader.prepare(item: ResolvedItem, album: String? = null, includeRank: Boolean = true)`; `UiState.includeRank: Boolean = true`; `AppStateHolder.onIncludeRank(value: Boolean)`.
+
+**Behaviour (spec 6.3, already written)**
+
+1. `format(..., includeRank = false)` returns `{artist} - {title}.mp3`: no rank, no leading space. The artist is cut at `MAX_ARTIST_LENGTH`, the base name (without extension) at `MAX_BASE_LENGTH`, the title budget is `MAX_BASE_LENGTH - "{artist} - ".length`, an empty title still becomes `untitled`, trailing dots/spaces are trimmed, forbidden characters are mapped as before. `rank` is still validated with `require` (1..999) even when it is not printed (callers always have a valid rank). With `includeRank = true` the result is byte-for-byte what it is today.
+2. `JobOptions.includeRank` travels in `POST /jobs`; `Application.kt` copies it into `DownloadRequest.includeRank`; `DefaultDownloadService` calls `downloader.prepare(item, request.album, request.includeRank)`. The ID3 track number (TRCK) is unchanged: it is still the rank, whatever the option says. The `resolve` response (`ResolvedItem.expectedFileName`) is unchanged (computed with the rank).
+3. App: `UiState.includeRank` (default true, kept by `reset()` like `overwrite`), `AppStateHolder.onIncludeRank(value)` updates it and, when the screen shows a preview (`phase == PREVIEW`), recomputes the displayed `fileName` of every available row with `FilenameFormatter.format(item.rank, item.artist, item.track, includeRank)`; rows of unavailable items keep their text. Resolving (`doResolve`/`previewRow`) and the single-video rank change (`withRank`) must use the current `includeRank` too. `jobOptions(state)` passes it. `OptionsPanel` gets a checkbox with the label `파일명에 순번 포함` next to the overwrite checkbox, disabled while a job runs. The rank column of the preview list stays (it is the position, also used for the tag).
+4. Duplicate names: without the rank, two entries of one playlist can produce the same file name. Establish with tests what `DefaultDownloadService` does today when two items of one job get the same `fileName` (use a fake sink or `LocalFolderSink` on a temp dir): with `overwrite = false` exactly one file is written and the other item ends as `ItemSkipped` (not `ItemFailed`, no crash, no job abort) and with `overwrite = true` the job completes with one file on disk and both items done. If the current code does something else (for example the second item fails with a raw exception), fix it minimally so the outcomes above hold, keeping every existing test green, and report it. Note the retry flow (`ranks`) is unaffected.
+5. `README.md`: in the file-name section add one sentence about the option and the duplicate-name note.
+
+- [ ] **Step 1: Write failing tests**
+  - `FilenameFormatterTest`: `includeRank = false` for a simple case, a Korean case (`소연 (SOYEON)` / `퇴사할게여 (Narr. 기안84)` gives `소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).mp3`), forbidden characters, a title long enough to be cut (total base length exactly 180 UTF-16 units, no leading rank), an 81+ character artist, an empty title; plus a guard that the default call still returns the old result (`001 ...`). Update `ApiModelsTest` for the new `JobOptions` field if it enumerates fields (default true, survives a round trip, missing key decodes to true).
+  - `DefaultDownloadServiceTest`: `includeRank = false` yields the rank-less name passed to the sink and in `ItemDone`/`ItemStarted`, the tag's `track` is still the rank; the duplicate-name cases from item 4.
+  - `RoutesTest`: the option reaches `DownloadRequest.includeRank` (true by default, false when sent).
+  - `AppStateHolderTest` (+ `FakeApi`): toggling recomputes preview names, resolving with the option off shows rank-less names, single-video rank change keeps the option, `startDownload` sends `includeRank`, `reset` keeps the option, toggling while a job runs does not rewrite rows of the running job (the checkbox is disabled then, but the holder must also ignore the recompute outside `PREVIEW`).
+- [ ] **Step 2: Run to see them fail:** `.\gradlew.bat check` (compile errors count as failing)
+- [ ] **Step 3: Implement** behaviours 1-5.
+- [ ] **Step 4: Run** `.\gradlew.bat check`
+  Expected: BUILD SUCCESSFUL, no failures, none skipped (test methods return `Unit`).
+- [ ] **Step 5: Commit**
+
+```powershell
+git add shared engine server app README.md
+git commit -m "feat: let the user leave the rank out of file names" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
