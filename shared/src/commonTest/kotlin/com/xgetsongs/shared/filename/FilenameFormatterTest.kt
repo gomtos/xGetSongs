@@ -180,9 +180,9 @@ class FilenameFormatterTest {
     @Test
     fun withoutTheRankADeviceNameAsTheArtistGetsAnUnderscoreAfterTheStem() {
         assertEquals("NUL_.x - Song.mp3", FilenameFormatter.format(1, "NUL.x", "Song", includeRank = false))
-        assertEquals("Con_ - Song.mp3", FilenameFormatter.format(1, "Con", "Song", includeRank = false))
-        assertEquals("com1_ - Song.mp3", FilenameFormatter.format(1, "com1", "Song", includeRank = false))
-        assertEquals("LPT9_ - Song.mp3", FilenameFormatter.format(1, "LPT9", "Song", includeRank = false))
+        assertEquals("Con_. - Song.mp3", FilenameFormatter.format(1, "Con.", "Song", includeRank = false))
+        assertEquals("com1_.x - Song.mp3", FilenameFormatter.format(1, "com1.x", "Song", includeRank = false))
+        assertEquals("LPT9_.x - Song.mp3", FilenameFormatter.format(1, "LPT9.x", "Song", includeRank = false))
         assertEquals("aux_.tar.gz - Song.mp3", FilenameFormatter.format(1, "aux.tar.gz", "Song", includeRank = false))
         assertEquals("CON_ .x - Song.mp3", FilenameFormatter.format(1, "CON .x", "Song", includeRank = false))
     }
@@ -190,13 +190,15 @@ class FilenameFormatterTest {
     @Test
     fun withoutTheRankEveryDeviceNameAsTheArtistIsCaught() {
         for (device in listOf("CON", "PRN", "AUX", "NUL") + (1..9).flatMap { listOf("COM$it", "LPT$it") }) {
-            assertEquals("${device}_ - B.mp3", FilenameFormatter.format(1, device, "B", includeRank = false), device)
+            assertEquals("${device}_.x - B.mp3", FilenameFormatter.format(1, "$device.x", "B", includeRank = false), device)
         }
     }
 
     @Test
     fun withoutTheRankNamesThatMerelyResembleDeviceNamesStayUnchanged() {
         assertEquals("Console - Song.mp3", FilenameFormatter.format(1, "Console", "Song", includeRank = false))
+        assertEquals("Con - Song.mp3", FilenameFormatter.format(1, "Con", "Song", includeRank = false))
+        assertEquals("LPT9 - Song.mp3", FilenameFormatter.format(1, "LPT9", "Song", includeRank = false))
         assertEquals("NULL - Song.mp3", FilenameFormatter.format(1, "NULL", "Song", includeRank = false))
         assertEquals("CON TEST - Song.mp3", FilenameFormatter.format(1, "CON TEST", "Song", includeRank = false))
         assertEquals("COM0 - Song.mp3", FilenameFormatter.format(1, "COM0", "Song", includeRank = false))
