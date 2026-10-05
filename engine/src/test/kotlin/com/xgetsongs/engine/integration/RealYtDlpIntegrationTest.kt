@@ -4,11 +4,13 @@ import com.xgetsongs.engine.DownloadRequest
 import com.xgetsongs.engine.job.DefaultDownloadService
 import com.xgetsongs.engine.job.ItemDownloader
 import com.xgetsongs.engine.output.LocalFolderSink
+import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.process.SystemProcessRunner
 import com.xgetsongs.engine.tools.ToolLocator
 import com.xgetsongs.engine.ytdlp.YtDlpResolver
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
+import com.xgetsongs.shared.api.Stage
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Tag
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,6 +36,29 @@ class RealYtDlpIntegrationTest {
         ?: Path.of(System.getProperty("user.home"), ".xgetsongs")
     private val locator = ToolLocator(appBinDir = appData.resolve("bin"))
     private val runner = SystemProcessRunner()
+
+    /**
+     * Passes everything to the real runner and remembers the progress lines yt-dlp prints (`XGSP|...` while downloading,
+     * `XGSPP|<status>|<post-processor>` around each post-processor), in order, repeats collapsed.
+     */
+    private class ProgressRecordingRunner(private val real: ProcessRunner) : ProcessRunner {
+        val sequence = CopyOnWriteArrayList<String>()
+
+        override suspend fun run(command: List<String>, onStdout: (String) -> Unit, onStderr: (String) -> Unit): Int =
+            real.run(
+                command,
+                onStdout = { line ->
+                    val label = when {
+                        line.startsWith("XGSPP|") -> line.trim()
+                        line.startsWith("XGSP|") -> "XGSP|" + line.split('|').getOrNull(1)
+                        else -> null
+                    }
+                    if (label != null && sequence.lastOrNull() != label) sequence += label
+                    onStdout(line)
+                },
+                onStderr = onStderr,
+            )
+    }
 
     @BeforeTest
     fun requireTools() {
@@ -77,7 +103,8 @@ class RealYtDlpIntegrationTest {
             try {
                 val outDir = root.resolve("out")
 
-                val service = DefaultDownloadService(ItemDownloader(runner, locator, resolver), root.resolve("work"), this)
+                val recording = ProgressRecordingRunner(runner)
+                val service = DefaultDownloadService(ItemDownloader(recording, locator, resolver), root.resolve("work"), this)
                 val events = service
                     .start(
                         DownloadRequest(
@@ -93,6 +120,17 @@ class RealYtDlpIntegrationTest {
                 println("downloaded: ${file.fileName} (${Files.size(file)} bytes)")
                 assertTrue(Regex("""001 .+ - .+\.mp3""").matches(file.fileName.toString()), file.fileName.toString())
                 assertTrue(Files.size(file) > 50_000)
+
+                // The thumbnail converter runs before the download and every post-processor prints its progress line:
+                // none of them may make the job report "converting" before the download has started.
+                println("progress lines in order: ${recording.sequence}")
+                println("post-processors seen: ${recording.sequence.filter { it.startsWith("XGSPP|") }.map { it.split('|').last() }.distinct()}")
+                val stages = events.filterIsInstance<JobEvent.Progress>().map { it.stage }
+                println("reported stages: ${stages.fold(emptyList<Stage>()) { all, next -> if (all.lastOrNull() == next) all else all + next }}")
+                val firstDownloading = stages.indexOf(Stage.DOWNLOADING)
+                assertTrue(firstDownloading >= 0, "no download progress was reported: $stages")
+                assertTrue(Stage.CONVERTING !in stages.take(firstDownloading), "converting was reported before the download: $stages")
+                assertTrue(Stage.CONVERTING in stages, "the audio conversion must still be reported: $stages")
 
                 val probed = ffprobe.probe(file)
                 println("tags: ${probed.tags}; streams: ${probed.streams}")

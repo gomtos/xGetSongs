@@ -29,7 +29,6 @@ class FfmetadataTest {
                 "album_artist=BTS",
                 "album=Best of BTS",
                 "track=7",
-                "comment=note",
             ),
             lines(text),
         )
@@ -50,16 +49,17 @@ class FfmetadataTest {
         for (album in listOf(null, "", "   ")) {
             val keys = lines(Ffmetadata.render(tags(album = album))).map { it.substringBefore('=') }
 
-            assertEquals(listOf(";FFMETADATA1", "title", "artist", "album_artist", "track", "comment"), keys)
+            assertEquals(listOf(";FFMETADATA1", "title", "artist", "album_artist", "track"), keys)
         }
     }
 
     @Test
-    fun omitsTheCommentWhenItIsNullOrBlank() {
-        for (comment in listOf(null, "", "\t ")) {
-            val keys = lines(Ffmetadata.render(tags(comment = comment))).map { it.substringBefore('=') }
+    fun neverWritesTheCommentBecauseFfmpegWouldStoreItAsTxxx() {
+        for (comment in listOf(null, "", "\t ", "https://www.youtube.com/watch?v=abc")) {
+            val text = Ffmetadata.render(tags(comment = comment))
 
-            assertEquals(listOf(";FFMETADATA1", "title", "artist", "album_artist", "album", "track"), keys)
+            assertFalse(lines(text).any { it.startsWith("comment") }, text)
+            assertFalse("youtube" in text, text)
         }
     }
 
@@ -71,15 +71,14 @@ class FfmetadataTest {
 
     @Test
     fun escapesEqualsSemicolonHashAndBackslash() {
-        val text = Ffmetadata.render(tags(title = "a=b;c#d\\e", comment = "https://www.youtube.com/watch?v=abc"))
+        val text = Ffmetadata.render(tags(title = "a=b;c#d\\e"))
 
         assertTrue("""title=a\=b\;c\#d\\e""" in lines(text))
-        assertTrue("""comment=https://www.youtube.com/watch?v\=abc""" in lines(text))
     }
 
     @Test
     fun escapesALineBreakByKeepingItAfterABackslash() {
-        val text = Ffmetadata.render(tags(title = "first\nsecond", comment = null, album = null))
+        val text = Ffmetadata.render(tags(title = "first\nsecond", album = null))
 
         assertEquals(
             ";FFMETADATA1\ntitle=first\\\nsecond\nartist=BTS\nalbum_artist=BTS\ntrack=7\n",
@@ -89,9 +88,16 @@ class FfmetadataTest {
 
     @Test
     fun escapesACarriageReturnToo() {
-        val text = Ffmetadata.render(tags(title = "first\r\nsecond", comment = null, album = null))
+        val text = Ffmetadata.render(tags(title = "first\r\nsecond", album = null))
 
         assertTrue(text.startsWith(";FFMETADATA1\ntitle=first\\\r\\\nsecond\n"), text)
+    }
+
+    @Test
+    fun aValueEndingInALineBreakStaysOnItsOwnTag() {
+        val text = Ffmetadata.render(tags(title = "first\n", album = null))
+
+        assertEquals(";FFMETADATA1\ntitle=first\\\n\nartist=BTS\nalbum_artist=BTS\ntrack=7\n", text)
     }
 
     @Test
@@ -106,9 +112,90 @@ class FfmetadataTest {
                 "album_artist=방탄소년단",
                 "album=한국 노래 모음",
                 "track=7",
-                "comment=note",
             ),
             lines(text),
         )
+    }
+
+    // ffmpeg treats a line that ends in a backslash as continuing on the next line, even when that backslash is itself
+    // escaped, so the next tag would be swallowed into the value. A trailing backslash becomes a full-width one.
+
+    @Test
+    fun aTrailingBackslashBecomesAFullWidthBackslash() {
+        val text = Ffmetadata.render(tags(title = "foo\\"))
+
+        assertEquals(
+            listOf(";FFMETADATA1", "title=foo＼", "artist=BTS", "album_artist=BTS", "album=Best of BTS", "track=7"),
+            lines(text),
+        )
+    }
+
+    @Test
+    fun everyTrailingBackslashIsReplacedButInnerOnesAreJustEscaped() {
+        val text = Ffmetadata.render(tags(title = "a\\b\\\\", artist = "x\\y\\", album = "plain"))
+
+        assertTrue("title=a\\\\b＼＼" in lines(text), text)
+        assertTrue("artist=x\\\\y＼" in lines(text), text)
+        assertTrue("album=plain" in lines(text), text)
+    }
+
+    @Test
+    fun aValueThatIsOnlyABackslashBecomesOnlyAFullWidthBackslash() {
+        val text = Ffmetadata.render(tags(title = "\\", artist = "\\\\"))
+
+        assertTrue("title=＼" in lines(text), text)
+        assertTrue("artist=＼＼" in lines(text), text)
+        assertTrue("album_artist=＼＼" in lines(text), text)
+    }
+
+    @Test
+    fun noLineEndsInABackslashWhateverTheValues() {
+        val nasty = listOf(
+            "\\", "a\\", "a\\\\", "a\\\n", "\\\n\\", "a;\\", "a=\\", "end\r\n\\", "\n\\\n",
+        )
+        for (value in nasty) {
+            val text = Ffmetadata.render(tags(title = value, artist = value, album = value))
+
+            // Walk the text the way ffmpeg splits it: a backslash escapes the next character, so only an unescaped
+            // line feed ends a line. None of those may directly follow a backslash.
+            var lineEnds = 0
+            var i = 0
+            while (i < text.length) {
+                when (text[i]) {
+                    '\\' -> i++
+                    '\n' -> {
+                        lineEnds++
+                        assertTrue(text[i - 1] != '\\', "a line ends in a backslash for ${value.length} chars: $text")
+                    }
+                }
+                i++
+            }
+            assertEquals(6, lineEnds, "header and five tags must stay separate lines: $text")
+        }
+    }
+
+    @Test
+    fun aNulCannotEndALineOrInjectATag() {
+        val text = Ffmetadata.render(tags(title = "abc\u0000album=Injected", album = "Real"))
+
+        assertTrue("title=abcalbum\\=Injected" in lines(text), text)
+        assertEquals(1, lines(text).count { it.startsWith("album=") })
+        assertTrue("album=Real" in lines(text), text)
+        assertFalse('\u0000' in text)
+    }
+
+    @Test
+    fun otherControlCharactersAreDroppedButTabAndLineBreaksStay() {
+        val text = Ffmetadata.render(tags(title = "a\u0001b\u0007c\u001Bd\u001Fe\tf\ng\rh", album = null))
+
+        assertTrue(text.startsWith(";FFMETADATA1\ntitle=abcde\tf\\\ng\\\rh\nartist=BTS\n"), text)
+    }
+
+    @Test
+    fun spacesAndOtherPrintableTextAreKept() {
+        val text = Ffmetadata.render(tags(title = " leading and trailing  ", album = "~!@\$%^&*()_+{}|:\"<>?[]'`/,."))
+
+        assertTrue("title= leading and trailing  " in lines(text), text)
+        assertTrue("album=~!@\$%^&*()_+{}|:\"<>?[]'`/,." in lines(text), text)
     }
 }

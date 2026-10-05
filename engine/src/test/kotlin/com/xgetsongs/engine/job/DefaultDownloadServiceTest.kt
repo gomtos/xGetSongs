@@ -5,10 +5,11 @@ import com.xgetsongs.engine.JobHandle
 import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.engine.output.OutputSink
 import com.xgetsongs.engine.process.ProcessRunner
-import com.xgetsongs.engine.testutil.FAKE_TAGGED_MP3
 import com.xgetsongs.engine.testutil.FakeProcessRunner
+import com.xgetsongs.engine.testutil.Id3v2Tag
 import com.xgetsongs.engine.testutil.TEST_TOOLS
 import com.xgetsongs.engine.testutil.downloadRunner
+import com.xgetsongs.engine.testutil.endsWithFakeAudio
 import com.xgetsongs.engine.testutil.ffmetadataTextOf
 import com.xgetsongs.engine.testutil.ffmpegCommands
 import com.xgetsongs.engine.testutil.isFfmpegCommand
@@ -149,7 +150,7 @@ class DefaultDownloadServiceTest {
         assertEquals(1, done(skipped).summary.skipped)
 
         service(succeeding).start(request(item(1), overwrite = true)).collect()
-        assertEquals(FAKE_TAGGED_MP3, Files.readString(outDir.resolve("001 A1 - T1.mp3")))
+        assertTrue(endsWithFakeAudio(outDir.resolve("001 A1 - T1.mp3")), "the old file must be replaced by the tagged one")
     }
 
     @Test
@@ -473,10 +474,37 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun theTaggedFileIsWhatReachesTheSink() = runTest {
+    fun theTaggedFileWithItsCommentFrameIsWhatReachesTheSink() = runTest {
         service(succeeding).start(request(item(1))).collect()
 
-        assertEquals(FAKE_TAGGED_MP3, Files.readString(outDir.resolve("001 A1 - T1.mp3")))
+        val delivered = outDir.resolve("001 A1 - T1.mp3")
+        assertTrue(endsWithFakeAudio(delivered))
+        val tag = Id3v2Tag.read(delivered)
+        assertEquals(listOf("TIT2", "COMM"), tag.ids)
+        assertEquals("https://www.youtube.com/watch?v=vid00000001", tag.comments().single().text)
+    }
+
+    @Test
+    fun thumbnailConversionBeforeTheDownloadDoesNotShowAsConverting() = runTest {
+        val runner = downloadRunner { command, onStdout, _ ->
+            // yt-dlp converts the thumbnail first, then downloads, then extracts the audio.
+            onStdout("XGSPP|started|ThumbnailsConvertor")
+            onStdout("XGSPP|finished|ThumbnailsConvertor")
+            onStdout("XGSP|downloading|50|100|NA")
+            onStdout("XGSPP|started|ExtractAudio")
+            writeFakeMp3(command)
+            0
+        }
+
+        val events = service(runner).start(request(item(1))).collect()
+
+        assertEquals(
+            listOf(
+                JobEvent.Progress(1, Stage.DOWNLOADING, 50.0),
+                JobEvent.Progress(1, Stage.CONVERTING, null),
+            ),
+            events.filterIsInstance<JobEvent.Progress>(),
+        )
     }
 
     @Test
@@ -494,10 +522,21 @@ class DefaultDownloadServiceTest {
                 "album_artist=Artist Five",
                 "album=My List",
                 "track=5",
-                "comment=https://www.youtube.com/watch?v\\=vid00000005",
             ),
             texts.single().removeSuffix("\n").split("\n"),
         )
+    }
+
+    @Test
+    fun theUrlReachesTheFileAsACommFrameAndNotThroughTheMetadataFile() = runTest {
+        val texts = mutableListOf<String>()
+        val runner = taggingRunner(texts)
+
+        service(runner).start(request(item(5))).collect()
+
+        assertTrue("youtube" !in texts.single(), "ffmpeg would store the comment as TXXX: ${texts.single()}")
+        val comment = Id3v2Tag.read(outDir.resolve("005 A5 - T5.mp3")).comments().single()
+        assertEquals("https://www.youtube.com/watch?v=vid00000005", comment.text)
     }
 
     @Test
@@ -598,14 +637,18 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun missingFfmpegAbortsTheJob() = runTest {
+    fun missingFfmpegAbortsTheJobBeforeAnyDownloadStarts() = runTest {
         val runner = taggingRunner(mutableListOf())
 
-        val events = service(runner, tools = toolsOf(TEST_TOOLS.copy(ffmpeg = null))).start(request(item(1), item(2))).collect()
+        val events = service(runner, tools = toolsOf(TEST_TOOLS.copy(ffmpeg = null))).start(request(item(1), item(2), item(3))).collect()
 
         assertEquals(JobStatus.FAILED, done(events).status)
-        assertTrue(events.filterIsInstance<JobEvent.ItemFailed>().single().message.contains("ffmpeg"))
-        assertEquals(1, runner.ytDlpCommands.size)
-        assertEquals(0, runner.ffmpegCommands.size)
+        assertEquals(
+            listOf(JobEvent.ItemFailed(1, "ffmpeg를 찾을 수 없습니다.")),
+            events.filterIsInstance<JobEvent.ItemFailed>(),
+            "like a missing yt-dlp: one failed item, the others are never started",
+        )
+        assertEquals(emptyList<List<String>>(), runner.commands.toList(), "no process may be started without ffmpeg")
+        assertEquals(JobSummary(0, 0, 1), done(events).summary)
     }
 }

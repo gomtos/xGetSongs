@@ -1,8 +1,10 @@
 package com.xgetsongs.engine.tags
 
-import com.xgetsongs.engine.testutil.FAKE_TAGGED_MP3
 import com.xgetsongs.engine.testutil.FakeProcessRunner
+import com.xgetsongs.engine.testutil.Id3v2Tag
 import com.xgetsongs.engine.testutil.TEST_TOOLS
+import com.xgetsongs.engine.testutil.endsWithFakeAudio
+import com.xgetsongs.engine.testutil.fakeTaggedMp3
 import com.xgetsongs.engine.testutil.ffmetadataTextOf
 import com.xgetsongs.engine.testutil.toolsOf
 import com.xgetsongs.engine.testutil.writeFakeTagged
@@ -20,6 +22,7 @@ import java.nio.file.Path
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -64,9 +67,56 @@ class Id3TaggerTest {
         val result = tagger(runner).tag(file, null, tags)
 
         assertNull(result)
-        assertEquals(FAKE_TAGGED_MP3, Files.readString(file))
+        assertTrue(endsWithFakeAudio(file), "the audio of ffmpeg's output must reach the final file")
         assertEquals(listOf("vid00000001.mp3"), filesInDir())
         assertEquals(Ffmetadata.render(tags), metadataText)
+    }
+
+    @Test
+    fun addsTheCommentAsACommFrameToFfmpegsOutput() = runTest {
+        val runner = FakeProcessRunner { command, _, _ ->
+            writeFakeTagged(command)
+            0
+        }
+
+        val result = tagger(runner).tag(file, null, tags)
+
+        assertNull(result)
+        val tag = Id3v2Tag.read(file)
+        assertEquals(listOf("TIT2", "COMM"), tag.ids, "ffmpeg's frame stays, the comment frame is added")
+        assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments())
+    }
+
+    @Test
+    fun aMissingOrBlankCommentLeavesFfmpegsOutputUntouched() = runTest {
+        for (comment in listOf(null, "", "  \t")) {
+            Files.writeString(file, "original-mp3")
+            val runner = FakeProcessRunner { command, _, _ ->
+                writeFakeTagged(command)
+                0
+            }
+
+            val result = tagger(runner).tag(file, null, tags.copy(comment = comment))
+
+            assertNull(result)
+            assertContentEquals(fakeTaggedMp3(), Files.readAllBytes(file), "comment = [$comment]")
+            assertEquals(listOf("vid00000001.mp3"), filesInDir())
+        }
+    }
+
+    @Test
+    fun aTagLayoutTheCommentStepCannotRewriteFailsTheItemAndKeepsTheOriginal() = runTest {
+        val runner = FakeProcessRunner { command, _, _ ->
+            // An ID3v2.4 header: the engine only knows how to extend v2.3 tags.
+            Files.write(Path.of(command.last()), "ID3".toByteArray() + byteArrayOf(4, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
+            0
+        }
+
+        val result = tagger(runner).tag(file, null, tags)
+
+        assertEquals(Failure(FailureKind.OTHER, "ID3 태그를 쓰지 못했습니다: unsupported ID3 tag layout"), result)
+        assertEquals("original-mp3", Files.readString(file))
+        assertEquals(listOf("vid00000001.mp3"), filesInDir())
     }
 
     @Test
@@ -120,7 +170,10 @@ class Id3TaggerTest {
         tagger(runner).tag(file, null, tags)
 
         val commandLine = runner.commands.single().joinToString(" ")
-        assertTrue("Golden" !in commandLine && "아티스트" !in commandLine && "My List" !in commandLine, commandLine)
+        assertTrue(
+            listOf("Golden", "아티스트", "My List", "youtube").none { it in commandLine },
+            commandLine,
+        )
     }
 
     @Test

@@ -37,6 +37,21 @@ class ProgressParserTest {
         assertEquals(ProgressUpdate.Converting, ProgressParser.parse("XGSPP|started|ExtractAudio"))
     }
 
+    // yt-dlp runs the thumbnail converter (--convert-thumbnails) before the download starts and every post-processor
+    // prints the template, so this one must not switch the UI to "converting" before the download.
+    @Test
+    fun thumbnailConversionIsNotTheAudioConversion() {
+        assertNull(ProgressParser.parse("XGSPP|started|ThumbnailsConvertor"))
+        assertNull(ProgressParser.parse("XGSPP|finished|ThumbnailsConvertor"))
+    }
+
+    @Test
+    fun audioExtractionStillMeansConvertingNextToTheThumbnailConvertor() {
+        assertEquals(ProgressUpdate.Converting, ProgressParser.parse("XGSPP|started|ExtractAudio"))
+        assertNull(ProgressParser.parse("XGSPP|started|ThumbnailsConvertor"))
+        assertEquals(ProgressUpdate.Converting, ProgressParser.parse("XGSPP|started|ExtractAudio"))
+    }
+
     @Test
     fun otherLinesAreIgnored() {
         assertNull(ProgressParser.parse("[youtube] Extracting URL"))

@@ -76,6 +76,10 @@ class ItemDownloader(
         if (paths.ytDlp == null) {
             return DownloadResult.Failed(Failure(FailureKind.FATAL, "yt-dlp를 찾을 수 없습니다."))
         }
+        // The tags are written with ffmpeg after the download, so stop before spending a download that cannot be finished.
+        if (paths.ffmpeg == null) {
+            return DownloadResult.Failed(Failure(FailureKind.FATAL, "ffmpeg를 찾을 수 없습니다."))
+        }
         val videoId = prepared.item.videoId
         val command = YtDlpCommands.download(paths, ParsedInput.Video(videoId).canonicalUrl, workDir, videoId)
         val rank = prepared.item.rank

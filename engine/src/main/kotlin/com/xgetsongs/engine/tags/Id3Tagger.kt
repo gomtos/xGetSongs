@@ -16,7 +16,8 @@ import kotlin.io.path.nameWithoutExtension
 
 /**
  * Writes ID3 tags and the cover into an mp3 with one ffmpeg stream-copy pass. The tag text travels in an ffmetadata
- * file next to the mp3, never on the command line.
+ * file next to the mp3, never on the command line. The comment is the one exception to ffmpeg writing the tags: it
+ * becomes a real `COMM` frame added by [Id3Comment] afterwards.
  */
 class Id3Tagger(
     private val runner: ProcessRunner,
@@ -42,7 +43,11 @@ class Id3Tagger(
             if (exitCode != 0 || !written) {
                 return failure(synchronized(stderr) { stderr.lastOrNull { it.isNotBlank() } }?.trim()?.take(MAX_DETAIL))
             }
-            withContext(Dispatchers.IO) { Files.move(output, file, StandardCopyOption.REPLACE_EXISTING) }
+            withContext(Dispatchers.IO) {
+                // ffmpeg cannot write a COMM frame, so it is added to ffmpeg's output before that replaces the original.
+                tags.comment?.takeIf { it.isNotBlank() }?.let { Id3Comment.addComment(output, it) }
+                Files.move(output, file, StandardCopyOption.REPLACE_EXISTING)
+            }
             return null
         } catch (e: IOException) {
             return failure(e.message)

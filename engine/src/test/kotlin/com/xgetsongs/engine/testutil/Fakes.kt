@@ -59,15 +59,31 @@ fun writeFakeCover(command: List<String>) {
     Files.writeString(outputDirOf(command).resolve("${videoIdOf(command)}.jpg"), "jpg-data")
 }
 
-/** What the fake ffmpeg writes as the tagged file. */
-const val FAKE_TAGGED_MP3 = "tagged-mp3-data"
+/** The audio bytes of what the fake ffmpeg writes. Nothing after ffmpeg may change them. */
+const val FAKE_AUDIO = "tagged-mp3-data"
+
+/**
+ * What the fake ffmpeg writes: a minimal ID3v2.3 file (a header, one `TIT2` frame and 4 bytes of padding) followed by
+ * [FAKE_AUDIO]. It has to be a real tag because the engine adds the comment frame to ffmpeg's output.
+ */
+fun fakeTaggedMp3(): ByteArray {
+    // Frame: id, 4-byte big-endian size (1 encoding byte + 5 text bytes), 2 flag bytes, body.
+    val frame = "TIT2".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(0, 0, 0, 6, 0, 0) + byteArrayOf(0) + "Title".toByteArray(Charsets.ISO_8859_1)
+    val padding = ByteArray(4)
+    val tagSize = frame.size + padding.size // 20: fits in the last syncsafe byte
+    val header = "ID3".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(3, 0, 0, 0, 0, 0, tagSize.toByte())
+    return header + frame + padding + FAKE_AUDIO.toByteArray(Charsets.ISO_8859_1)
+}
+
+/** True when the file still ends with the audio of [fakeTaggedMp3]. */
+fun endsWithFakeAudio(file: Path): Boolean = String(Files.readAllBytes(file), Charsets.ISO_8859_1).endsWith(FAKE_AUDIO)
 
 /** True for the ID3 tagging pass (the command starts with the ffmpeg path); false for yt-dlp commands. */
 fun isFfmpegCommand(command: List<String>): Boolean = command.first() == TEST_TOOLS.ffmpeg.toString()
 
 /** Pretends ffmpeg finished tagging: creates the output file, which is the last argument. */
 fun writeFakeTagged(command: List<String>) {
-    Files.writeString(Path.of(command.last()), FAKE_TAGGED_MP3)
+    Files.write(Path.of(command.last()), fakeTaggedMp3())
 }
 
 /** The text of the ffmetadata file an ffmpeg tagging command reads (the input after `-f ffmetadata`). */

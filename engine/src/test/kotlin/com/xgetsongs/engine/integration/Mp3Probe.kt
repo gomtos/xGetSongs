@@ -63,36 +63,3 @@ class Ffprobe(private val ffprobe: Path, private val runner: ProcessRunner) {
                 ?.takeIf { Files.isRegularFile(it) }
     }
 }
-
-/** The frames of the ID3v2 tag at the start of an mp3, read from the raw bytes (ffprobe does not show frame types). */
-class Id3v2Tag private constructor(val version: Int, val frames: List<Frame>) {
-    class Frame(val id: String, val body: ByteArray)
-
-    val ids: List<String> get() = frames.map { it.id }
-
-    fun frame(id: String): Frame = frames.first { it.id == id }
-
-    companion object {
-        fun read(file: Path): Id3v2Tag {
-            val bytes = Files.readAllBytes(file)
-            check(bytes.size > 10 && String(bytes, 0, 3, Charsets.ISO_8859_1) == "ID3") { "no ID3v2 tag in $file" }
-            val tagSize = (6..9).fold(0) { size, i -> (size shl 7) or (bytes[i].toInt() and 0x7F) }
-            val frames = mutableListOf<Frame>()
-            var pos = 10
-            // ID3v2.3 frame: 4-byte id, 4-byte big-endian size, 2 flag bytes, body.
-            while (pos + 10 <= 10 + tagSize && bytes[pos].toInt() != 0) {
-                val id = String(bytes, pos, 4, Charsets.ISO_8859_1)
-                val size = (4..7).fold(0) { size, i -> (size shl 8) or (bytes[pos + i].toInt() and 0xFF) }
-                frames += Frame(id, bytes.copyOfRange(pos + 10, pos + 10 + size))
-                pos += 10 + size
-            }
-            return Id3v2Tag(bytes[3].toInt(), frames)
-        }
-
-        /** True when the last 128 bytes hold an ID3v1 block. */
-        fun hasId3v1(file: Path): Boolean {
-            val bytes = Files.readAllBytes(file)
-            return bytes.size >= 128 && String(bytes, bytes.size - 128, 3, Charsets.ISO_8859_1) == "TAG"
-        }
-    }
-}

@@ -38,8 +38,15 @@ object ProgressParser {
         }
     }
 
+    /**
+     * Only the audio conversion counts as "converting". yt-dlp runs the thumbnail converter (`--convert-thumbnails`)
+     * before the download and every post-processor prints this template, so that one must not switch to converting.
+     */
     private fun parsePostprocess(text: String): ProgressUpdate? {
-        val status = text.split('|').getOrNull(1)
-        return if (status == "started") ProgressUpdate.Converting else null
+        val parts = text.split('|')
+        val started = parts.getOrNull(1) == "started"
+        return if (started && parts.getOrNull(2) != THUMBNAILS_CONVERTOR) ProgressUpdate.Converting else null
     }
+
+    private const val THUMBNAILS_CONVERTOR = "ThumbnailsConvertor"
 }

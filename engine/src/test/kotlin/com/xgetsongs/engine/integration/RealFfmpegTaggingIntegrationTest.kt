@@ -3,6 +3,7 @@ package com.xgetsongs.engine.integration
 import com.xgetsongs.engine.process.SystemProcessRunner
 import com.xgetsongs.engine.tags.Id3Tagger
 import com.xgetsongs.engine.tags.TrackTags
+import com.xgetsongs.engine.testutil.Id3v2Tag
 import com.xgetsongs.engine.tools.ToolLocator
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -171,9 +172,74 @@ class RealFfmpegTaggingIntegrationTest {
             val mimeEnd = 1 + apic.drop(1).indexOfFirst { it.toInt() == 0 }
             assertEquals("image/jpeg", String(apic, 1, mimeEnd - 1, Charsets.ISO_8859_1))
             assertEquals(3, apic[mimeEnd + 1].toInt())
-            // ffmpeg has no COMM writer: the comment is stored as a user-defined text frame named "comment".
-            assertTrue("TXXX" in tag.ids && "COMM" !in tag.ids, tag.ids.toString())
+            // ffmpeg itself can only write a comment as a user-defined TXXX frame; the engine adds a real COMM frame.
+            assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments(), tag.ids.toString())
+            assertEquals(1, tag.ids.count { it == "COMM" }, tag.ids.toString())
+            assertTrue(
+                tag.frames.filter { it.id == "TXXX" }.none { "comment" in String(it.body, Charsets.ISO_8859_1) },
+                "no TXXX frame named comment: ${tag.ids}",
+            )
             assertFalse(Id3v2Tag.hasId3v1(mp3))
+        }
+    }
+
+    @Test
+    fun aKoreanCommentIsStoredAsUtf16AndReadBackByFfprobe(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3()
+            val korean = tags.copy(comment = "메모: \"인용\" 'x' https://www.youtube.com/watch?v=jNQXAC9IVRw\n둘째 줄 \uD83C\uDFB5")
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, redJpg(), korean))
+
+            val comment = Id3v2Tag.read(mp3).comments().single()
+            assertEquals(1, comment.encoding)
+            assertEquals(korean.comment, comment.text)
+            assertTags(korean, ffprobe.probe(mp3).tags)
+        }
+    }
+
+    @Test
+    fun withoutACommentNoCommentFrameIsWritten(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3()
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, null, tags.copy(comment = null)))
+
+            assertTrue("COMM" !in Id3v2Tag.read(mp3).ids)
+            assertNull(ffprobe.probe(mp3).tags["comment"])
+        }
+    }
+
+    // A value ending in a backslash made ffmpeg swallow the next line of the ffmetadata file (the artist went missing).
+    @Test
+    fun aTitleEndingInABackslashDoesNotSwallowTheNextTag(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3()
+            val trailing = tags.copy(title = "Path to C:\\", artist = "Artist\\\\", albumArtist = "Artist\\\\", album = "Album\\")
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, null, trailing))
+
+            val probed = ffprobe.probe(mp3).tags
+            assertEquals("Path to C:\uFF3C", probed["title"])
+            assertEquals("Artist\uFF3C\uFF3C", probed["artist"])
+            assertEquals("Artist\uFF3C\uFF3C", probed["album_artist"])
+            assertEquals("Album\uFF3C", probed["album"])
+            assertEquals("7", probed["track"])
+            assertEquals(trailing.comment, probed["comment"])
+        }
+    }
+
+    @Test
+    fun aNulInATitleCannotInjectAnotherTag(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3()
+            val injected = tags.copy(title = "abc\u0000album=Injected", album = "Real Album")
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, null, injected))
+
+            val probed = ffprobe.probe(mp3).tags
+            assertEquals("abcalbum=Injected", probed["title"])
+            assertEquals("Real Album", probed["album"])
         }
     }
 }
