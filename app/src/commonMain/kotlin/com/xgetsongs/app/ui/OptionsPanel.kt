@@ -3,6 +3,7 @@ package com.xgetsongs.app.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
@@ -72,6 +73,7 @@ fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (St
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = state.overwrite, onCheckedChange = holder::onOverwrite, enabled = enabled)
             Text("기존 파일 덮어쓰기")
+            Spacer(Modifier.width(16.dp))
             Checkbox(checked = state.includeRank, onCheckedChange = holder::onIncludeRank, enabled = enabled)
             Text("파일명에 순번 포함")
         }

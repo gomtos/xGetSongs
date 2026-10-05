@@ -9,6 +9,7 @@ import com.xgetsongs.shared.api.JobSummary
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.Stage
 import com.xgetsongs.shared.input.RejectReason
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -620,6 +621,31 @@ class AppStateHolderTest {
         assertEquals(rowsBefore.map { it.item.rank }, state.rows.map { it.item.rank })
         assertEquals(rowsBefore.map { it.status }, state.rows.map { it.status })
         assertEquals("x", state.error)
+    }
+
+    @Test
+    fun aFailedSecondLookupShowsTheOldRowsWithTheOptionAsItIsNow() = runTest {
+        val (api, holder) = resolved()
+        assertEquals("001 A1 - T1.mp3", holder.row(1).fileName)
+        api.resolveGate = CompletableDeferred()
+        api.resolveError = ApiError("x")
+        holder.onInput(playlistId)
+        holder.resolve()
+        runCurrent()
+        assertEquals(Phase.RESOLVING, holder.state.value.phase)
+
+        holder.onIncludeRank(false) // while the lookup is held: nothing is rewritten yet
+        api.resolveGate?.complete(Unit)
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.PREVIEW, state.phase)
+        assertEquals("x", state.error)
+        assertEquals(false, state.includeRank)
+        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals(listOf(1, 2, 3), state.rows.map { it.item.rank })
+        assertEquals(ItemStatus.Ready, holder.row(1).status)
     }
 
     @Test

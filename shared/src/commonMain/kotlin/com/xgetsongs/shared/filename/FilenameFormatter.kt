@@ -33,11 +33,14 @@ object FilenameFormatter {
     /**
      * Builds `{rank 3 digits} {artist} - {title}.mp3`, or `{artist} - {title}.mp3` when [includeRank] is false. The length
      * limits are the same either way ([MAX_BASE_LENGTH] for the whole name, so the title gets what the prefix leaves).
-     * [rank] must be in [MIN_RANK]..[MAX_RANK] even when it is not printed.
+     * [rank] must be in [MIN_RANK]..[MAX_RANK] even when it is not printed. Without the rank the artist starts the name,
+     * so an artist that is a reserved Windows device name gets a `_` after it (`NUL.x` becomes `NUL_.x`); the digits of
+     * the rank already rule that out when it is printed.
      */
     fun format(rank: Int, artist: String, title: String, includeRank: Boolean = true): String {
         require(rank in MIN_RANK..MAX_RANK) { "rank must be in $MIN_RANK..$MAX_RANK but was $rank" }
-        val cleanArtist = truncate(sanitize(artist), MAX_ARTIST_LENGTH)
+        val cutArtist = truncate(sanitize(artist), MAX_ARTIST_LENGTH)
+        val cleanArtist = if (includeRank) cutArtist else escapeDeviceName(cutArtist)
         val rankPrefix = if (includeRank) "${rank.toString().padStart(3, '0')} " else ""
         val prefix = "$rankPrefix$cleanArtist - "
         val cleanTitle = sanitize(title).ifEmpty { EMPTY_TITLE_PLACEHOLDER }
@@ -55,6 +58,14 @@ object FilenameFormatter {
         if (title.isNullOrBlank()) return UNTITLED_PLAYLIST
         val name = truncate(sanitize(title), MAX_FOLDER_LENGTH).trimEnd('.', ' ').trimStart(' ')
         if (name.isEmpty()) return UNTITLED_PLAYLIST
+        return escapeDeviceName(name)
+    }
+
+    /**
+     * Windows treats the text before the first `.` of a name (trailing spaces ignored) as a device when it is one of
+     * the [RESERVED_DEVICE_NAMES], whatever the case. Puts a `_` right after that stem then; other names are returned as is.
+     */
+    private fun escapeDeviceName(name: String): String {
         val stem = name.substringBefore('.').trimEnd(' ')
         return if (stem.uppercase() in RESERVED_DEVICE_NAMES) stem + "_" + name.substring(stem.length) else name
     }

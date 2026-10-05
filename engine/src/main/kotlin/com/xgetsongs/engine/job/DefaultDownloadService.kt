@@ -124,7 +124,8 @@ class DefaultDownloadService(
                             request.sink.put(prepared.fileName, result.file, request.overwrite)
                         } catch (e: FileAlreadyExistsException) {
                             // Free when the item started, taken now: another item of this job with the same name (the rank
-                            // is not part of it) or another program was faster. Same outcome as finding it taken up front.
+                            // is not part of it) or another program finished first; the first one to finish wins. Same
+                            // outcome as finding it taken up front.
                             if (request.overwrite || !request.sink.exists(prepared.fileName)) throw e
                             skip(item, ALREADY_EXISTS, events, counters)
                             return

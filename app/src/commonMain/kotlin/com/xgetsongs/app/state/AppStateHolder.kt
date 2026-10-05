@@ -43,7 +43,8 @@ class AppStateHolder(
 
     /**
      * Turning the rank in the file name on or off rewrites the names shown in the preview. Rows of a running or finished
-     * job show the names the server really used, so they are left alone.
+     * job are left alone: they show the names the server really used, and the rows of a job that ended before it
+     * started them (cancelled or aborted) keep the preview names they had.
      */
     fun onIncludeRank(value: Boolean) = _state.update { state ->
         if (state.phase != Phase.PREVIEW) {
@@ -149,9 +150,14 @@ class AppStateHolder(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // A failed lookup must not strip the buttons from a preview that is still on screen.
+                // A failed lookup must not strip the buttons from a preview that is still on screen. The user may have
+                // changed the rank option while the lookup ran (the rows were not rewritten then), so a restored
+                // preview shows names that follow the option as it is now.
                 val phase = if (before.resolved != null) before.phase else Phase.IDLE
-                _state.update { it.copy(phase = phase, error = failureMessage(e)) }
+                _state.update { state ->
+                    val rows = if (phase == Phase.PREVIEW) state.rows.map { it.withFileName(state.includeRank) } else state.rows
+                    state.copy(phase = phase, rows = rows, error = failureMessage(e))
+                }
             }
         }
     }

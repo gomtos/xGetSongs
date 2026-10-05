@@ -19,8 +19,10 @@ internal object Id3Comment {
     private const val MAX_TAG_SIZE = 0x0FFFFFFF // 4 bytes of 7 bits
     private const val UNSUPPORTED = "unsupported ID3 tag layout"
 
-    // Flags of the ID3v2.3 header that change how the tag must be read: unsynchronisation, extended header, footer.
-    private const val FLAGS_WE_CANNOT_REWRITE = 0x80 or 0x40 or 0x10
+    // The flags byte of an ID3v2.3 header is %abc00000: a = unsynchronisation, b = extended header, c = experimental.
+    // Only the experimental bit (0x20) leaves the layout alone, so it passes through. The other two change how the tag
+    // must be read, and the five low bits are undefined in v2.3: a tag that sets one is not understood, so not rewritten.
+    private const val FLAGS_WE_CANNOT_REWRITE = 0x80 or 0x40 or 0x1F
 
     /**
      * Rewrites [file] so that its ID3v2.3 tag also holds a `COMM` frame with [text]; the frame goes right after the
@@ -28,18 +30,29 @@ internal object Id3Comment {
      * comment. Blocking.
      *
      * @throws IOException when the file cannot be read or written, or its tag is one that is not safe to extend
-     * (another version, unsynchronisation, an extended header, a footer, or broken sizes). The file is left untouched.
+     * (another version, unsynchronisation, an extended header, flag bits that v2.3 does not define, or broken sizes).
+     * The file is left untouched.
      */
     fun addComment(file: Path, text: String) {
         val temp = file.resolveSibling(file.fileName.toString() + ".id3tmp")
+        var failure: Throwable? = null
         try {
             val fileSize = Files.size(file)
             Files.newInputStream(file).use { input ->
                 Files.newOutputStream(temp).use { output -> rewrite(input, output, fileSize, commentFrame(text)) }
             }
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING)
+        } catch (e: Throwable) {
+            failure = e
+            throw e
         } finally {
-            Files.deleteIfExists(temp)
+            // Only tidying up: it must not replace the error that is already on its way out. After a successful move
+            // there is nothing left to delete.
+            try {
+                Files.deleteIfExists(temp)
+            } catch (cleanup: IOException) {
+                failure?.addSuppressed(cleanup)
+            }
         }
     }
 

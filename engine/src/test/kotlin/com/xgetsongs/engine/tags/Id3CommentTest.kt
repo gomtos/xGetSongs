@@ -2,6 +2,7 @@ package com.xgetsongs.engine.tags
 
 import com.xgetsongs.engine.testutil.Id3v2Tag
 import java.io.IOException
+import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
@@ -11,6 +12,8 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class Id3CommentTest {
     private val dir: Path = Files.createTempDirectory("xgs-id3comment")
@@ -176,7 +179,10 @@ class Id3CommentTest {
             "version 2.2" to tagged(listOf(title), 10, audio, major = 2),
             "unsynchronisation flag" to tagged(listOf(title), 10, audio, flags = 0x80),
             "extended header flag" to tagged(listOf(title), 10, audio, flags = 0x40),
-            "footer flag" to tagged(listOf(title), 10, audio, flags = 0x10),
+            "undefined flag 0x10" to tagged(listOf(title), 10, audio, flags = 0x10),
+            "undefined flag 0x08" to tagged(listOf(title), 10, audio, flags = 0x08),
+            "undefined flag 0x01" to tagged(listOf(title), 10, audio, flags = 0x01),
+            "undefined flag with the experimental one" to tagged(listOf(title), 10, audio, flags = 0x24),
         )
         for ((name, content) in cases) {
             Files.write(file, content)
@@ -187,6 +193,45 @@ class Id3CommentTest {
             assertContentEquals(content, Files.readAllBytes(file), name)
             assertEquals(listOf("track.mp3"), filesInDir(), name)
         }
+    }
+
+    @Test
+    fun theExperimentalFlagDoesNotChangeTheLayoutAndIsKept() {
+        Files.write(file, tagged(listOf(title, artist), padding = 10, audio = audio, flags = 0x20))
+
+        Id3Comment.addComment(file, "hi")
+
+        val result = Files.readAllBytes(file)
+        assertContentEquals(tagged(listOf(title, artist, commHi), padding = 10, audio = audio, flags = 0x20), result)
+        assertEquals(0x20, result[5].toInt() and 0xFF)
+        assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", "hi")), Id3v2Tag.read(file).comments())
+    }
+
+    @Test
+    fun aTagWithAHeaderOnlyGetsTheCommentAndACorrectSize() {
+        Files.write(file, tagged(emptyList(), padding = 0, audio = audio))
+
+        Id3Comment.addComment(file, "hi")
+
+        val result = Files.readAllBytes(file)
+        assertContentEquals(tagged(listOf(commHi), padding = 0, audio = audio), result)
+        assertContentEquals(ascii("ID3") + bytes(3, 0, 0) + syncsafe(commHi.size), result.copyOfRange(0, 10))
+        assertEquals(listOf("COMM"), Id3v2Tag.read(file).ids)
+    }
+
+    @Test
+    fun aFailingCleanupDoesNotHideTheRealError() {
+        val content = tagged(listOf(title), padding = 10, audio = audio)
+        Files.write(file, content)
+        // The temporary file's name is taken by a folder that is not empty: writing fails, and so does deleting it.
+        val blocker = Files.createDirectory(dir.resolve("track.mp3.id3tmp"))
+        Files.write(blocker.resolve("keep.txt"), bytes(1))
+
+        val error = assertFailsWith<IOException> { Id3Comment.addComment(file, "hi") }
+
+        assertFalse(error is DirectoryNotEmptyException, "the cleanup failure replaced the real error: $error")
+        assertTrue(error.suppressed.any { it is DirectoryNotEmptyException }, "the cleanup failure is attached: ${error.suppressed.toList()}")
+        assertContentEquals(content, Files.readAllBytes(file))
     }
 
     @Test

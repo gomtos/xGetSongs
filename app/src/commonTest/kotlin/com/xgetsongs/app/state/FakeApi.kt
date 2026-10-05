@@ -10,6 +10,7 @@ import com.xgetsongs.shared.api.ResolveResponse
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.ToolInfo
 import com.xgetsongs.shared.api.ToolsStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -18,6 +19,9 @@ class FakeApi : XgsApi {
     var toolsStatus = ToolsStatus(ToolInfo(true, "1"), ToolInfo(true, "1"), ToolInfo(true, "24"))
     var resolveResponse: ResolveResponse = playlist()
     var resolveError: Exception? = null
+
+    /** When set, [resolve] waits for it before it answers (or fails), so a test can change things while a lookup is held. */
+    var resolveGate: CompletableDeferred<Unit>? = null
     var startError: Exception? = null
     var toolsError: Exception? = null
     var installMessage = "installed"
@@ -45,6 +49,7 @@ class FakeApi : XgsApi {
 
     override suspend fun resolve(input: String): ResolveResponse {
         resolveInputs += input
+        resolveGate?.await()
         resolveError?.let { throw it }
         return resolveResponse
     }
