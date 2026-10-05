@@ -205,3 +205,45 @@ Added after the user's request "파일명에 순번(001 ~ 999) 포함 여부를 
 git add shared engine server app README.md
 git commit -m "feat: let the user leave the rank out of file names" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 5: Remember the last options
+
+Added after the user's request "마지막 옵션은 앱이 기억하도록 해". The app restores the options it was last used with: output folder, overwrite, rank in file name, concurrency. It does not remember the typed playlist/video address or the single-video rank.
+
+**Files:**
+- Create: `app/src/commonMain/kotlin/com/xgetsongs/app/settings/UserSettings.kt`, `.../settings/SettingsStore.kt`
+- Create: `app/src/desktopMain/kotlin/com/xgetsongs/app/JsonSettingsStore.kt`
+- Modify: `app/src/commonMain/kotlin/com/xgetsongs/app/state/AppStateHolder.kt`, `app/src/desktopMain/kotlin/com/xgetsongs/app/Main.kt`, `app/src/commonMain/kotlin/com/xgetsongs/app/ui/OptionsPanel.kt`
+- Tests: create `app/src/desktopTest/kotlin/com/xgetsongs/app/JsonSettingsStoreTest.kt`; modify `app/src/commonTest/kotlin/com/xgetsongs/app/state/AppStateHolderTest.kt` (and `FakeApi.kt` / a new fake store next to it if needed)
+- Modify: `README.md`
+
+**Interfaces:**
+- Produces:
+  - `@Serializable data class UserSettings(val outputDir: String? = null, val overwrite: Boolean = false, val includeRank: Boolean = true, val concurrency: Int = 2)` in `com.xgetsongs.app.settings`.
+  - `interface SettingsStore { fun load(): UserSettings; fun save(settings: UserSettings) }` and `object NoSettingsStore : SettingsStore` (loads defaults, saves nothing) in the same package. `app/commonMain` stays free of `java.*` (the store is a capability; the web client will later bring its own).
+  - `class JsonSettingsStore(private val file: java.nio.file.Path) : SettingsStore` in `desktopMain`.
+  - `AppStateHolder(api, scope, defaultOutputDir, settings: SettingsStore = NoSettingsStore)` and `fun flushSettings()`.
+
+**Behaviour**
+
+1. `JsonSettingsStore.load()`: a missing, unreadable, empty or corrupt file, or a JSON of the wrong shape, gives `UserSettings()` (never throws); unknown keys are ignored (use `ApiJson.instance`-style `ignoreUnknownKeys` with `encodeDefaults = true`); `concurrency` is coerced into 1..4 after reading. `save()`: creates the parent directory, writes UTF-8 JSON to a temp file in the same directory and moves it over the target with `REPLACE_EXISTING` (so a crash never leaves half a file), deletes the temp file in `finally`, and never throws (an `IOException` is swallowed; the app must keep working with a read-only profile). The file is `appDataDirectory().resolve("settings.json")` (wired in `Main.kt`).
+2. `AppStateHolder` starts from `settings.load()`: `outputDir = stored.outputDir?.takeIf { it.isNotBlank() } ?: defaultOutputDir`, `overwrite`, `includeRank`, `concurrency` (clamped 1..4) from the file.
+3. Saving: every change of one of the four options (through `onOutputDir`, `onOverwrite`, `onIncludeRank`, `onConcurrency`) schedules a save of the CURRENT four values after a 400 ms quiet period: keep a `saveJob`; each change cancels the pending one and launches `scope.launch { delay(400); settings.save(...) }` (finite coroutines, so tests with a `TestScope` finish). A change that does not alter the four values (same value set again) schedules nothing. `flushSettings()` cancels any pending save and saves the current values immediately (synchronously); `Main.kt` calls it in `onCloseRequest` before `uiScope.cancel()`. Nothing is saved at startup, and `reset()` does not touch the settings.
+4. `OptionsPanel`: the label `동시 다운로드` must stay on one line (`maxLines = 1`, `softWrap = false`, width no smaller than it needs: use `Modifier.widthIn(min = 100.dp)` instead of the fixed `width(100.dp)`; it currently wraps to two lines).
+5. `README.md`: one sentence in the usage part: the last options are remembered in `%APPDATA%\xGetSongs\settings.json`.
+
+- [ ] **Step 1: Write failing tests**
+  - `JsonSettingsStoreTest` (desktopTest, temp directory per test, cleaned up): missing file; round trip with a Korean path and all fields; corrupt JSON (`{`), empty file, JSON of the wrong shape (`[]`), unknown keys; `concurrency` 9 gives 4 and 0 gives 1; blank stored `outputDir` is kept as is by the store (the holder applies the default); `save` creates the parent directory, leaves no temp file, replaces an existing file; `save` into a location that cannot be written (the parent path is a regular file) does not throw.
+  - `AppStateHolderTest` (virtual time; use a recording fake store): initial state comes from the store, and a blank stored folder falls back to the default folder; changing each of the four options saves the right values after 400 ms and not before (`advanceTimeBy(399)` then `(1)`); three quick changes give exactly one save with the last values; setting the same value again saves nothing; `flushSettings()` saves immediately and cancels the pending one (no second save afterwards); nothing saved at startup; `reset()` keeps the options and saves nothing; the single-video rank and the input text are never part of the saved values.
+- [ ] **Step 2: Run to see them fail:** `.\gradlew.bat :app:desktopTest`
+- [ ] **Step 3: Implement** behaviours 1-5.
+- [ ] **Step 4: Run** `.\gradlew.bat check`
+  Expected: BUILD SUCCESSFUL, no failures, none skipped (test methods return `Unit`).
+- [ ] **Step 5: Commit**
+
+```powershell
+git add app README.md
+git commit -m "feat(app): remember the last options" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
