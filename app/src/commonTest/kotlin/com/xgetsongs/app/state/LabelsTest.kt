@@ -83,6 +83,61 @@ class LabelsTest {
         assertEquals("저장 위치: D:\\Music\\재생목록", destinationLabel(resolvedState(InputKind.PLAYLIST, null)))
     }
 
+    // ---- destinationPath: the path part of the destination label ----
+
+    @Test
+    fun destinationPathIsNullBeforeAnythingIsResolved() {
+        assertNull(destinationPath(UiState(outputDir = "D:\\Music")))
+    }
+
+    @Test
+    fun destinationPathIsNullWhileTheOutputFolderIsBlank() {
+        assertNull(destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", outputDir = "")))
+        assertNull(destinationPath(resolvedState(InputKind.VIDEO, outputDir = "   ")))
+    }
+
+    @Test
+    fun theDestinationPathOfAVideoIsTheOutputFolderItself() {
+        assertEquals("D:\\Music", destinationPath(resolvedState(InputKind.VIDEO)))
+        assertEquals("D:\\Music", destinationPath(resolvedState(InputKind.VIDEO, "Sample")))
+    }
+
+    @Test
+    fun theDestinationPathOfAPlaylistIsAFolderNamedAfterIt() {
+        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample")))
+    }
+
+    @Test
+    fun theDestinationPathDropsTrailingSeparatorsOfTheOutputFolder() {
+        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", "D:\\Music\\")))
+        assertEquals("D:/Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", "D:/Music/")))
+        assertEquals("D:\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", "D:\\")))
+    }
+
+    @Test
+    fun theDestinationPathUsesTheSanitizedFolderName() {
+        assertEquals(
+            "D:\\Music\\Best\uFF1A Of\uFF1F", // full-width colon and question mark
+            destinationPath(resolvedState(InputKind.PLAYLIST, "Best: Of?")),
+        )
+        assertEquals("D:\\Music\\재생목록", destinationPath(resolvedState(InputKind.PLAYLIST, null)))
+    }
+
+    @Test
+    fun theDestinationLabelIsThePathWithItsCaptionAndNullWhenThereIsNoPath() {
+        val states = listOf(
+            UiState(outputDir = "D:\\Music"),
+            resolvedState(InputKind.PLAYLIST, "Sample", outputDir = ""),
+            resolvedState(InputKind.VIDEO),
+            resolvedState(InputKind.PLAYLIST, "Sample", "D:\\Music\\"),
+            resolvedState(InputKind.PLAYLIST, null),
+        )
+        for (state in states) {
+            assertEquals(destinationPath(state)?.let { "저장 위치: $it" }, destinationLabel(state))
+        }
+        assertEquals("저장 위치: D:\\Music\\재생목록", destinationLabel(resolvedState(InputKind.PLAYLIST, null)))
+    }
+
     @Test
     fun rankIsZeroPadded() {
         assertEquals("007", rankLabel(7))

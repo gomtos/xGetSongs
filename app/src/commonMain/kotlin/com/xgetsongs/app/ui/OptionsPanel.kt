@@ -2,18 +2,22 @@ package com.xgetsongs.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,13 +32,23 @@ import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.state.Phase
 import com.xgetsongs.app.state.UiState
 import com.xgetsongs.app.state.destinationLabel
+import com.xgetsongs.app.state.destinationPath
 import com.xgetsongs.app.state.rankFromInput
 import com.xgetsongs.app.state.rankInputText
 import com.xgetsongs.shared.api.InputKind
 import kotlinx.coroutines.launch
 
+/**
+ * The options under the preview. [pickFolder] opens the platform folder chooser; [openFolder] shows the given
+ * destination path in the platform's file manager (the platform opens the nearest existing folder when it is missing).
+ */
 @Composable
-fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (String) -> String?) {
+fun OptionsPanel(
+    state: UiState,
+    holder: AppStateHolder,
+    pickFolder: suspend (String) -> String?,
+    openFolder: (String) -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val enabled = state.phase != Phase.RUNNING
     // The raw text is kept here so the field can be empty while the user retypes the number.
@@ -63,13 +77,26 @@ fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (St
             ) { Text("폴더 선택") }
         }
         destinationLabel(state)?.let { label ->
-            Text(
-                label,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                // At the far right, under the 폴더 선택 button. Always enabled: looking at the folder is harmless while a job runs.
+                destinationPath(state)?.let { path ->
+                    // A compact button: without these the button reserves 40dp (48dp touch target) and the row would grow.
+                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                        OutlinedButton(
+                            onClick = { openFolder(path) },
+                            modifier = Modifier.heightIn(min = 28.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        ) { Text("탐색기에서 보기", style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = state.overwrite, onCheckedChange = holder::onOverwrite, enabled = enabled)

@@ -31,16 +31,18 @@ fun summaryText(state: UiState): String? {
  * Where the files will be saved: the output folder for a video, a folder named after the playlist inside it for a
  * playlist (the same name the server uses). Null until something is resolved and an output folder is typed.
  */
-fun destinationLabel(state: UiState): String? {
+fun destinationPath(state: UiState): String? {
     val resolved = state.resolved ?: return null
     if (state.outputDir.isBlank()) return null
-    val destination = when (resolved.kind) {
+    return when (resolved.kind) {
         InputKind.VIDEO -> state.outputDir
         InputKind.PLAYLIST ->
             state.outputDir.trimEnd('\\', '/') + "\\" + FilenameFormatter.folderName(resolved.playlistTitle)
     }
-    return "저장 위치: $destination"
 }
+
+/** The line shown above the options: [destinationPath] with its caption; null when there is no destination yet. */
+fun destinationLabel(state: UiState): String? = destinationPath(state)?.let { "저장 위치: $it" }
 
 /** The zero-padded rank shown in the list, e.g. `007`. */
 fun rankLabel(rank: Int): String = rank.toString().padStart(3, '0')

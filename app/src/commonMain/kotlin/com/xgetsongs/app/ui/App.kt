@@ -17,10 +17,15 @@ import com.xgetsongs.app.state.AppStateHolder
 
 /**
  * The whole screen. [pickFolder] opens a platform folder chooser with the current folder preselected
- * and returns the chosen path, or null when the user cancels.
+ * and returns the chosen path, or null when the user cancels. [openFolder] shows a folder in the platform's
+ * file manager (the nearest existing parent when the path does not exist yet); it must not block.
  */
 @Composable
-fun App(holder: AppStateHolder, pickFolder: suspend (initial: String) -> String?) {
+fun App(
+    holder: AppStateHolder,
+    pickFolder: suspend (initial: String) -> String?,
+    openFolder: (path: String) -> Unit,
+) {
     val state by holder.state.collectAsState()
     LaunchedEffect(Unit) { holder.refreshTools() }
 
@@ -36,7 +41,7 @@ fun App(holder: AppStateHolder, pickFolder: suspend (initial: String) -> String?
 
                 if (state.resolved != null) {
                     ResolveInfo(state, onSwitchToVideoOnly = holder::switchToVideoOnly)
-                    OptionsPanel(state, holder, pickFolder)
+                    OptionsPanel(state, holder, pickFolder, openFolder)
                     PreviewList(state.rows, modifier = Modifier.weight(1f))
                     ActionBar(state, holder)
                 } else {

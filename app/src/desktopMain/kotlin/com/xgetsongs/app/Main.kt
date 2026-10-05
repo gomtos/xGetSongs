@@ -48,7 +48,7 @@ fun main() {
             title = "xGetSongs",
             state = rememberWindowState(width = 1000.dp, height = 760.dp),
         ) {
-            App(holder, pickFolder = ::pickFolder)
+            App(holder, pickFolder = ::pickFolder, openFolder = ::openInExplorer)
         }
     }
 }
