@@ -1,6 +1,7 @@
 package com.xgetsongs.app
 
 import com.xgetsongs.app.settings.UserSettings
+import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.AfterTest
@@ -76,10 +77,31 @@ class JsonSettingsStoreTest {
     }
 
     @Test
-    fun bytesThatAreNotUtf8GiveTheDefaults() {
-        Files.write(file, byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0x7B, 0xC3.toByte()))
+    fun validJsonWithBytesThatAreNotUtf8GivesTheDefaultsInsteadOfAGarbledFolder() {
+        // The syntax is fine and only the encoding is wrong: what an ANSI/CP949 editor writes for a Korean folder name
+        // (0xC0 0xBD 0xBE 0xC7) is not UTF-8, and must not turn into U+FFFD characters in the output folder.
+        val body = """{"outputDir":"D:\\""".toByteArray(Charsets.UTF_8) +
+            byteArrayOf(0xC0.toByte(), 0xBD.toByte(), 0xBE.toByte(), 0xC7.toByte()) +
+            """","overwrite":true,"concurrency":4}""".toByteArray(Charsets.UTF_8)
+        Files.write(file, body)
 
         assertEquals(UserSettings(), store.load())
+    }
+
+    @Test
+    fun aUtf16FileGivesTheDefaults() {
+        // What Windows PowerShell's Out-File writes by default: a byte order mark, then two bytes per character.
+        Files.write(file, """{"overwrite":true}""".toByteArray(Charsets.UTF_16LE).let { byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + it })
+
+        assertEquals(UserSettings(), store.load())
+    }
+
+    @Test
+    fun aUtf8ByteOrderMarkInFrontOfValidJsonIsIgnored() {
+        val json = """{"outputDir":"D:\\음악","overwrite":true,"includeRank":false,"concurrency":3}"""
+        Files.write(file, byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + json.toByteArray(Charsets.UTF_8))
+
+        assertEquals(UserSettings(outputDir = "D:\\음악", overwrite = true, includeRank = false, concurrency = 3), store.load())
     }
 
     @Test
@@ -166,6 +188,19 @@ class JsonSettingsStoreTest {
 
         assertEquals(UserSettings(), broken.load())
         assertEquals(listOf("not-a-folder"), filesIn(dir), "nothing else was created")
+    }
+
+    @Test
+    fun anUnexpectedRuntimeFailureNeverEscapesFromLoadOrSave() {
+        // A path whose every operation fails with a plain runtime exception, not an IOException.
+        val broken = Proxy.newProxyInstance(Path::class.java.classLoader, arrayOf(Path::class.java)) { _, method, _ ->
+            if (method.name == "toString") "broken path" else throw IllegalStateException("${method.name} failed")
+        } as Path
+        val brokenStore = JsonSettingsStore(broken)
+
+        brokenStore.save(UserSettings(outputDir = "D:/Songs", overwrite = true))
+
+        assertEquals(UserSettings(), brokenStore.load())
     }
 
     @Test

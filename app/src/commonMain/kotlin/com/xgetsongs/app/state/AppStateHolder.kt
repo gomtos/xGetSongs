@@ -44,6 +44,14 @@ class AppStateHolder(
     private var jobTask: Job? = null
     private var saveJob: Job? = null
 
+    /**
+     * The options as they are known to be stored: what the screen started with (what [settings] holds, with a blank
+     * folder replaced by the default and the concurrency brought into range), then whatever was saved last. Nothing is
+     * written while the screen still shows exactly these, so a file that could not be read is not replaced by defaults
+     * and the default folder does not end up in the file unless the user changes something.
+     */
+    private var lastKnown: UserSettings = _state.value.options()
+
     private fun initialState(defaultOutputDir: String): UiState {
         val stored = settings.load()
         return UiState(
@@ -108,18 +116,26 @@ class AppStateHolder(
         saveJob?.cancel()
         saveJob = scope.launch {
             delay(SAVE_DELAY_MS)
-            settings.save(_state.value.options())
+            saveIfChanged()
         }
     }
 
     /**
      * Saves the options as they are now, at once, and drops a save that is still waiting. Call it when the window
-     * closes, because a change made in the last moments would otherwise be lost.
+     * closes, because a change made in the last moments would otherwise be lost. Writes nothing when the options are
+     * the ones already stored (see [lastKnown]).
      */
     fun flushSettings() {
         saveJob?.cancel()
         saveJob = null
-        settings.save(_state.value.options())
+        saveIfChanged()
+    }
+
+    private fun saveIfChanged() {
+        val current = _state.value.options()
+        if (current == lastKnown) return
+        settings.save(current)
+        lastKnown = current
     }
 
     /** The four options that are remembered; nothing else on the screen is. */

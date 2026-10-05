@@ -3,14 +3,16 @@ package com.xgetsongs.app
 import com.xgetsongs.app.settings.SettingsStore
 import com.xgetsongs.app.settings.UserSettings
 import kotlinx.serialization.json.Json
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
 /**
- * Keeps the options in a small UTF-8 JSON [file]. Neither function throws: a file that is missing, unreadable or not
- * what was expected means the defaults, and a profile that cannot be written to means the options are not kept.
+ * Keeps the options in a small UTF-8 JSON [file]. Neither function throws, whatever goes wrong: a file that is missing,
+ * unreadable, not valid UTF-8 or not what was expected means the defaults, and a profile that cannot be written to means
+ * the options are not kept. (This is blocking code, so nothing in it can raise a `CancellationException`; catching
+ * every `Exception` cannot swallow one. A throw from [load] would crash the start-up, one from [save] would keep the
+ * window from closing.)
  */
 class JsonSettingsStore(private val file: Path) : SettingsStore {
     private val json = Json {
@@ -20,28 +22,30 @@ class JsonSettingsStore(private val file: Path) : SettingsStore {
     }
 
     override fun load(): UserSettings = try {
-        val stored = json.decodeFromString(UserSettings.serializer(), Files.readAllBytes(file).decodeToString())
+        // Strict: bytes that are not UTF-8 (a file saved in the ANSI code page) must give the defaults, not a folder name
+        // full of U+FFFD. A byte order mark, which Notepad and PowerShell like to add, is not part of the JSON.
+        val text = Files.readAllBytes(file).decodeToString(throwOnInvalidSequence = true).removePrefix("\uFEFF")
+        val stored = json.decodeFromString(UserSettings.serializer(), text)
         stored.copy(concurrency = stored.concurrency.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY))
-    } catch (e: IOException) {
-        UserSettings()
-    } catch (e: IllegalArgumentException) {
-        // Not JSON, or JSON of another shape: kotlinx.serialization reports both as a SerializationException.
+    } catch (e: Exception) {
         UserSettings()
     }
 
     /** Writes next to the target and moves it over, so a crash never leaves half a file behind. */
     override fun save(settings: UserSettings) {
-        val temp = file.resolveSibling(file.fileName.toString() + ".tmp")
+        var temp: Path? = null
         try {
+            val name = file.fileName ?: return // a file system root has no name to build the temp file's from
+            temp = file.resolveSibling("$name.tmp")
             file.toAbsolutePath().parent?.let { Files.createDirectories(it) }
             Files.write(temp, json.encodeToString(UserSettings.serializer(), settings).toByteArray(Charsets.UTF_8))
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING)
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             // Nothing sensible to do: the app works the same without remembering its options.
         } finally {
             try {
-                Files.deleteIfExists(temp)
-            } catch (e: IOException) {
+                temp?.let { Files.deleteIfExists(it) }
+            } catch (e: Exception) {
                 // A leftover temp file is overwritten by the next save.
             }
         }

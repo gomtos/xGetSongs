@@ -3,6 +3,8 @@
 package com.xgetsongs.app.state
 
 import com.xgetsongs.app.api.ApiError
+import com.xgetsongs.app.settings.NoSettingsStore
+import com.xgetsongs.app.settings.SettingsStore
 import com.xgetsongs.app.settings.UserSettings
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
@@ -16,6 +18,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -24,13 +28,16 @@ import kotlin.test.assertTrue
 class AppStateHolderTest {
     private val playlistId = "PL2HEDIx6Li8jGsqCiXUq9fzCqpH99qqHV"
 
-    private fun TestScope.holder(api: FakeApi = FakeApi()) =
-        api to AppStateHolder(api, backgroundScope, defaultOutputDir = "C:/Music/xGetSongs")
+    private fun TestScope.holder(api: FakeApi = FakeApi(), store: SettingsStore = NoSettingsStore) =
+        api to AppStateHolder(api, backgroundScope, defaultOutputDir = "C:/Music/xGetSongs", settings = store)
 
     private fun AppStateHolder.row(rank: Int) = state.value.rows.first { it.item.rank == rank }
 
-    private suspend fun TestScope.resolved(api: FakeApi = FakeApi()): Pair<FakeApi, AppStateHolder> {
-        val (fake, holder) = holder(api)
+    private suspend fun TestScope.resolved(
+        api: FakeApi = FakeApi(),
+        store: SettingsStore = NoSettingsStore,
+    ): Pair<FakeApi, AppStateHolder> {
+        val (fake, holder) = holder(api, store)
         holder.onInput(playlistId)
         holder.resolve()
         runCurrent()
@@ -298,8 +305,7 @@ class AppStateHolderTest {
 
     // ---- remembered options ---------------------------------------------------------------
 
-    private fun TestScope.holderWith(store: FakeSettingsStore) =
-        AppStateHolder(FakeApi(), backgroundScope, defaultOutputDir = "C:/Music/xGetSongs", settings = store)
+    private fun TestScope.holderWith(store: FakeSettingsStore) = holder(store = store).second
 
     /** What the holder saves when only the folder differs from the defaults of a fresh [FakeSettingsStore]. */
     private fun defaultsWith(
@@ -392,12 +398,10 @@ class AppStateHolderTest {
     @Test
     fun theRankOptionIsSavedWhileAJobRunsToo() = runTest {
         val store = FakeSettingsStore()
-        val holder = AppStateHolder(FakeApi(), backgroundScope, defaultOutputDir = "C:/Music/xGetSongs", settings = store)
-        holder.onInput(playlistId)
-        holder.resolve()
-        runCurrent()
+        val (_, holder) = resolved(store = store)
         holder.startDownload()
         runCurrent()
+        assertEquals(Phase.RUNNING, holder.state.value.phase)
 
         holder.onIncludeRank(false)
 
@@ -477,13 +481,97 @@ class AppStateHolderTest {
     }
 
     @Test
-    fun flushSettingsSavesTheCurrentValuesEvenWhenNothingWasChanged() = runTest {
+    fun flushSettingsAfterNoChangeSavesNothing() = runTest {
         val store = FakeSettingsStore(UserSettings(outputDir = "D:/Songs", includeRank = false))
         val holder = holderWith(store)
 
         holder.flushSettings()
 
-        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", includeRank = false)), store.saved)
+        assertEquals(emptyList(), store.saved)
+    }
+
+    @Test
+    fun flushSettingsLeavesAFileAloneThatWasLoadedAsTheDefaultsOrNormalised() = runTest {
+        // A missing, corrupt or hand-edited file loads as the defaults (a blank folder, an out-of-range concurrency): closing
+        // the app without touching an option must leave such a file alone.
+        for (stored in listOf(UserSettings(), UserSettings(outputDir = "  "), UserSettings(concurrency = 9))) {
+            val store = FakeSettingsStore(stored)
+            val holder = holderWith(store)
+
+            holder.flushSettings()
+
+            assertEquals(emptyList(), store.saved, "stored: $stored")
+        }
+    }
+
+    @Test
+    fun flushSettingsAfterChangesSavesTheCurrentValues() = runTest {
+        val store = FakeSettingsStore(UserSettings(outputDir = "D:/Songs"))
+        val holder = holderWith(store)
+        holder.onConcurrency(4)
+        holder.onIncludeRank(false)
+
+        holder.flushSettings()
+
+        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", includeRank = false, concurrency = 4)), store.saved)
+    }
+
+    @Test
+    fun flushSettingsAfterADebouncedSaveThatAlreadyWroteTheValuesSavesNothing() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+        holder.onOverwrite(true)
+        advanceTimeBy(400)
+        runCurrent()
+        assertEquals(listOf(defaultsWith(overwrite = true)), store.saved)
+
+        holder.flushSettings()
+
+        assertEquals(1, store.saved.size, "the values are already on disk")
+    }
+
+    @Test
+    fun flushSettingsSavesAgainWhenTheValuesChangedAfterTheLastSave() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+        holder.onOverwrite(true)
+        advanceTimeBy(400)
+        runCurrent()
+        holder.onConcurrency(3)
+
+        holder.flushSettings()
+
+        assertEquals(listOf(defaultsWith(overwrite = true), defaultsWith(overwrite = true, concurrency = 3)), store.saved)
+    }
+
+    @Test
+    fun changingAValueAndBackBeforeTheQuietPeriodEndsSavesNothing() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onOverwrite(true)
+        advanceTimeBy(100)
+        holder.onOverwrite(false)
+        advanceTimeBy(5_000)
+        runCurrent()
+        holder.flushSettings()
+
+        assertEquals(emptyList(), store.saved, "the values are the ones that are already stored")
+    }
+
+    @Test
+    fun changingBackAfterTheValuesWereSavedSavesTheOriginalAgain() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+        holder.onOverwrite(true)
+        advanceTimeBy(400)
+        runCurrent()
+
+        holder.onOverwrite(false)
+        advanceTimeBy(400)
+        runCurrent()
+
+        assertEquals(listOf(defaultsWith(overwrite = true), defaultsWith(overwrite = false)), store.saved)
     }
 
     @Test
@@ -520,18 +608,20 @@ class AppStateHolderTest {
 
     @Test
     fun theTypedInputAndTheSingleVideoRankAreNeverRemembered() = runTest {
+        // The stored form has room for exactly the four options, so neither the address nor the rank can be written.
+        val keys = Json { encodeDefaults = true }
+            .encodeToJsonElement(UserSettings.serializer(), UserSettings()).jsonObject.keys
+        assertEquals(setOf("outputDir", "overwrite", "includeRank", "concurrency"), keys)
+
+        // Typing or choosing a rank saves nothing by itself: one change of an option later, there is exactly one save.
         val store = FakeSettingsStore()
         val holder = holderWith(store)
-
         holder.onInput(playlistId)
         holder.onSingleRank(42)
-        advanceTimeBy(5_000)
-        runCurrent()
-        assertEquals(emptyList(), store.saved, "neither of them is an option that is saved")
-
         holder.onOverwrite(true)
         advanceTimeBy(400)
         runCurrent()
+
         assertEquals(listOf(defaultsWith(overwrite = true)), store.saved)
     }
 
