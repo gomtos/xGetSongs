@@ -247,3 +247,74 @@ Added after the user's request "마지막 옵션은 앱이 기억하도록 해".
 git add app README.md
 git commit -m "feat(app): remember the last options" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 6: Album tag from the video's own album
+
+Added after the user's request "앨범명은 폴더명으로 하지 말고 각 음원별 앨범명으로 따로 저장해, 못찾으면 폴더명으로". The album tag becomes the video's own album (yt-dlp's `album` field, which YouTube fills for many official tracks, for example `Love poem` or `Palette`; most official MVs have none). When the video has no album, the playlist title is used as before (the folder name is derived from it); a single video without an album gets no album tag.
+
+**Files:**
+- Create: `engine/src/main/kotlin/com/xgetsongs/engine/ytdlp/VideoInfoFile.kt`
+- Modify: `engine/src/main/kotlin/com/xgetsongs/engine/ytdlp/YtDlpCommands.kt`, `engine/src/main/kotlin/com/xgetsongs/engine/job/ItemDownloader.kt` (KDoc of `PreparedItem.album` and of `DownloadRequest.album` in `Services.kt` too)
+- Tests: create `engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/VideoInfoFileTest.kt`; modify `ytdlp/YtDlpCommandsTest.kt`, `job/DefaultDownloadServiceTest.kt`, `testutil/Fakes.kt` (as needed), `integration/RealYtDlpIntegrationTest.kt`
+- Modify: `README.md`
+
+**Interfaces:**
+- Produces: `object VideoInfoFile { fun readAlbum(file: java.nio.file.Path): String? }`.
+- Consumes: `PreparedItem.album` (now only the FALLBACK: the playlist title or null), `TrackTags.album`.
+
+**Behaviour**
+1. `YtDlpCommands.download` adds `--write-info-json` (before `-o`). yt-dlp then writes `<videoId>.info.json` into the item's work directory next to `<videoId>.mp3`. (The `--no-playlist` flag already present keeps it to one video.)
+2. `VideoInfoFile.readAlbum(file)`: returns the `album` string of the JSON object in `file`, trimmed, or null when the file is missing/unreadable/not UTF-8/not valid JSON, the root is not an object, `album` is absent/null/not a string, or the trimmed text is empty. It also returns null for the literal text `NA` (yt-dlp's placeholder in printed output). It never throws and must not keep the file open. Use `kotlinx.serialization.json` (already used by `YtDlpResolver`); the file can be several hundred KB because of the formats list, which is fine.
+3. `ItemDownloader.download`: after yt-dlp succeeded and `<videoId>.mp3` exists, `album = VideoInfoFile.readAlbum(workDir.resolve("$videoId.info.json")) ?: prepared.album` and that value goes into `TrackTags.album`. Everything else about tagging is unchanged (album artist stays the per-track artist, the cover logic is unchanged). A missing or broken info file never fails the item.
+4. `README.md`: in the ID3 paragraph say the album is the video's own album when YouTube knows it, else the playlist name.
+
+- [ ] **Step 1: Write failing tests**
+  - `VideoInfoFileTest` (temp files, cleaned up): album present; trimmed; Korean album; missing key; `null` value; number value; blank string; `NA`; invalid JSON; empty file; JSON array root; non-existent file; invalid UTF-8 bytes; a large file (200 KB of other fields) still works.
+  - `YtDlpCommandsTest`: `--write-info-json` is present and before `-o`.
+  - `DefaultDownloadServiceTest` (the fake yt-dlp handler may write `<id>.info.json` into the item dir; capture the ffmetadata text inside the fake ffmpeg handler as the existing tag tests do): info album `Palette` with `request.album = "My List"` gives `album=Palette`; no info file gives `album=My List`; info file without album gives `album=My List`; info album blank gives `album=My List`; single video (`request.album = null`) with an info album gives `album=Palette`; single video without any album has no `album=` line; a corrupt info file gives the fallback and the item still succeeds.
+- [ ] **Step 2: Run to see them fail:** `.\gradlew.bat :engine:test`
+- [ ] **Step 3: Implement** behaviours 1-4.
+- [ ] **Step 4: Run** `.\gradlew.bat check` (green, none skipped; test methods return `Unit`).
+- [ ] **Step 5: Real yt-dlp check** (integration, the user approved real downloads for this project): in `RealYtDlpIntegrationTest` add (a) a test that runs the real `YtDlpCommands.download(...)` command for the 19-second test video (`jNQXAC9IVRw`, the same video the existing test uses) into a temp directory with the real `SystemProcessRunner` and asserts that `<id>.info.json` exists next to `<id>.mp3`, parses as a JSON object whose `id` is the video id, and that `VideoInfoFile.readAlbum` returns null for it (that video has no album); (b) a METADATA-ONLY test (no audio download): the same command with `--skip-download` inserted before the `--` separator, for video `kcx0a2OAhN0`, asserting `<id>.info.json` exists and `VideoInfoFile.readAlbum` equals `Love poem` (add a comment that this depends on the music metadata YouTube currently shows for that video). Run `.\gradlew.bat :engine:integrationTest`. If the real info file name differs from `<videoId>.info.json`, fix the lookup and report it.
+- [ ] **Step 6: Commit**
+
+```powershell
+git add engine README.md
+git commit -m "feat(engine): use the video's own album for the album tag" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 7: "탐색기에서 보기" button
+
+Added after the user's request "'저장 위치' 라벨 제일 오른쪽 조회 버튼 아래에 '탐색기에서 보기' 버튼 추가".
+
+**Files:**
+- Modify: `app/src/commonMain/kotlin/com/xgetsongs/app/state/Labels.kt`, `app/src/commonMain/kotlin/com/xgetsongs/app/ui/OptionsPanel.kt`, `app/src/commonMain/kotlin/com/xgetsongs/app/ui/App.kt`
+- Create: `app/src/desktopMain/kotlin/com/xgetsongs/app/ExplorerOpener.kt`; modify `app/src/desktopMain/kotlin/com/xgetsongs/app/Main.kt`
+- Tests: `app/src/commonTest/kotlin/com/xgetsongs/app/state/LabelsTest.kt`; create `app/src/desktopTest/kotlin/com/xgetsongs/app/ExplorerOpenerTest.kt`
+- Modify: `README.md`
+
+**Interfaces:**
+- Produces: `fun destinationPath(state: UiState): String?` in `Labels.kt` (the path part of the existing label); `destinationLabel(state)` becomes `destinationPath(state)?.let { "저장 위치: $it" }` (same text as now). `App(holder, pickFolder, openFolder: (String) -> Unit)` (a platform capability like `pickFolder`; the default for tests/previews may be a no-op). `internal fun openInExplorer(path: String)` and `internal fun existingFolderFor(path: String): java.nio.file.Path?` in `desktopMain`.
+
+**Behaviour**
+1. `OptionsPanel`: the line that shows the destination label becomes a `Row(Modifier.fillMaxWidth(), verticalAlignment = CenterVertically)`: the label `Text` (weight 1f, one line, ellipsis, as now) and, at the far right of the row (so it sits under the 폴더 선택 and 조회 buttons), an `OutlinedButton` with the text `탐색기에서 보기`. The button is shown only when `destinationPath(state)` is not null, is always enabled (also while a job runs), and calls `openFolder(destinationPath(state))`. Keep the button compact (smaller content padding, `bodySmall` text) so the row does not grow much taller than now.
+2. `existingFolderFor(path)`: null for a blank path or one the platform rejects (`InvalidPathException`); otherwise the first existing DIRECTORY on the way up from the path (the path itself when it is a directory, the parent when it is a regular file, then the parents, up to the root); null when none exists. It never throws.
+3. `openInExplorer(path)`: opens `existingFolderFor(path)` in the system file manager: `java.awt.Desktop.getDesktop().open(folder.toFile())` when `Desktop.isDesktopSupported()` and `Desktop.getDesktop().isSupported(Desktop.Action.OPEN)`, otherwise `ProcessBuilder("explorer.exe", folder.toString())` (argument list, no shell). It does nothing when there is no folder. It runs on its own daemon thread so the UI never waits for the file manager, and swallows every `Exception` (opening the folder is a convenience). `Main.kt` passes `openFolder = ::openInExplorer` to `App`.
+4. `README.md`: one sentence in the usage part about the button.
+
+- [ ] **Step 1: Write failing tests**
+  - `LabelsTest`: `destinationPath` for no resolve, blank output dir, video, playlist (trailing separators trimmed, title sanitised); `destinationLabel` still returns exactly the old texts (`저장 위치: ...`).
+  - `ExplorerOpenerTest` (temp directory per test, cleaned up): an existing directory returns itself; a missing child of an existing directory returns the parent; several missing levels return the nearest existing ancestor; a regular file returns its parent; a blank path and a path with an illegal character (for example one containing `\u0000`) return null; none of these throws. Do not start a file manager in tests.
+- [ ] **Step 2: Run to see them fail:** `.\gradlew.bat :app:desktopTest`
+- [ ] **Step 3: Implement** behaviours 1-4.
+- [ ] **Step 4: Run** `.\gradlew.bat check` (green, none skipped).
+- [ ] **Step 5: Commit**
+
+```powershell
+git add app README.md
+git commit -m "feat(app): add a button that shows the destination folder in the file manager" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
