@@ -80,7 +80,25 @@ object LyricsExtractor {
         var end = start
         while (end < lines.size && !isTerminator(lines[end])) end++
 
-        val block = limit(collapseBlankRuns(trimBlankEnds(lines.subList(start, end).map { it.trimEnd() })))
+        return tidyLines(lines.subList(start, end))
+    }
+
+    /**
+     * [text] cleaned up as lyrics, without looking for a heading or an end: the same clean-up and validity rules that
+     * [extract] applies to the block it finds, for a text that already is the lyrics (the answer of a lyrics service).
+     * The zero-width characters go and the Hangul filler becomes a space, line breaks become `\n`, control characters
+     * other than `\n` and `\t` go, trailing whitespace of every line is gone, there is no blank line at either end and no
+     * run of more than two blank lines, and the text is cut at a line boundary (never inside a surrogate pair) when it
+     * would pass 30000 characters. Null when [text] is null or blank or has fewer than three non-blank lines.
+     */
+    fun tidy(text: String?): String? {
+        if (text.isNullOrBlank()) return null
+        return tidyLines(normalise(text).split('\n'))
+    }
+
+    /** The clean-up of [extract] and [tidy] for [lines] that are already normalised. */
+    private fun tidyLines(lines: List<String>): String? {
+        val block = limit(collapseBlankRuns(trimBlankEnds(lines.map { it.trimEnd() })))
         // The cut can leave a blank line at the end, so the ends are trimmed again; the blank lines inside stay.
         val cleaned = trimBlankEnds(block)
         if (cleaned.count { it.isNotEmpty() } < MIN_NON_BLANK_LINES) return null

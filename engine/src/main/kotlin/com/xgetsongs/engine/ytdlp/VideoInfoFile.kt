@@ -6,17 +6,19 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.math.roundToLong
 
 /**
- * What the engine takes from the info file of a video: the [album] and the [description] (where uploaders often put the
- * lyrics). A field is null when the file has no usable value for it.
+ * What the engine takes from the info file of a video: the [album], the [description] (where uploaders often put the
+ * lyrics) and the [duration] in whole seconds (what a lyrics lookup compares). A field is null when the file has no
+ * usable value for it.
  */
-data class VideoInfo(val album: String?, val description: String?)
+data class VideoInfo(val album: String?, val description: String?, val duration: Int? = null)
 
 /**
  * Reads the info file `<videoId>.info.json` that yt-dlp writes next to the audio (`--write-info-json`, see
- * [YtDlpCommands.download]). It holds everything yt-dlp knows about the video; the engine only needs the album and the
- * description.
+ * [YtDlpCommands.download]). It holds everything yt-dlp knows about the video; the engine only needs the album, the
+ * description and the duration.
  */
 object VideoInfoFile {
     /** What yt-dlp prints for a field it does not know. It is not an album, whichever way it ends up in the file. */
@@ -31,8 +33,11 @@ object VideoInfoFile {
      *    blank or yt-dlp's `NA` placeholder.
      *  - `description` as written, with the blank lines in front of the first text and the whitespace after the last
      *    text dropped, and the line breaks inside kept; null when it is absent, null, not a string or blank.
+     *  - `duration`, a JSON number (yt-dlp writes whole seconds for most videos and a decimal for some), rounded to whole
+     *    seconds; null when it is absent, null, not a number (a string such as `"258"` is not), not positive once
+     *    rounded or too large for an Int.
      *
-     * Both are null when the file is missing, unreadable, not valid UTF-8 or not valid JSON, or its root is not an
+     * All are null when the file is missing, unreadable, not valid UTF-8 or not valid JSON, or its root is not an
      * object. The info file only improves the tags, so this never throws. Blocking; the file is closed again before
      * it returns.
      */
@@ -49,7 +54,7 @@ object VideoInfoFile {
         val info = root as? JsonObject ?: return NOTHING
         val album = stringOf(info, "album")?.trim()?.takeIf { it.isNotEmpty() && it != NOT_AVAILABLE }
         val description = stringOf(info, "description")?.let(::dropBlankEnds)?.takeIf { it.isNotEmpty() }
-        return VideoInfo(album, description)
+        return VideoInfo(album, description, durationOf(info))
     }
 
     /** The album of the video in [file]: [VideoInfo.album] of [read]. */
@@ -59,6 +64,16 @@ object VideoInfoFile {
     private fun stringOf(info: JsonObject, key: String): String? {
         val value = info[key] as? JsonPrimitive ?: return null
         return value.content.takeIf { value.isString }
+    }
+
+    /** The `duration` of [info] when it is a JSON number that is at least half a second and fits an Int once rounded; else null. */
+    private fun durationOf(info: JsonObject): Int? {
+        val value = info["duration"] as? JsonPrimitive ?: return null
+        if (value.isString) return null
+        // `null`, `true` and `false` are literals too, and none of them parses as a number.
+        val seconds = value.content.toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null
+        val rounded = seconds.roundToLong()
+        return if (rounded in 1..Int.MAX_VALUE) rounded.toInt() else null
     }
 
     /** Drops the blank lines in front of the first text (its own indentation stays) and all whitespace after the last text. */

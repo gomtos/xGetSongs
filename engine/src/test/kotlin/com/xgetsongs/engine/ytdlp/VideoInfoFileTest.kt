@@ -220,6 +220,79 @@ class VideoInfoFileTest {
         assertEquals("Line one", infoOf("""{"album":"NA","description":"Line one"}""").description)
     }
 
+    // ---- the duration ----
+
+    @Test
+    fun aWholeNumberDurationIsReadAsSeconds() {
+        assertEquals(258, infoOf("""{"id":"vid00000001","duration":258}""").duration)
+        assertEquals(1, infoOf("""{"duration":1}""").duration)
+    }
+
+    @Test
+    fun aDecimalDurationIsRounded() {
+        assertEquals(258, infoOf("""{"duration":258.4}""").duration)
+        assertEquals(259, infoOf("""{"duration":258.5}""").duration)
+        assertEquals(259, infoOf("""{"duration":258.6}""").duration)
+        assertEquals(19, infoOf("""{"duration":19.0}""").duration)
+        assertEquals(258, infoOf("""{"duration":2.584E2}""").duration)
+    }
+
+    @Test
+    fun aMissingOrNullDurationGivesNull() {
+        assertNull(infoOf("""{"id":"vid00000001","album":"Palette"}""").duration)
+        assertNull(infoOf("""{"duration":null}""").duration)
+    }
+
+    @Test
+    fun aDurationThatIsNotANumberGivesNull() {
+        assertNull(infoOf("""{"duration":"258"}""").duration)
+        assertNull(infoOf("""{"duration":"NA"}""").duration)
+        assertNull(infoOf("""{"duration":""}""").duration)
+        assertNull(infoOf("""{"duration":true}""").duration)
+        assertNull(infoOf("""{"duration":[258]}""").duration)
+        assertNull(infoOf("""{"duration":{"seconds":258}}""").duration)
+    }
+
+    @Test
+    fun aZeroOrNegativeDurationGivesNull() {
+        assertNull(infoOf("""{"duration":0}""").duration)
+        assertNull(infoOf("""{"duration":0.0}""").duration)
+        assertNull(infoOf("""{"duration":-5}""").duration)
+        assertNull(infoOf("""{"duration":-0.4}""").duration)
+        assertNull(infoOf("""{"duration":0.4}""").duration, "it rounds to zero, which is no length")
+    }
+
+    @Test
+    fun aDurationThatDoesNotFitAnIntGivesNullAndTheOtherFieldsAreStillRead() {
+        val info = infoOf("""{"album":"Palette","duration":1e30,"description":"Line one"}""")
+
+        assertNull(info.duration)
+        assertEquals("Palette", info.album)
+        assertEquals("Line one", info.description)
+        assertNull(infoOf("""{"duration":4294967296}""").duration)
+        assertEquals(Int.MAX_VALUE, infoOf("""{"duration":2147483647}""").duration)
+    }
+
+    @Test
+    fun onlyTheDurationOfTheRootObjectCounts() {
+        assertNull(infoOf("""{"formats":[{"duration":200}],"meta":{"duration":300},"album":"Palette"}""").duration)
+        assertEquals(19, infoOf("""{"formats":[{"duration":200}],"duration":19}""").duration)
+    }
+
+    @Test
+    fun theDurationComesWithTheAlbumAndTheDescription() {
+        val info = infoOf("""{"album":" Palette ","duration":258.2,"description":"[Lyrics]\nLine one\nLine two"}""")
+
+        assertEquals(VideoInfo(album = "Palette", description = "[Lyrics]\nLine one\nLine two", duration = 258), info)
+    }
+
+    @Test
+    fun noDurationIsReadFromAFileThatCannotBeUsed() {
+        assertEquals(nothing, infoOf("""{"duration":258"""))
+        assertNull(VideoInfoFile.read(dir.resolve("nothing.info.json")).duration)
+        assertNull(infoOf("""[{"duration":258}]""").duration)
+    }
+
     @Test
     fun aLargeFileWithManyOtherFieldsStillWorks() {
         // A real info file is several hundred KB because of the formats list.

@@ -70,6 +70,27 @@ class ApiModelsTest {
     }
 
     @Test
+    fun theLyricsSearchIsOnUnlessTheOptionIsTurnedOff() {
+        assertTrue(JobOptions().searchLyricsOnline)
+        val omitted = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"outputDir":"D:/Music"}}""")
+        assertTrue(omitted.options.searchLyricsOnline, "a client that does not know the option gets the default, which is on")
+        val off = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"searchLyricsOnline":false}}""")
+        assertFalse(off.options.searchLyricsOnline)
+        assertTrue(json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1"}""").options.searchLyricsOnline)
+    }
+
+    @Test
+    fun theSearchLyricsOnlineOptionSurvivesARoundTrip() {
+        for (value in listOf(true, false)) {
+            val request = JobRequest("r1", JobOptions(outputDir = "D:/Music", includeRank = false, searchLyricsOnline = value), listOf(3))
+            val encoded = json.encodeToString(JobRequest.serializer(), request)
+
+            assertTrue(encoded.contains("\"searchLyricsOnline\":$value"), encoded)
+            assertEquals(request, json.decodeFromString(JobRequest.serializer(), encoded))
+        }
+    }
+
+    @Test
     fun resolveResponseRoundTrips() {
         val response = ResolveResponse(
             resolveId = "r1",

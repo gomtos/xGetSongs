@@ -64,6 +64,11 @@ data class JobOptions(
     val concurrency: Int = 2,
     /** Whether the file name starts with the rank (`001 `). The ID3 track number is the rank either way. */
     val includeRank: Boolean = true,
+    /**
+     * Whether a song whose description has no lyrics is looked up on the internet (lrclib.net, by artist, title, album and
+     * length). Off keeps those four values on the machine; the song then gets no lyrics.
+     */
+    val searchLyricsOnline: Boolean = true,
 )
 
 @Serializable

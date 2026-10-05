@@ -1,5 +1,7 @@
 package com.xgetsongs.engine.testutil
 
+import com.xgetsongs.engine.lyrics.LyricsProvider
+import com.xgetsongs.engine.lyrics.LyricsQuery
 import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.tools.ToolPathProvider
 import com.xgetsongs.engine.tools.ToolPaths
@@ -111,3 +113,13 @@ fun downloadRunner(ytDlp: ProcessHandler) = FakeProcessRunner { command, onStdou
 val FakeProcessRunner.ytDlpCommands: List<List<String>> get() = commands.filterNot(::isFfmpegCommand)
 
 val FakeProcessRunner.ffmpegCommands: List<List<String>> get() = commands.filter(::isFfmpegCommand)
+
+/** A [LyricsProvider] whose answer is a lambda; records every query it is asked. */
+class FakeLyricsProvider(private val answer: suspend (LyricsQuery) -> String? = { null }) : LyricsProvider {
+    val queries = CopyOnWriteArrayList<LyricsQuery>()
+
+    override suspend fun find(query: LyricsQuery): String? {
+        queries += query
+        return answer(query)
+    }
+}

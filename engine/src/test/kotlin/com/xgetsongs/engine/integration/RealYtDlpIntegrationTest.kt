@@ -3,9 +3,11 @@ package com.xgetsongs.engine.integration
 import com.xgetsongs.engine.DownloadRequest
 import com.xgetsongs.engine.job.DefaultDownloadService
 import com.xgetsongs.engine.job.ItemDownloader
+import com.xgetsongs.engine.lyrics.LrclibLyricsProvider
 import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.process.SystemProcessRunner
+import com.xgetsongs.engine.testutil.Id3v2Tag
 import com.xgetsongs.engine.tools.ToolLocator
 import com.xgetsongs.engine.ytdlp.VideoInfoFile
 import com.xgetsongs.engine.ytdlp.YtDlpCommands
@@ -217,12 +219,15 @@ class RealYtDlpIntegrationTest {
             try {
                 val outDir = root.resolve("out")
 
+                // The lyrics lookup is on and the real LRCLIB is asked: this video has no lyrics in its description and none
+                // may be found anywhere else, so the file must come out without any lyrics frame.
                 val recording = ProgressRecordingRunner(runner)
-                val service = DefaultDownloadService(ItemDownloader(recording, locator, resolver), root.resolve("work"), this)
+                val service = DefaultDownloadService(ItemDownloader(recording, locator, resolver, LrclibLyricsProvider()), root.resolve("work"), this)
                 val events = service
                     .start(
                         DownloadRequest(
                             resolved.items, LocalFolderSink(outDir), overwrite = false, concurrency = 1, album = "Test Album",
+                            searchLyricsOnline = true,
                         ),
                     )
                     .events.receiveAsFlow().toList()
@@ -247,7 +252,10 @@ class RealYtDlpIntegrationTest {
                 assertTrue(Stage.CONVERTING in stages, "the audio conversion must still be reported: $stages")
 
                 val probed = ffprobe.probe(file)
-                println("tags: ${probed.tags}; streams: ${probed.streams}")
+                // Never print a lyrics tag: if the lookup wrongly found lyrics, they must not end up in the log.
+                println("tags: ${probed.tags.filterKeys { !it.startsWith("lyrics") }}; lyrics tags: ${probed.tags.keys.count { it.startsWith("lyrics") }}; streams: ${probed.streams}")
+                assertTrue(probed.tags.keys.none { it.startsWith("lyrics") }, "the video has no lyrics anywhere: ${probed.tags.keys}")
+                assertTrue("USLT" !in Id3v2Tag.read(file).ids, "no lyrics frame may be written when nothing is found")
                 assertEquals("Me at the zoo", probed.tags["title"])
                 assertEquals("jawed", probed.tags["artist"])
                 assertEquals("jawed", probed.tags["album_artist"])

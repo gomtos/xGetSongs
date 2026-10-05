@@ -1,6 +1,7 @@
 package com.xgetsongs.engine.integration
 
 import com.xgetsongs.engine.process.SystemProcessRunner
+import com.xgetsongs.engine.tags.Id3Frames
 import com.xgetsongs.engine.tags.Id3Tagger
 import com.xgetsongs.engine.tags.TrackTags
 import com.xgetsongs.engine.testutil.Id3v2Tag
@@ -215,7 +216,7 @@ class RealFfmpegTaggingIntegrationTest {
             assertEquals("kor", frame.language)
             assertEquals("", frame.descriptor)
             assertEquals(lyrics.replace("\n", "\r\n"), frame.text)
-            assertTrue('﻿' !in frame.text, "no byte order mark inside the text")
+            assertTrue('\uFEFF' !in frame.text, "no byte order mark inside the text")
             // The comment is still a real COMM frame, next to the lyrics.
             assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments(), tag.ids.toString())
             for (id in listOf("TIT2", "TPE1", "TPE2", "TALB", "TRCK", "APIC", "COMM", "USLT")) {
@@ -250,6 +251,35 @@ class RealFfmpegTaggingIntegrationTest {
 
             assertTrue("USLT" !in Id3v2Tag.read(mp3).ids)
             assertTrue(ffprobe.probe(mp3).tags.keys.none { it.startsWith("lyrics") })
+        }
+    }
+
+    /** Like [silentMp3], but with an ID3v2.3 tag (or none), which is what the engine's own frame writer extends. */
+    private suspend fun silentMp3WithAV23Tag(): Path = root.resolve("track.mp3").also {
+        generate("-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1", "-c:a", "libmp3lame", "-id3v2_version", "3", it.toString())
+    }
+
+    @Test
+    fun noLyricsGivenMeansNoLyricsFrameAndNoLyricsTagEvenWhenTheInputFileCarriesLyrics(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3WithAV23Tag()
+            // The input already has a USLT frame, written the way the engine writes one.
+            Id3Frames.add(mp3, null, "Old made-up line one\nOld line two\nOld line three")
+            assertTrue("USLT" in Id3v2Tag.read(mp3).ids, "precondition: the input has a USLT frame")
+            val before = ffprobe.probe(mp3).tags.keys.filter { it.startsWith("lyrics") }
+            println("ffprobe shows the old lyrics of the input as $before")
+            assertTrue(before.isNotEmpty(), "precondition: ffprobe sees the old lyrics, so its silence afterwards means something")
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, redJpg(), tags.copy(lyrics = null)))
+
+            val tag = Id3v2Tag.read(mp3)
+            assertTrue("USLT" !in tag.ids, "no lyrics frame may survive: ${tag.ids}")
+            val probed = ffprobe.probe(mp3)
+            assertTrue(probed.tags.keys.none { it.startsWith("lyrics") }, "no lyrics tag may survive: ${probed.tags.keys}")
+            assertTrue(tag.frames.none { it.id == "TXXX" && "lyrics" in String(it.body, Charsets.ISO_8859_1).lowercase() }, "no TXXX lyrics frame either: ${tag.ids}")
+            assertTags(tags, probed.tags)
+            assertEquals(2, probed.streams.size, probed.toString())
+            assertTrue(probed.streams.single { it.codecType == "video" }.attachedPic)
         }
     }
 

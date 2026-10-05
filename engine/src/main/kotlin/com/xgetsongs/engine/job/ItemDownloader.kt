@@ -1,5 +1,8 @@
 package com.xgetsongs.engine.job
 
+import com.xgetsongs.engine.lyrics.LyricsProvider
+import com.xgetsongs.engine.lyrics.LyricsQuery
+import com.xgetsongs.engine.lyrics.NoLyricsProvider
 import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.tags.Id3Tagger
 import com.xgetsongs.engine.tags.TrackTags
@@ -19,13 +22,15 @@ import com.xgetsongs.shared.filename.FilenameFormatter
 import com.xgetsongs.shared.input.ParsedInput
 import com.xgetsongs.shared.lyrics.LyricsExtractor
 import com.xgetsongs.shared.title.TitleParser
+import kotlinx.coroutines.CancellationException
 import java.nio.file.Files
 import java.nio.file.Path
 
 /**
  * An item whose final file name is settled. [artist] and [track] are the parsed originals the file name was made from
  * (the ID3 tags use them as they are); [album] is only the fallback for the album tag, used when the video has no
- * album of its own: the playlist title, or null for a single video.
+ * album of its own: the playlist title, or null for a single video. [searchLyricsOnline] says whether the lyrics may be
+ * looked up on the internet when the video description has none.
  */
 data class PreparedItem(
     val item: ResolvedItem,
@@ -33,6 +38,7 @@ data class PreparedItem(
     val artist: String,
     val track: String,
     val album: String?,
+    val searchLyricsOnline: Boolean = false,
 )
 
 sealed interface DownloadResult {
@@ -44,11 +50,14 @@ sealed interface DownloadResult {
 
 /**
  * Downloads one video's audio with yt-dlp and writes its ID3 tags. Knows nothing about concurrency, retries or sinks.
+ * [lyrics] is asked for the lyrics of a song whose description has none (and only when the item allows it); the default
+ * looks nothing up.
  */
 class ItemDownloader(
     private val runner: ProcessRunner,
     private val tools: ToolPathProvider,
     private val metadata: VideoMetadataSource,
+    private val lyrics: LyricsProvider = NoLyricsProvider,
 ) {
     private val tagger = Id3Tagger(runner, tools)
 
@@ -57,8 +66,15 @@ class ItemDownloader(
      * the full metadata (yt-dlp `artist`/`track`) is fetched and the title is parsed again. [album] is the fallback
      * for the album tag (the playlist title, or null for a single video), used when the video has no album of its own.
      * [includeRank] puts the rank in front of the file name; the tags keep the rank as the track number either way.
+     * [searchLyricsOnline] is carried to [download], which may then ask the lyrics provider for a song whose description
+     * has no lyrics.
      */
-    suspend fun prepare(item: ResolvedItem, album: String? = null, includeRank: Boolean = true): PreparedItem {
+    suspend fun prepare(
+        item: ResolvedItem,
+        album: String? = null,
+        includeRank: Boolean = true,
+        searchLyricsOnline: Boolean = false,
+    ): PreparedItem {
         var artist = item.artist
         var track = item.track
         if (item.lowConfidence) {
@@ -68,15 +84,17 @@ class ItemDownloader(
                 track = parsed.title
             }
         }
-        return PreparedItem(item, FilenameFormatter.format(item.rank, artist, track, includeRank), artist, track, album)
+        return PreparedItem(item, FilenameFormatter.format(item.rank, artist, track, includeRank), artist, track, album, searchLyricsOnline)
     }
 
     /**
      * Runs yt-dlp once, then writes the ID3 tags and the cover (the thumbnail yt-dlp left next to the mp3) into the
      * mp3. The album tag is the video's own album from the info file yt-dlp left next to the mp3, else
      * [PreparedItem.album]; the lyrics tag is the lyrics section of the video description in the same file, if it has
-     * one. A missing or broken info file means no own album and no lyrics, and never fails the item. [emit] receives
-     * throttled [JobEvent.Progress] events.
+     * one, else (when [PreparedItem.searchLyricsOnline] is set) what the lyrics provider finds for the artist, title, tag
+     * album and length of the video, else nothing: with no lyrics from either source no lyrics frame is written. A
+     * missing or broken info file means no own album, no description lyrics and no length, and never fails the item; a
+     * lookup that fails is no lyrics. [emit] receives throttled [JobEvent.Progress] events.
      */
     suspend fun download(prepared: PreparedItem, workDir: Path, emit: (JobEvent) -> Unit): DownloadResult {
         val paths = tools.current()
@@ -112,17 +130,34 @@ class ItemDownloader(
         }
         val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
         val info = VideoInfoFile.read(workDir.resolve("$videoId.info.json"))
+        val album = info.album ?: prepared.album
         val tags = TrackTags(
             title = prepared.track,
             artist = prepared.artist,
-            album = info.album ?: prepared.album,
+            album = album,
             albumArtist = prepared.artist,
             trackNumber = rank,
             comment = ParsedInput.Video(videoId).canonicalUrl,
-            lyrics = LyricsExtractor.extract(info.description),
+            lyrics = LyricsExtractor.extract(info.description) ?: lookUpLyrics(prepared, album, info.duration),
         )
         tagger.tag(file, cover, tags)?.let { return DownloadResult.Failed(it) }
         return DownloadResult.Downloaded(file)
+    }
+
+    /**
+     * What the lyrics provider finds for [prepared]: null when the item does not allow a lookup, when nothing is found
+     * and when the lookup fails (a song without lyrics is no reason to fail the item). Only a cancellation gets through.
+     */
+    private suspend fun lookUpLyrics(prepared: PreparedItem, album: String?, durationSeconds: Int?): String? {
+        if (!prepared.searchLyricsOnline) return null
+        return try {
+            lyrics.find(LyricsQuery(artist = prepared.artist, title = prepared.track, album = album, durationSeconds = durationSeconds))
+                ?.takeIf { it.isNotBlank() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /** Lets a progress update through only when the stage changes or the whole percent advances. */

@@ -158,6 +158,30 @@ class Id3TaggerTest {
     }
 
     @Test
+    fun noLyricsGivenMeansNoLyricsFrameEvenWhenTheInputFileCarriesOne() = runTest {
+        // The mp3 that comes in already has a USLT frame (an earlier tag, or lyrics left by another program).
+        Files.write(file, fakeTaggedMp3())
+        Id3Frames.add(file, null, "Old made-up line one\nOld line two\nOld line three")
+        assertEquals(listOf("TIT2", "USLT"), Id3v2Tag.read(file).ids, "precondition: the input has lyrics")
+        var metadataText: String? = null
+        // Like the real ffmpeg: the new file is built from the audio and the metadata file, nothing else of the input.
+        val runner = FakeProcessRunner { command, _, _ ->
+            metadataText = ffmetadataTextOf(command)
+            writeFakeTagged(command)
+            0
+        }
+
+        val result = tagger(runner).tag(file, null, tags.copy(lyrics = null))
+
+        assertNull(result)
+        val tag = Id3v2Tag.read(file)
+        assertEquals(listOf("TIT2", "COMM"), tag.ids, "no USLT frame: the item has no lyrics, whatever the input had")
+        assertEquals(emptyList(), tag.lyrics())
+        assertTrue("lyrics" !in metadataText.orEmpty())
+        assertEquals(listOf("vid00000001.mp3"), filesInDir())
+    }
+
+    @Test
     fun theLyricsReachNeitherTheMetadataFileNorTheCommandLine() = runTest {
         var metadataText: String? = null
         val runner = FakeProcessRunner { command, _, _ ->

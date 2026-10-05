@@ -488,4 +488,120 @@ class LyricsExtractorTest {
 
         assertTrue('\r' !in result, result)
     }
+
+    // ---- tidy: the clean-up and validity rules, for a text that is the lyrics already ----
+
+    @Test
+    fun tidyOfNullAndBlankTextGivesNull() {
+        assertNull(LyricsExtractor.tidy(null))
+        assertNull(LyricsExtractor.tidy(""))
+        assertNull(LyricsExtractor.tidy("   \n\t\n  "))
+        assertNull(LyricsExtractor.tidy("\u3164\n\u200B\n\uFEFF"))
+    }
+
+    @Test
+    fun tidyKeepsAPlainTextAsItIs() {
+        assertEquals(block, LyricsExtractor.tidy(block))
+        assertEquals("a\n\nb\nc", LyricsExtractor.tidy("a\n\nb\nc"))
+    }
+
+    @Test
+    fun tidyUnifiesLineBreaksAndTrimsTheEndsOfTheLinesButNotTheIndentation() {
+        val text = "  Line one   \r\nLine two\t\r\n\r\nLine three 　\rLine four\r\n"
+
+        assertEquals("  Line one\nLine two\n\nLine three\nLine four", LyricsExtractor.tidy(text))
+    }
+
+    @Test
+    fun tidyRemovesControlCharactersButKeepsTabsAndLineBreaks() {
+        val text = "Line\u0000 one\u0007\nLine\u007F two\u009F\n\u0001Line three\u000B\nA\tB\n\u0000"
+
+        assertEquals("Line one\nLine two\nLine three\nA\tB", LyricsExtractor.tidy(text))
+    }
+
+    @Test
+    fun tidyDropsBlankLinesAtBothEndsAndShrinksRunsOfThreeOrMoreBlankLinesToTwo() {
+        val text = text("", "  ", "a", "", "", "", "", "b", "", "", "c", "", "d", "   ", "\t", " ", "e", "", "\t", "")
+
+        assertEquals("a\n\n\nb\n\n\nc\n\nd\n\n\ne", LyricsExtractor.tidy(text))
+    }
+
+    @Test
+    fun tidyNeedsAtLeastThreeNonBlankLines() {
+        assertNull(LyricsExtractor.tidy("Only one"))
+        assertNull(LyricsExtractor.tidy("Line one\n\n\nLine two\n"))
+        assertEquals("a\n\nb\nc", LyricsExtractor.tidy("a\n\nb\nc"))
+    }
+
+    @Test
+    fun tidyCutsAtALineBoundaryWhenTheTextWouldPassThirtyThousandCharacters() {
+        val longLines = (1..40).map { it.toString().padStart(4, '0') + "x".repeat(996) }
+
+        val result = LyricsExtractor.tidy(longLines.joinToString("\n"))!!
+
+        assertEquals(longLines.take(29), result.split("\n"))
+        assertEquals(29028, result.length)
+    }
+
+    @Test
+    fun tidyKeepsABlockJustUnderTheLimitWhole() {
+        val lines = (0 until 3000).map { "Line " + it.toString().padStart(4, '0') }
+
+        val result = LyricsExtractor.tidy(lines.joinToString("\n"))!!
+
+        assertEquals(29999, result.length)
+        assertEquals(lines.joinToString("\n"), result)
+    }
+
+    @Test
+    fun tidyCutsAWholeLineAndNeverSplitsASurrogatePair() {
+        // 100 notes of two UTF-16 units each: a line of 200 characters; 149 such lines make 29948 characters, 150 would make 30149.
+        val line = "🎵".repeat(100)
+
+        val result = LyricsExtractor.tidy(List(400) { line }.joinToString("\n"))!!
+
+        assertEquals(List(149) { line }, result.split("\n"))
+        assertEquals(29948, result.length)
+        val loneSurrogates = result.indices.count { i ->
+            (result[i].isHighSurrogate() && !(i + 1 < result.length && result[i + 1].isLowSurrogate())) ||
+                (result[i].isLowSurrogate() && !(i > 0 && result[i - 1].isHighSurrogate()))
+        }
+        assertEquals(0, loneSurrogates)
+        // A single line that is longer than the limit cannot be cut inside: it is dropped, and what is left is too short.
+        assertNull(LyricsExtractor.tidy("a\nb\n" + "🎵".repeat(20_000)))
+    }
+
+    @Test
+    fun tidyKeepsKoreanEmojiAndOtherNonBmpText() {
+        val lyrics = text("한국어 가사 첫 줄 🎵", "日本語の歌詞 𠮷野家", "𝄞 music ♪ 🎶 가나다라", "Ünïcödé ñ")
+
+        assertEquals(lyrics, LyricsExtractor.tidy(lyrics))
+    }
+
+    @Test
+    fun tidyRemovesZeroWidthCharactersAndTurnsTheHangulFillerIntoASpace() {
+        val text = "Li\u200Bne\u200C one\u200D\n\u2060Line\u3164two\uFEFF\n\u3164\n\u3164\n\u200B\n\u3164\nLine three\u3164"
+
+        val result = LyricsExtractor.tidy(text)!!
+
+        assertEquals("Line one\nLine two\n\n\nLine three", result)
+        assertTrue(result.none { it in "\u200B\u200C\u200D\u2060\uFEFF\u3164" })
+    }
+
+    @Test
+    fun tidyDoesNotLookForAHeadingOrASeparator() {
+        // It is for text that is the lyrics already: a heading, separator, link or hashtag line is just a line.
+        val text = text("[Lyrics]", "Line one", "=======", "https://example.invalid", "#example")
+
+        assertEquals(text, LyricsExtractor.tidy(text))
+    }
+
+    @Test
+    fun extractGivesTheTidyBlock() {
+        val noisy = text("Lyrics", "", "  Line one   ", "", "", "", "", "Line two\t", "Line three", "", "", "=======", "Tail")
+        val blockText = "  Line one   \n\n\n\n\nLine two\t\nLine three"
+
+        assertEquals(LyricsExtractor.tidy(blockText), LyricsExtractor.extract(noisy))
+        assertEquals("  Line one\n\n\nLine two\nLine three", LyricsExtractor.extract(noisy))
+    }
 }

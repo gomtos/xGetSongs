@@ -26,7 +26,8 @@ interface Resolver {
  * It is null for a single video, which then gets no album tag unless it has an album of its own. [includeRank] says
  * whether the file names start with the rank; the ID3 track number is the rank either way. Without the rank two items
  * can end up with the same file name: the first one to finish wins, the other is skipped (or, with [overwrite],
- * replaces it).
+ * replaces it). [searchLyricsOnline] allows a lookup on the internet (through the downloader's lyrics provider) for a
+ * song whose description has no lyrics; it is off by default, so the engine sends nothing anywhere unless asked to.
  */
 data class DownloadRequest(
     val items: List<ResolvedItem>,
@@ -35,6 +36,7 @@ data class DownloadRequest(
     val concurrency: Int,
     val album: String? = null,
     val includeRank: Boolean = true,
+    val searchLyricsOnline: Boolean = false,
 )
 
 /**
