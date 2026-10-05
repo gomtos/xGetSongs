@@ -1,7 +1,9 @@
 package com.xgetsongs.server
 
+import com.xgetsongs.engine.DownloadRequest
 import com.xgetsongs.engine.ResolveException
 import com.xgetsongs.engine.ToolException
+import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.shared.api.ActionResult
 import com.xgetsongs.shared.api.ApiJson
 import com.xgetsongs.shared.api.ErrorResponse
@@ -30,6 +32,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RoutesTest {
@@ -131,6 +136,106 @@ class RoutesTest {
         client.startJob(JobRequest(resolved.resolveId, options(), ranks = listOf(3)))
 
         assertEquals(listOf(3), fakes.downloads.requests.single().items.map { it.rank })
+    }
+
+    // ---- playlist folder and album ---------------------------------------------------------
+
+    private fun DownloadRequest.directory(): Path = assertIs<LocalFolderSink>(sink).directory
+
+    @Test
+    fun aPlaylistIsSavedInAFolderNamedAfterItWithTheTitleAsAlbum() = testApplication {
+        val fakes = TestServices() // the sample playlist is titled "Sample"
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+
+        val request = fakes.downloads.requests.single()
+        assertEquals(outDir.resolve("Sample"), request.directory())
+        assertTrue(Files.isDirectory(outDir.resolve("Sample")), "the playlist folder is created")
+        assertEquals("Sample", request.album)
+    }
+
+    @Test
+    fun theFolderNameIsSanitizedButTheAlbumKeepsTheOriginalTitle() = testApplication {
+        val fakes = TestServices(resolver = FakeResolver(response = samplePlaylist().copy(playlistTitle = "Best: Of?")))
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+
+        val request = fakes.downloads.requests.single()
+        val folder = "Best： Of？" // full-width colon and question mark
+        assertEquals(outDir.resolve(folder), request.directory())
+        assertTrue(Files.isDirectory(outDir.resolve(folder)))
+        assertEquals("Best: Of?", request.album)
+    }
+
+    @Test
+    fun aPlaylistWithoutATitleGetsTheDefaultFolderAndNoAlbum() = testApplication {
+        val fakes = TestServices(resolver = FakeResolver(response = samplePlaylist().copy(playlistTitle = null)))
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+
+        val request = fakes.downloads.requests.single()
+        assertEquals(outDir.resolve("재생목록"), request.directory())
+        assertTrue(Files.isDirectory(outDir.resolve("재생목록")))
+        assertNull(request.album)
+    }
+
+    @Test
+    fun aSingleVideoIsSavedInTheOutputFolderWithoutAnAlbum() = testApplication {
+        // A title on a video is ignored: only the kind decides whether there is a sub-folder.
+        val fakes = TestServices(resolver = FakeResolver(response = sampleVideo().copy(playlistTitle = "Sample")))
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+
+        val request = fakes.downloads.requests.single()
+        assertEquals(outDir, request.directory())
+        assertTrue(Files.isDirectory(outDir))
+        assertFalse(Files.exists(outDir.resolve("Sample")), "no sub-folder for a single video")
+        assertNull(request.album)
+    }
+
+    @Test
+    fun aRetryOfAPlaylistJobUsesTheSameFolderAndAlbum() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+        client.startJob(JobRequest(resolved.resolveId, options(), ranks = listOf(3)))
+
+        val (first, retry) = fakes.downloads.requests.toList()
+        assertEquals(listOf(3), retry.items.map { it.rank })
+        assertEquals(first.directory(), retry.directory())
+        assertEquals(outDir.resolve("Sample"), retry.directory())
+        assertEquals(first.album, retry.album)
+    }
+
+    @Test
+    fun aFileInThePlaceOfThePlaylistFolderIsABadRequest() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+        Files.createDirectories(outDir)
+        Files.writeString(outDir.resolve("Sample"), "not a folder")
+
+        val response = client.startJob(JobRequest(resolved.resolveId, options()))
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.body<ErrorResponse>().message.startsWith("출력 폴더를 만들 수 없습니다"))
+        assertTrue(fakes.downloads.requests.isEmpty())
     }
 
     @Test

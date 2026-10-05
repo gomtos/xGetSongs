@@ -1,7 +1,9 @@
 package com.xgetsongs.app.state
 
+import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.ResolveResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -31,6 +33,54 @@ class LabelsTest {
     fun noSummaryUntilAJobEnds() {
         assertNull(summaryText(UiState()))
         assertNull(summaryText(UiState(summary = JobSummary(1, 0, 0), jobStatus = null)))
+    }
+
+    private fun resolvedState(
+        kind: InputKind,
+        playlistTitle: String? = null,
+        outputDir: String = "D:\\Music",
+    ) = UiState(
+        outputDir = outputDir,
+        resolved = ResolveResponse(resolveId = "r1", kind = kind, playlistTitle = playlistTitle, items = emptyList()),
+    )
+
+    @Test
+    fun destinationIsNullBeforeAnythingIsResolved() {
+        assertNull(destinationLabel(UiState(outputDir = "D:\\Music")))
+    }
+
+    @Test
+    fun destinationIsNullWhileTheOutputFolderIsBlank() {
+        assertNull(destinationLabel(resolvedState(InputKind.PLAYLIST, "Sample", outputDir = "")))
+        assertNull(destinationLabel(resolvedState(InputKind.VIDEO, outputDir = "   ")))
+    }
+
+    @Test
+    fun aVideoIsSavedInTheOutputFolderItself() {
+        assertEquals("저장 위치: D:\\Music", destinationLabel(resolvedState(InputKind.VIDEO)))
+        // a title on a video is ignored: only the kind decides whether there is a sub-folder
+        assertEquals("저장 위치: D:\\Music", destinationLabel(resolvedState(InputKind.VIDEO, "Sample")))
+    }
+
+    @Test
+    fun aPlaylistIsSavedInAFolderNamedAfterIt() {
+        assertEquals("저장 위치: D:\\Music\\Sample", destinationLabel(resolvedState(InputKind.PLAYLIST, "Sample")))
+    }
+
+    @Test
+    fun trailingSlashesOfTheOutputFolderAreDroppedBeforeTheFolderName() {
+        assertEquals("저장 위치: D:\\Music\\Sample", destinationLabel(resolvedState(InputKind.PLAYLIST, "Sample", "D:\\Music\\")))
+        assertEquals("저장 위치: D:/Music\\Sample", destinationLabel(resolvedState(InputKind.PLAYLIST, "Sample", "D:/Music/")))
+        assertEquals("저장 위치: D:\\Sample", destinationLabel(resolvedState(InputKind.PLAYLIST, "Sample", "D:\\")))
+    }
+
+    @Test
+    fun theFolderNameIsSanitizedLikeTheServerDoesIt() {
+        assertEquals(
+            "저장 위치: D:\\Music\\Best\uFF1A Of\uFF1F", // full-width colon and question mark
+            destinationLabel(resolvedState(InputKind.PLAYLIST, "Best: Of?")),
+        )
+        assertEquals("저장 위치: D:\\Music\\재생목록", destinationLabel(resolvedState(InputKind.PLAYLIST, null)))
     }
 
     @Test

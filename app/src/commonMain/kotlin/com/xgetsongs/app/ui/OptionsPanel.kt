@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -19,10 +20,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.state.Phase
 import com.xgetsongs.app.state.UiState
+import com.xgetsongs.app.state.destinationLabel
 import com.xgetsongs.app.state.rankFromInput
 import com.xgetsongs.app.state.rankInputText
 import com.xgetsongs.shared.api.InputKind
@@ -56,6 +59,15 @@ fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (St
                 enabled = enabled,
                 onClick = { scope.launch { pickFolder(state.outputDir)?.let(holder::onOutputDir) } },
             ) { Text("폴더 선택") }
+        }
+        destinationLabel(state)?.let { label ->
+            Text(
+                label,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = state.overwrite, onCheckedChange = holder::onOverwrite, enabled = enabled)

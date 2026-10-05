@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
-class LocalFolderSink(private val directory: Path) : OutputSink {
+class LocalFolderSink(val directory: Path) : OutputSink {
     init {
         Files.createDirectories(directory)
     }

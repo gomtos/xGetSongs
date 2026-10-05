@@ -1,5 +1,6 @@
 package com.xgetsongs.app.state
 
+import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.filename.FilenameFormatter
 
@@ -24,6 +25,21 @@ fun summaryText(state: UiState): String? {
         JobStatus.FAILED -> "중단됨 — $counts"
         null -> null
     }
+}
+
+/**
+ * Where the files will be saved: the output folder for a video, a folder named after the playlist inside it for a
+ * playlist (the same name the server uses). Null until something is resolved and an output folder is typed.
+ */
+fun destinationLabel(state: UiState): String? {
+    val resolved = state.resolved ?: return null
+    if (state.outputDir.isBlank()) return null
+    val destination = when (resolved.kind) {
+        InputKind.VIDEO -> state.outputDir
+        InputKind.PLAYLIST ->
+            state.outputDir.trimEnd('\\', '/') + "\\" + FilenameFormatter.folderName(resolved.playlistTitle)
+    }
+    return "저장 위치: $destination"
 }
 
 /** The zero-padded rank shown in the list, e.g. `007`. */

@@ -78,13 +78,20 @@ fun Application.module(services: Services, config: ServerConfig) {
             if (isVideo && options.singleRank !in FilenameFormatter.MIN_RANK..FilenameFormatter.MAX_RANK) {
                 throw ApiException(HttpStatusCode.BadRequest, "순위 번호는 1~999 사이여야 합니다.")
             }
-            val sink = sinkFor(config, options)
+            // A playlist goes into a folder named after it and its title becomes the album; a single video goes
+            // straight into the output folder. The album is the original title, not the sanitized folder name.
+            val isPlaylist = resolved.kind == InputKind.PLAYLIST
+            val folder = if (isPlaylist) FilenameFormatter.folderName(resolved.playlistTitle) else null
+            val album = if (isPlaylist) resolved.playlistTitle else null
+            val sink = sinkFor(config, options, folder)
             val items = resolved.items
                 .filter { it.available && (request.ranks == null || it.rank in request.ranks!!) }
                 .map { if (isVideo) it.copy(rank = options.singleRank) else it }
             if (items.isEmpty()) throw ApiException(HttpStatusCode.BadRequest, "다운로드할 항목이 없습니다.")
 
-            val handle = services.downloads.start(DownloadRequest(items, sink, options.overwrite, options.concurrency))
+            val handle = services.downloads.start(
+                DownloadRequest(items, sink, options.overwrite, options.concurrency, album),
+            )
             call.respond(HttpStatusCode.Created, JobCreated(jobs.register(handle)))
         }
 
@@ -111,7 +118,8 @@ fun Application.module(services: Services, config: ServerConfig) {
     }
 }
 
-private fun sinkFor(config: ServerConfig, options: JobOptions): OutputSink = when (config.mode) {
+/** [folder] is a ready-made folder name inside the output folder, or null to save in the output folder itself. */
+private fun sinkFor(config: ServerConfig, options: JobOptions, folder: String?): OutputSink = when (config.mode) {
     ServerMode.LOCAL -> {
         val dir = options.outputDir?.takeIf { it.isNotBlank() }
             ?: throw ApiException(HttpStatusCode.BadRequest, "출력 폴더를 지정하세요.")
@@ -122,7 +130,7 @@ private fun sinkFor(config: ServerConfig, options: JobOptions): OutputSink = whe
         }
         if (!path.isAbsolute) throw ApiException(HttpStatusCode.BadRequest, "출력 폴더는 절대 경로여야 합니다.")
         try {
-            LocalFolderSink(path)
+            LocalFolderSink(if (folder == null) path else path.resolve(folder))
         } catch (e: IOException) {
             throw ApiException(HttpStatusCode.BadRequest, "출력 폴더를 만들 수 없습니다: ${e.message}")
         }
