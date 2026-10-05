@@ -10,6 +10,8 @@
 
 Design spec: `docs/superpowers/specs/2026-10-04-xgetsongs-design.md`. Task 20 brings the spec in line with decisions made while planning.
 
+> **Status (2026-10-05): executed.** All 20 tasks were implemented with a review per task. The code blocks and test counts below are the final state of the repository, including the fixes the reviews required (job lifecycle in `DefaultDownloadService`, staged install in `DefaultToolManager`, `HttpXgsApi` cancellation and SSE error mapping, `AppStateHolder` state resets, the editable rank field, the real-yt-dlp findings in `TitleParser`). Tests: shared 70, engine 94, server 30, app 47 (241 in total). The step lists still describe the original task order.
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
@@ -223,6 +225,7 @@ ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose" }
 compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose" }
@@ -904,6 +907,75 @@ class TitleParserTest {
     @Test
     fun unknownArtistWhenNothingIsAvailable() =
         assertParsed("Some Song", TitleParser.UNKNOWN_ARTIST, "Some Song", Confidence.LOW)
+
+    // ---- ASCII symbols at the start of an artist name are not junk -------------------------
+
+    @Test
+    fun ampersandStaysInArtistName() = assertParsed("&TEAM 'Go in Blind' MV", "&TEAM", "Go in Blind")
+
+    @Test
+    fun asteriskStaysInArtistName() = assertParsed("*NSYNC - Bye Bye Bye", "*NSYNC", "Bye Bye Bye")
+
+    @Test
+    fun dollarSignsStayInArtistName() = assertParsed("\$uicideboy\$ - Song", "\$uicideboy\$", "Song")
+
+    @Test
+    fun exclamationMarksAloneAreAnArtistName() = assertParsed("!!! - Song", "!!!", "Song")
+
+    @Test
+    fun emojiWithVariationSelectorIsStillStripped() = assertParsed("\u2764\uFE0F Artist - Song", "Artist", "Song")
+
+    // ---- any leading [..] tag is dropped, not only known ones ------------------------------
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_mama() =
+        assertParsed(
+            "[#2024MAMA] G-DRAGON - HOME SWEET HOME (feat. Taeyang, Daesung) | Mnet 241123",
+            "G-DRAGON", "HOME SWEET HOME (feat. Taeyang, Daesung)",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_live() =
+        assertParsed(
+            "[LIVE] 이창섭 - 천상연 (선녀외전 OST) 라이브 (Full. ver)",
+            "이창섭", "천상연 (선녀외전 OST) 라이브 (Full. ver)",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_liveWithShowName() =
+        assertParsed(
+            "[LIVE] Car, the garden - 그대 작은 나의 세상이 되어 | 2026 단독공연 'BLUE HEART'",
+            "Car, the garden", "그대 작은 나의 세상이 되어",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_programName() =
+        assertParsed(
+            "[DJ티비씨] 폴킴(Paul Kim) - 모든 날, 모든 순간 \u266C #비긴어게인3 #DJ티비씨",
+            "폴킴(Paul Kim)", "모든 날, 모든 순간 \u266C #비긴어게인3 #DJ티비씨",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_genre() =
+        assertParsed(
+            "[Ballad] 임현정 - 사랑은 봄비처럼... 이별은 겨울비처럼...",
+            "임현정", "사랑은 봄비처럼... 이별은 겨울비처럼...",
+        )
+
+    @Test
+    fun anyLeadingBracketTagIsDropped_preRelease() =
+        assertParsed(
+            "[선공개] PLAVE - 이 밤을 빌려 말해요 MV (영화 '오늘 밤, 세계에서 이 사랑이 사라진다 해도')",
+            "PLAVE", "이 밤을 빌려 말해요 MV (영화 '오늘 밤, 세계에서 이 사랑이 사라진다 해도')",
+        )
+
+    @Test
+    fun aTitleThatIsOnlyABracketBlockIsKept() {
+        val parsed = TitleParser.parse("[MV]", "Some Channel")
+        assertEquals("Some Channel", parsed.artist)
+        assertEquals("[MV]", parsed.title)
+        assertEquals(Confidence.LOW, parsed.confidence)
+    }
 }
 ```
 
@@ -933,12 +1005,6 @@ object TitleParser {
     private const val TOPIC_SUFFIX = " - Topic"
     private const val VEVO_SUFFIX = "vevo"
 
-    private val LEADING_TAGS = setOf(
-        "mv", "m/v", "official mv", "official m/v", "official video", "official audio",
-        "official music video", "music video", "audio", "lyric video", "performance video",
-        "가사", "뮤직비디오",
-    )
-
     /** Longest first so "Official Music Video" is removed as a whole, not just "Music Video". */
     private val TRAILING_NOISE = listOf(
         "Official Music Video", "Official Video", "Official Audio", "Official MV", "Official M/V",
@@ -949,7 +1015,6 @@ object TitleParser {
     private val SEPARATORS = listOf(" - ", " – ", " — ", "_ ")
     private val SINGLE_QUOTES = charArrayOf('\'', '‘', '’')
     private val DOUBLE_QUOTES = charArrayOf('"', '“', '”')
-    private val ALL_QUOTES = SINGLE_QUOTES + DOUBLE_QUOTES
 
     fun parse(
         rawTitle: String,
@@ -1016,17 +1081,22 @@ object TitleParser {
         return sb.toString().trim()
     }
 
-    /** Drops leading emoji and symbols; stops at a letter, digit, bracket or quote. */
+    /** Drops leading emoji and pictographs (and whitespace); anything else, such as `&`, `*` or `$`, is kept. */
     private fun stripLeadingJunk(s: String): String {
-        val i = s.indexOfFirst { it.isLetterOrDigit() || it == '[' || it == '(' || it in ALL_QUOTES }
+        val i = s.indexOfFirst {
+            !(it.isWhitespace() || it.isSurrogate() || it == '\uFE0F' || it == '\u200D' || it in '\u2190'..'\u2BFF')
+        }
         return if (i <= 0) s else s.substring(i)
     }
 
+    /**
+     * Drops a leading `[...]` block of any kind (`[MV]`, `[LIVE]`, `[#2024MAMA]`, `[Ballad]`); stacked
+     * tags are removed one per pass of [clean]. A block that is the whole text is kept.
+     */
     private fun stripLeadingTag(s: String): String {
         if (!s.startsWith("[")) return s
         val end = s.indexOf(']')
         if (end < 0) return s
-        if (s.substring(1, end).trim().lowercase() !in LEADING_TAGS) return s
         return s.substring(end + 1).trim().ifEmpty { s }
     }
 
@@ -1129,7 +1199,7 @@ object TitleParser {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.\gradlew.bat :shared:jvmTest`
-Expected: `BUILD SUCCESSFUL`; `TitleParserTest` 29 tests, 0 failures.
+Expected: `BUILD SUCCESSFUL`; `TitleParserTest` 41 tests, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -1384,7 +1454,7 @@ data class ErrorResponse(val message: String)
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.\gradlew.bat :shared:jvmTest`
-Expected: `BUILD SUCCESSFUL`; `ApiModelsTest` 5 tests; the whole module has 58 tests, 0 failures.
+Expected: `BUILD SUCCESSFUL`; `ApiModelsTest` 5 tests; the whole module has 70 tests, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -2018,6 +2088,29 @@ class ErrorClassifierTest {
     fun emptyStderrStillGivesAMessage() {
         assertTrue(classify().message.isNotBlank())
     }
+
+    @Test
+    fun rateLimitedSessionIsTransientEvenThoughItSaysVideoUnavailable() {
+        val failure = classify(
+            "ERROR: [youtube] abc: Video unavailable. This content isn't available, try again later. " +
+                "The current session has been rate-limited by YouTube for up to an hour.",
+        )
+        assertEquals(FailureKind.TRANSIENT, failure.kind)
+        assertTrue(failure.message.contains("rate-limited"))
+    }
+
+    @Test
+    fun plainVideoUnavailableIsStillUnavailable() {
+        assertEquals(FailureKind.UNAVAILABLE, classify("ERROR: [youtube] abc: Video unavailable").kind)
+    }
+
+    @Test
+    fun fatalStillWinsOverRateLimit() {
+        assertEquals(
+            FailureKind.FATAL,
+            classify("ERROR: try again later", "OSError: [Errno 28] No space left on device").kind,
+        )
+    }
 }
 ```
 
@@ -2161,6 +2254,9 @@ object ErrorClassifier {
         "permission denied" to "출력 폴더에 쓸 권한이 없습니다.",
     )
 
+    /** A rate-limited session also says "Video unavailable", so this must be checked before [UNAVAILABLE]. */
+    private val RATE_LIMITED = listOf("try again later", "rate-limited", "rate limited")
+
     private val UNAVAILABLE = listOf(
         "private video" to "비공개 영상",
         "sign in to confirm your age" to "연령 제한 영상",
@@ -2187,6 +2283,7 @@ object ErrorClassifier {
     fun classify(stderrLines: List<String>): Failure {
         val text = stderrLines.joinToString("\n").lowercase()
         FATAL.firstOrNull { text.contains(it.first) }?.let { return Failure(FailureKind.FATAL, it.second) }
+        if (RATE_LIMITED.any { text.contains(it) }) return Failure(FailureKind.TRANSIENT, summarize(stderrLines))
         UNAVAILABLE.firstOrNull { text.contains(it.first) }?.let { return Failure(FailureKind.UNAVAILABLE, it.second) }
         val message = summarize(stderrLines)
         if (TRANSIENT.any { text.contains(it) }) return Failure(FailureKind.TRANSIENT, message)
@@ -2207,7 +2304,7 @@ object ErrorClassifier {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat :engine:test`
-Expected: `BUILD SUCCESSFUL`; `YtDlpCommandsTest` 6, `ProgressParserTest` 7, `ErrorClassifierTest` 8 tests, 0 failures.
+Expected: `BUILD SUCCESSFUL`; `YtDlpCommandsTest` 6, `ProgressParserTest` 7, `ErrorClassifierTest` 11 tests, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -2472,6 +2569,7 @@ import com.xgetsongs.engine.testutil.toolsOf
 import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.input.RejectReason
 import kotlinx.coroutines.test.runTest
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -2647,6 +2745,49 @@ class YtDlpResolverTest {
     fun fetchReturnsNullWhenYtDlpFails() = runTest {
         assertNull(resolver(runnerReturning("", exitCode = 1, stderr = listOf("ERROR: boom"))).fetch("dQw4w9WgXcQ"))
     }
+
+    @Test
+    fun nonPublicAvailabilityMakesAnItemUnavailableAndKeepsItsRank() = runTest {
+        val runner = runnerReturning(
+            """{"title":"T","entries":[
+              {"id":"vid00000001","title":"Song A","availability":"premium_only"},
+              {"id":"vid00000002","title":"Song B","availability":"subscriber_only"},
+              {"id":"vid00000003","title":"Song C","availability":"needs_auth"},
+              {"id":"vid00000004","title":"Artist - Song D","availability":"public"},
+              {"id":"vid00000005","title":"Artist - Song E","availability":"unlisted"}
+            ]}""",
+        )
+
+        val items = resolver(runner).resolve(playlistUrl).items
+
+        assertEquals(listOf(1, 2, 3, 4, 5), items.map { it.rank })
+        listOf("premium_only", "subscriber_only", "needs_auth").forEachIndexed { index, availability ->
+            val item = items[index]
+            assertFalse(item.available)
+            assertNull(item.expectedFileName)
+            assertTrue(item.unavailableReason!!.contains(availability))
+        }
+        listOf(items[3], items[4]).forEach { item ->
+            assertTrue(item.available)
+            assertNotNull(item.expectedFileName)
+        }
+    }
+
+    @Test
+    fun ytDlpThatCannotBeStartedBecomesAResolveException() = runTest {
+        val runner = FakeProcessRunner { _, _, _ -> throw IOException("Cannot run program") }
+
+        val error = assertFailsWith<ResolveException> { resolver(runner).resolve(playlistUrl) }
+
+        assertTrue(error.message!!.contains("yt-dlp"))
+    }
+
+    @Test
+    fun fetchReturnsNullWhenYtDlpCannotBeStarted() = runTest {
+        val runner = FakeProcessRunner { _, _, _ -> throw IOException("Cannot run program") }
+
+        assertNull(resolver(runner).fetch("dQw4w9WgXcQ"))
+    }
 }
 ```
 
@@ -2678,6 +2819,7 @@ import com.xgetsongs.shared.title.TitleParser
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.IOException
 
 /** The metadata of one video that the title parser can use. */
 data class VideoMeta(val title: String?, val channel: String?, val artist: String?, val track: String?)
@@ -2803,11 +2945,15 @@ class YtDlpResolver(
     private suspend fun runYtDlp(command: List<String>): String {
         val stdout = StringBuilder()
         val stderr = mutableListOf<String>()
-        val exitCode = runner.run(
-            command,
-            onStdout = { synchronized(stdout) { stdout.append(it).append('\n') } },
-            onStderr = { synchronized(stderr) { stderr += it } },
-        )
+        val exitCode = try {
+            runner.run(
+                command,
+                onStdout = { synchronized(stdout) { stdout.append(it).append('\n') } },
+                onStderr = { synchronized(stderr) { stderr += it } },
+            )
+        } catch (e: IOException) {
+            throw ResolveException("yt-dlp를 실행할 수 없습니다: ${e.message}")
+        }
         if (exitCode != 0) {
             val failure = synchronized(stderr) { ErrorClassifier.classify(stderr.toList()) }
             throw ResolveException(failure.message)
@@ -2831,7 +2977,7 @@ class YtDlpResolver(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.\gradlew.bat :engine:test`
-Expected: `BUILD SUCCESSFUL`; `YtDlpResolverTest` 14 tests, 0 failures.
+Expected: `BUILD SUCCESSFUL`; `YtDlpResolverTest` 17 tests, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -2867,6 +3013,7 @@ import com.xgetsongs.engine.output.OutputSink
 import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.testutil.FakeProcessRunner
 import com.xgetsongs.engine.testutil.TEST_TOOLS
+import com.xgetsongs.engine.testutil.outputDirOf
 import com.xgetsongs.engine.testutil.toolsOf
 import com.xgetsongs.engine.testutil.writeFakeMp3
 import com.xgetsongs.engine.tools.ToolPathProvider
@@ -2889,12 +3036,16 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.IOException
+import java.nio.file.AccessDeniedException
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DefaultDownloadServiceTest {
@@ -2923,7 +3074,8 @@ class DefaultDownloadServiceTest {
         runner: ProcessRunner,
         tools: ToolPathProvider = toolsOf(),
         metadata: VideoMetadataSource = VideoMetadataSource { null },
-    ) = DefaultDownloadService(ItemDownloader(runner, tools, metadata), tempRoot, this)
+        workDir: Path = tempRoot,
+    ) = DefaultDownloadService(ItemDownloader(runner, tools, metadata), workDir, this)
 
     private fun request(
         vararg items: ResolvedItem,
@@ -2973,7 +3125,7 @@ class DefaultDownloadServiceTest {
     @Test
     fun progressEventsAreThrottledToWholePercents() = runTest {
         val noisy = FakeProcessRunner { command, onStdout, _ ->
-            repeat(1000) { onStdout("XGSP|downloading|${it / 10}|100|NA") }
+            repeat(1000) { onStdout("XGSP|downloading|$it|1000|NA") }
             writeFakeMp3(command)
             0
         }
@@ -3186,6 +3338,107 @@ class DefaultDownloadServiceTest {
         assertTrue(failed.message.contains("disk on fire"))
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(0, 0, 1)), done(events))
     }
+
+    private fun failingSink(error: IOException) = object : OutputSink {
+        override suspend fun exists(fileName: String) = false
+        override suspend fun put(fileName: String, source: Path, overwrite: Boolean) {
+            throw error
+        }
+    }
+
+    @Test
+    fun cancellingRightAfterStartStillEndsWithJobDoneCancelled() = runTest {
+        val handle = service(succeeding).start(request(item(1)))
+        handle.cancel()
+
+        val events = handle.collect()
+
+        assertEquals(JobStatus.CANCELLED, done(events).status)
+        assertFalse(Files.exists(tempRoot), "no work folder is created when the job is cancelled before it starts")
+    }
+
+    @Test
+    fun anUnusableWorkFolderEndsTheJobWithJobDoneFailed() = runTest {
+        val blocker = Files.writeString(root.resolve("blocker"), "a file, not a folder")
+
+        val events = service(succeeding, workDir = blocker.resolve("work")).start(request(item(1))).collect()
+
+        assertEquals(JobEvent.JobDone(JobStatus.FAILED, JobSummary(0, 0, 0)), done(events))
+        assertEquals(0, succeeding.commands.size)
+    }
+
+    @Test
+    fun sameVideoTwiceUsesSeparateWorkFolders() = runTest {
+        val first = item(1)
+        val second = item(2).copy(videoId = first.videoId)
+
+        val events = service(succeeding).start(request(first, second, concurrency = 2)).collect()
+
+        assertEquals(setOf(1, 2), events.filterIsInstance<JobEvent.ItemDone>().map { it.rank }.toSet())
+        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
+        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.mp3")))
+        assertEquals(2, succeeding.commands.map { outputDirOf(it) }.distinct().size)
+    }
+
+    @Test
+    fun accessDeniedFromTheSinkAbortsTheJob() = runTest {
+        val sink = failingSink(AccessDeniedException("x"))
+
+        val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
+
+        assertEquals(JobStatus.FAILED, done(events).status)
+        assertEquals(1, events.filterIsInstance<JobEvent.ItemFailed>().size)
+        assertEquals(1, succeeding.commands.size)
+    }
+
+    @Test
+    fun diskFullFromTheSinkAbortsTheJob() = runTest {
+        val sink = failingSink(IOException("No space left on device"))
+
+        val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
+
+        assertEquals(JobStatus.FAILED, done(events).status)
+        assertEquals(1, events.filterIsInstance<JobEvent.ItemFailed>().size)
+        assertEquals(1, succeeding.commands.size)
+    }
+
+    @Test
+    fun jobDoneIsSentExactlyOnce() = runTest {
+        val completed = service(succeeding).start(request(item(1), item(2))).collect()
+        // A second sink: the first job already put "001 A1 - T1.mp3" into outDir, so the items would be skipped there.
+        val aborted = service(failingWith("OSError: [Errno 28] No space left on device"))
+            .start(request(item(1), item(2), sink = LocalFolderSink(root.resolve("out-aborted"))))
+            .collect()
+
+        assertEquals(JobStatus.COMPLETED, done(completed).status)
+        assertEquals(JobStatus.FAILED, done(aborted).status)
+        for (events in listOf(completed, aborted)) {
+            assertEquals(1, events.count { it is JobEvent.JobDone })
+            assertTrue(events.last() is JobEvent.JobDone)
+        }
+    }
+
+    @Test
+    fun aFileNamedLikeADiskFullErrorDoesNotAbortTheJob() = runTest {
+        // FileAlreadyExistsException's message is just the path: a file name containing disk-full words is not a full disk.
+        val sink = failingSink(FileAlreadyExistsException("C:/out/001 A - Disk Full No Space Left.mp3"))
+
+        val events = service(succeeding).start(request(item(1), item(2), sink = sink)).collect()
+
+        assertEquals(2, events.filterIsInstance<JobEvent.ItemFailed>().size)
+        assertEquals(JobStatus.COMPLETED, done(events).status)
+        assertEquals(2, succeeding.commands.size)
+    }
+
+    @Test
+    fun aRealDiskFullReasonInsideAFileSystemExceptionAbortsTheJob() = runTest {
+        val sink = failingSink(FileSystemException("C:/out/x.mp3", null, "No space left on device"))
+
+        val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
+
+        assertEquals(JobStatus.FAILED, done(events).status)
+        assertEquals(1, succeeding.commands.size)
+    }
 }
 ```
 
@@ -3328,6 +3581,8 @@ import com.xgetsongs.shared.api.JobSummary
 import com.xgetsongs.shared.api.ResolvedItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -3338,6 +3593,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.nio.file.AccessDeniedException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -3347,6 +3604,17 @@ import kotlin.time.Duration.Companion.seconds
 /** Aborts the whole job (disk full, no permission...). */
 private class FatalJobException(message: String) : Exception(message)
 
+private val DISK_FULL_MARKERS = listOf("no space left", "not enough space", "disk full", "공간이 부족")
+
+/**
+ * The JDK reports a full disk only through text: the reason of a [FileSystemException] (its message also holds the
+ * file names, which must not be matched), else the message of any other [IOException].
+ */
+private fun isDiskFull(e: IOException): Boolean {
+    val text = (if (e is FileSystemException) e.reason else e.message).orEmpty().lowercase()
+    return DISK_FULL_MARKERS.any { it in text }
+}
+
 class DefaultDownloadService(
     private val downloader: ItemDownloader,
     private val tempRoot: Path,
@@ -3354,9 +3622,11 @@ class DefaultDownloadService(
     private val retryDelays: List<Duration> = listOf(2.seconds, 4.seconds),
 ) : DownloadService {
 
+    // ATOMIC is intentional: a job cancelled before its first dispatch must still run its finally, sending JobDone and closing the channel.
+    @OptIn(DelicateCoroutinesApi::class)
     override fun start(request: DownloadRequest): JobHandle {
         val events = Channel<JobEvent>(Channel.UNLIMITED)
-        val job = scope.launch { runJob(request, events) }
+        val job = scope.launch(start = CoroutineStart.ATOMIC) { runJob(request, events) }
         return JobHandle(events, job)
     }
 
@@ -3368,27 +3638,33 @@ class DefaultDownloadService(
     }
 
     private suspend fun runJob(request: DownloadRequest, events: Channel<JobEvent>) {
-        val workRoot = withContext(Dispatchers.IO) {
-            Files.createDirectories(tempRoot)
-            Files.createTempDirectory(tempRoot, "job-")
-        }
         val counters = Counters()
-        var status = JobStatus.COMPLETED
+        var status = JobStatus.FAILED
+        var workRoot: Path? = null
         try {
+            // Assigned inside the block so that the finally clause sees the folder even if cancellation follows.
+            val root = withContext(Dispatchers.IO) {
+                Files.createDirectories(tempRoot)
+                Files.createTempDirectory(tempRoot, "job-").also { workRoot = it }
+            }
             coroutineScope {
                 val gate = Semaphore(request.concurrency.coerceIn(MIN_CONCURRENCY, MAX_CONCURRENCY))
                 for (item in request.items) {
-                    launch { gate.withPermit { processItem(item, request, workRoot, events, counters) } }
+                    launch { gate.withPermit { processItem(item, request, root, events, counters) } }
                 }
             }
+            status = JobStatus.COMPLETED
         } catch (e: FatalJobException) {
             status = JobStatus.FAILED
         } catch (e: CancellationException) {
             status = JobStatus.CANCELLED
             throw e
+        } catch (e: IOException) {
+            // The work folder could not be set up: no item was started, so there is no per-item event.
+            status = JobStatus.FAILED
         } finally {
             withContext(NonCancellable) {
-                workRoot.toFile().deleteRecursively()
+                withContext(Dispatchers.IO) { workRoot?.toFile()?.deleteRecursively() }
                 events.trySend(JobEvent.JobDone(status, counters.summary()))
                 events.close()
             }
@@ -3410,7 +3686,7 @@ class DefaultDownloadService(
                 counters.skipped.incrementAndGet()
                 return
             }
-            val itemDir = withContext(Dispatchers.IO) { Files.createDirectories(workRoot.resolve(item.videoId)) }
+            val itemDir = withContext(Dispatchers.IO) { Files.createDirectories(workRoot.resolve(item.rank.toString())) }
             var retries = 0
             while (true) {
                 when (val result = downloader.download(prepared, itemDir) { events.trySend(it) }) {
@@ -3453,7 +3729,14 @@ class DefaultDownloadService(
             throw e
         } catch (e: FatalJobException) {
             throw e
+        } catch (e: AccessDeniedException) {
+            fail(item, "출력 폴더에 쓸 권한이 없습니다.", events, counters)
+            throw FatalJobException("출력 폴더에 쓸 권한이 없습니다.")
         } catch (e: IOException) {
+            if (isDiskFull(e)) {
+                fail(item, "디스크 공간이 부족합니다.", events, counters)
+                throw FatalJobException("디스크 공간이 부족합니다.")
+            }
             fail(item, "파일 처리 중 오류: ${e.message}", events, counters)
         } catch (e: Exception) {
             fail(item, e.message ?: e::class.simpleName.orEmpty(), events, counters)
@@ -3475,7 +3758,7 @@ class DefaultDownloadService(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.\gradlew.bat :engine:test`
-Expected: `BUILD SUCCESSFUL`; `DefaultDownloadServiceTest` 17 tests, 0 failures. The retry tests finish instantly because `runTest` skips the 2 s / 4 s delays.
+Expected: `BUILD SUCCESSFUL`; `DefaultDownloadServiceTest` 25 tests, 0 failures. The retry tests finish instantly because `runTest` skips the 2 s / 4 s delays.
 
 - [ ] **Step 5: Commit**
 
@@ -3527,7 +3810,7 @@ class DefaultToolManagerTest {
 
     private fun runnerFor(outputs: Map<String, String>, exitCode: Int = 0) =
         FakeProcessRunner { command, onStdout, _ ->
-            val tool = Path.of(command.first()).fileName.toString().removeSuffix(".exe")
+            val tool = Path.of(command.first()).fileName.toString().substringBefore('.')
             outputs[tool]?.lines()?.forEach(onStdout)
             if (outputs.containsKey(tool)) exitCode else 1
         }
@@ -3643,6 +3926,89 @@ class DefaultToolManagerTest {
     }
 
     @Test
+    fun installRejectsADownloadThatDoesNotRunAndKeepsTheOldBinary() = runTest {
+        Files.createDirectories(binDir)
+        Files.writeString(binDir.resolve("yt-dlp.exe"), "old")
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runnerFor(emptyMap()),
+            binDir,
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        assertFailsWith<ToolException> { manager.installYtDlp() }
+
+        assertEquals("old", Files.readString(binDir.resolve("yt-dlp.exe")))
+        assertFalse(Files.exists(binDir.resolve("yt-dlp.new.exe")))
+    }
+
+    @Test
+    fun installReplacesAnExistingBinaryOnlyAfterTheNewOneRuns() = runTest {
+        Files.createDirectories(binDir)
+        Files.writeString(binDir.resolve("yt-dlp.exe"), "old")
+        var textWhenVerified: String? = null
+        val runner = FakeProcessRunner { command, onStdout, _ ->
+            if (command.first().endsWith("yt-dlp.new.exe")) {
+                textWhenVerified = Files.readString(binDir.resolve("yt-dlp.exe"))
+                onStdout("2026.10.01")
+                0
+            } else {
+                1
+            }
+        }
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runner,
+            binDir,
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        manager.installYtDlp()
+
+        assertEquals("old", textWhenVerified)
+        assertEquals(2_000_000L, Files.size(binDir.resolve("yt-dlp.exe")))
+        assertFalse(Files.exists(binDir.resolve("yt-dlp.new.exe")))
+        val names = Files.list(binDir).use { stream -> stream.map { it.fileName.toString() }.toList() }
+        assertEquals(listOf("yt-dlp.exe"), names)
+    }
+
+    @Test
+    fun installReportsFileSystemFailuresAsToolExceptions() = runTest {
+        val blocker = root.resolve("blocker")
+        Files.writeString(blocker, "not a directory")
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runnerFor(mapOf("yt-dlp" to "2026.10.01")),
+            blocker.resolve("bin"),
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        val error = assertFailsWith<ToolException> { manager.installYtDlp() }
+
+        assertTrue(error.message!!.contains("\uc124\uce58\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4"))
+    }
+
+    @Test
+    fun installReportsAMoveFailureAndKeepsTheOldBinary() = runTest {
+        val target = binDir.resolve("yt-dlp.exe")
+        Files.createDirectories(target)
+        Files.writeString(target.resolve("inner.txt"), "keep")
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            runnerFor(mapOf("yt-dlp" to "2026.10.01")),
+            binDir,
+            fetch = { ByteArray(2_000_000) },
+        )
+
+        val error = assertFailsWith<ToolException> { manager.installYtDlp() }
+
+        assertTrue(error.message!!.contains("\uc124\uce58\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4"))
+        assertTrue(Files.isDirectory(target))
+        assertEquals("keep", Files.readString(target.resolve("inner.txt")))
+        assertFalse(Files.exists(binDir.resolve("yt-dlp.new.exe")))
+    }
+
+    @Test
     fun updateRunsYtDlpSelfUpdate() = runTest {
         val runner = runnerFor(mapOf("yt-dlp" to "Current version: 2026.10.01\nUpdated yt-dlp to 2026.11.02"))
         val manager = DefaultToolManager(ToolPathProvider { paths() }, runner, binDir)
@@ -3672,6 +4038,20 @@ class DefaultToolManagerTest {
 
         assertFailsWith<ToolException> { manager.updateYtDlp() }
     }
+
+    @Test
+    fun updateReportsAnExecutableThatCannotBeStarted() = runTest {
+        val manager = DefaultToolManager(
+            ToolPathProvider { paths() },
+            FakeProcessRunner { _, _, _ -> throw IOException("Cannot run program") },
+            binDir,
+        )
+
+        val error = assertFailsWith<ToolException> { manager.updateYtDlp() }
+
+        assertTrue(error.message!!.contains("\uc2e4\ud589\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4"))
+        assertTrue(error.message!!.contains("Cannot run program"))
+    }
 }
 ```
 
@@ -3692,6 +4072,7 @@ import com.xgetsongs.shared.api.ActionResult
 import com.xgetsongs.shared.api.ToolInfo
 import com.xgetsongs.shared.api.ToolsStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -3731,25 +4112,45 @@ class DefaultToolManager(
             throw ToolException("yt-dlp 다운로드에 실패했습니다: ${e.message}")
         }
         if (bytes.size < MIN_YTDLP_BYTES) throw ToolException("내려받은 파일이 너무 작습니다. 다시 시도하세요.")
-        withContext(Dispatchers.IO) {
-            Files.createDirectories(binDir)
-            val partial = binDir.resolve("yt-dlp.exe.download")
-            Files.write(partial, bytes)
-            Files.move(partial, binDir.resolve("yt-dlp.exe"), StandardCopyOption.REPLACE_EXISTING)
+        // Stage next to the target, verify that it runs, and only then replace yt-dlp.exe, so a bad
+        // download never shadows (or overwrites) a working binary.
+        val staged = binDir.resolve("yt-dlp.new.exe")
+        try {
+            withContext(Dispatchers.IO) {
+                Files.createDirectories(binDir)
+                Files.write(staged, bytes)
+            }
+            val version = firstLine(staged, "--version")
+                ?: throw ToolException("내려받은 yt-dlp를 실행할 수 없습니다.")
+            withContext(Dispatchers.IO) {
+                Files.move(staged, binDir.resolve("yt-dlp.exe"), StandardCopyOption.REPLACE_EXISTING)
+            }
+            return ActionResult("yt-dlp $version 을(를) 설치했습니다.")
+        } catch (e: IOException) {
+            throw ToolException("yt-dlp를 설치하지 못했습니다: ${e.message}")
+        } finally {
+            // Best effort: a stale yt-dlp.new.exe is harmless (the next install overwrites it and ToolLocator ignores it).
+            withContext(NonCancellable + Dispatchers.IO) {
+                try {
+                    Files.deleteIfExists(staged)
+                } catch (ignored: IOException) {
+                }
+            }
         }
-        val version = status().ytDlp.version
-            ?: throw ToolException("설치한 yt-dlp를 실행할 수 없습니다.")
-        return ActionResult("yt-dlp $version 을(를) 설치했습니다.")
     }
 
     override suspend fun updateYtDlp(): ActionResult {
         val ytDlp = tools.current().ytDlp ?: throw ToolException("yt-dlp가 설치되어 있지 않습니다.")
         val lines = mutableListOf<String>()
-        val exitCode = runner.run(
-            listOf(ytDlp.toString(), "--ignore-config", "-U"),
-            onStdout = { synchronized(lines) { lines += it } },
-            onStderr = { synchronized(lines) { lines += it } },
-        )
+        val exitCode = try {
+            runner.run(
+                listOf(ytDlp.toString(), "--ignore-config", "-U"),
+                onStdout = { synchronized(lines) { lines += it } },
+                onStderr = { synchronized(lines) { lines += it } },
+            )
+        } catch (e: IOException) {
+            throw ToolException("yt-dlp를 실행할 수 없습니다: ${e.message}")
+        }
         val output = synchronized(lines) { lines.filter { it.isNotBlank() } }
         if (exitCode != 0) {
             throw ToolException(output.lastOrNull() ?: "yt-dlp 업데이트에 실패했습니다.")
@@ -3818,7 +4219,7 @@ private suspend fun httpGet(url: String): ByteArray = runInterruptible(Dispatche
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.\gradlew.bat :engine:test`
-Expected: `BUILD SUCCESSFUL`; `DefaultToolManagerTest` 10 tests; the engine module has 75 tests in total, 0 failures.
+Expected: `BUILD SUCCESSFUL`; `DefaultToolManagerTest` 15 tests; the engine module has 94 tests in total, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -5100,7 +5501,9 @@ kotlin {
         val desktopTest by getting {
             dependencies {
                 implementation(libs.ktor.server.test.host)
+                implementation(libs.ktor.server.sse)
                 implementation(libs.ktor.client.cio)
+                implementation(libs.ktor.client.mock)
             }
         }
     }
@@ -5113,6 +5516,8 @@ compose.desktop {
             targetFormats(TargetFormat.Msi)
             packageName = "xGetSongs"
             packageVersion = "1.0.0"
+            // The default jlink runtime lacks these: java.net.http (yt-dlp download) and jdk.unsupported (Netty).
+            modules("java.net.http", "jdk.unsupported")
         }
     }
 }
@@ -5166,6 +5571,9 @@ class FakeEngine {
         JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)),
     )
 
+    /** The events the fake job sends before it closes its channel. */
+    var eventsToSend: List<JobEvent> = finishedEvents
+
     val jobs = mutableListOf<Job>()
     var resolveError: ResolveException? = null
 
@@ -5179,7 +5587,7 @@ class FakeEngine {
     private val downloads = object : DownloadService {
         override fun start(request: DownloadRequest): JobHandle {
             val events = Channel<JobEvent>(Channel.UNLIMITED)
-            finishedEvents.forEach { events.trySend(it) }
+            eventsToSend.forEach { events.trySend(it) }
             events.close()
             return JobHandle(events, Job().also { jobs += it })
         }
@@ -5210,8 +5618,28 @@ import com.xgetsongs.engine.ResolveException
 import com.xgetsongs.shared.api.JobOptions
 import com.xgetsongs.shared.api.JobRequest
 import com.xgetsongs.shared.api.ToolInfo
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.statement.HttpResponsePipeline
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.ktor.server.application.install
+import io.ktor.server.routing.routing
+import io.ktor.server.sse.SSE
+import io.ktor.server.sse.sse
 import io.ktor.server.testing.testApplication
+import io.ktor.sse.ServerSentEvent
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -5284,6 +5712,86 @@ class HttpXgsApiTest {
         assertTrue(engine.jobs.single().isCancelled)
         assertFailsWith<ApiError> { api.cancel("nope") }
     }
+
+    @Test
+    fun eventsOfAJobThatEndsWithoutJobDoneFailWithAnApiError() = testApplication {
+        engine.eventsToSend = engine.finishedEvents.dropLast(1)
+        val api = apiFor(engine)
+        val resolveId = api.resolve("PLabcdefghijkl").resolveId
+        val jobId = api.startJob(JobRequest(resolveId, JobOptions(outputDir = engine.outputDir))).jobId
+
+        val error = assertFailsWith<ApiError> { api.events(jobId).toList() }
+
+        assertTrue(error.message!!.contains("\uc5f0\uacb0\uc774 \ub04a\uc5b4\uc84c\uc2b5\ub2c8\ub2e4"))
+    }
+
+    @Test
+    fun eventsWithAWrongTokenFailWithAnApiErrorNotAnSseException() = testApplication {
+        // The real server answers 401 to the SSE request itself, which the SSE plugin reports as SSEClientException.
+        assertFailsWith<ApiError> { apiFor(engine, clientToken = "wrong").events("any").toList() }
+    }
+
+    @Test
+    fun eventsWithUndecodableDataFailWithAnApiErrorAboutTheEvent() = testApplication {
+        application {
+            install(SSE)
+            routing {
+                sse("/jobs/bad/events") {
+                    send(ServerSentEvent(data = "{broken", event = "job-done"))
+                }
+            }
+        }
+        val api = HttpXgsApi(createClient { configureXgs("t") })
+
+        val error = assertFailsWith<ApiError> { api.events("bad").toList() }
+
+        assertEquals("\uc11c\ubc84 \uc774\ubca4\ud2b8\ub97c \ud574\uc11d\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4.", error.message)
+    }
+
+    @Test
+    fun cancellationWhileReadingAnErrorBodyIsNotTurnedIntoAnApiError() = runBlocking {
+        val mock = MockEngine {
+            respond(
+                content = "{}",
+                status = HttpStatusCode.InternalServerError,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(mock) { configureXgs("t") }
+        // Park the caller inside body<ErrorResponse>() (the plain get() has already finished by then), so the
+        // cancellation below reaches exactly the place where checked() reads the error body.
+        val reading = CompletableDeferred<Unit>()
+        client.responsePipeline.intercept(HttpResponsePipeline.Receive) {
+            reading.complete(Unit)
+            awaitCancellation()
+        }
+
+        supervisorScope {
+            val call = async { HttpXgsApi(client).tools() }
+            withTimeout(30_000) { reading.await() }
+            call.cancel()
+
+            // Not an ApiError: the caller was cancelled and has to see that.
+            assertFailsWith<CancellationException> { call.await() }
+        }
+        Unit
+    }
+
+    @Test
+    fun anErrorBodyThatIsNotJsonFallsBackToTheStatusCode() = runBlocking {
+        val mock = MockEngine {
+            respond(
+                content = "boom",
+                status = HttpStatusCode.InternalServerError,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Text.Plain.toString()),
+            )
+        }
+        val api = HttpXgsApi(HttpClient(mock) { configureXgs("t") })
+
+        val error = assertFailsWith<ApiError> { api.tools() }
+
+        assertEquals("\uc11c\ubc84 \uc624\ub958 (500)", error.message)
+    }
 }
 ```
 
@@ -5313,6 +5821,7 @@ import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.sse.SSE
+import io.ktor.client.plugins.sse.SSEClientException
 import io.ktor.client.plugins.sse.sse
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -5325,8 +5834,10 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.serialization.SerializationException
 
 /** A failure reported by the server (or a lost connection) with a message fit for the user. */
 class ApiError(message: String) : Exception(message)
@@ -5339,7 +5850,11 @@ interface XgsApi {
     suspend fun resolve(input: String): ResolveResponse
     suspend fun startJob(request: JobRequest): JobCreated
 
-    /** Emits the job's events and completes when the stream ends; throws [ApiError] on a server-side error event. */
+    /**
+     * Emits the job's events and completes after the final `job-done` event. Throws [ApiError] on a server-side
+     * error event, when the stream cannot be opened (for example a non-200 answer) or cannot be decoded, and when
+     * it ends without `job-done`.
+     */
     fun events(jobId: String): Flow<JobEvent>
 
     suspend fun cancel(jobId: String)
@@ -5379,17 +5894,34 @@ class HttpXgsApi(private val client: HttpClient) : XgsApi {
     override fun events(jobId: String): Flow<JobEvent> = channelFlow {
         // The SSE client wraps anything thrown inside its block, so remember the error and throw it afterwards.
         var serverError: String? = null
-        client.sse("/jobs/$jobId/events") {
-            incoming.collect { event ->
-                val data = event.data.orEmpty()
-                if (event.event == "error") {
-                    serverError = json.decodeFromString(ErrorResponse.serializer(), data).message
-                } else {
-                    send(json.decodeFromString(JobEvent.serializer(), data))
+        var sawJobDone = false
+        try {
+            client.sse("/jobs/$jobId/events") {
+                incoming.collect { event ->
+                    val data = event.data.orEmpty()
+                    if (event.event == "error") {
+                        serverError = json.decodeFromString(ErrorResponse.serializer(), data).message
+                    } else {
+                        val jobEvent = json.decodeFromString(JobEvent.serializer(), data)
+                        if (jobEvent is JobEvent.JobDone) sawJobDone = true
+                        send(jobEvent)
+                    }
                 }
             }
+        } catch (e: SSEClientException) {
+            // Ktor wraps a failure inside the block more than once, so look through the whole cause chain.
+            val undecodable = generateSequence<Throwable>(e) { it.cause }.any { it is SerializationException }
+            throw ApiError(
+                if (undecodable) {
+                    "서버 이벤트를 해석할 수 없습니다."
+                } else {
+                    "이벤트 스트림을 열 수 없습니다: ${e.message}"
+                },
+            )
         }
         serverError?.let { throw ApiError(it) }
+        // The engine always sends job-done before it closes the stream, so a stream without it was cut off.
+        if (!sawJobDone) throw ApiError("서버와의 연결이 끊어졌습니다.")
     }
 
     override suspend fun cancel(jobId: String) {
@@ -5400,6 +5932,8 @@ class HttpXgsApi(private val client: HttpClient) : XgsApi {
         if (status.isSuccess()) return this
         val message = try {
             body<ErrorResponse>().message
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             "서버 오류 (${status.value})"
         }
@@ -5411,7 +5945,7 @@ class HttpXgsApi(private val client: HttpClient) : XgsApi {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `.\gradlew.bat :app:desktopTest`
-Expected: `BUILD SUCCESSFUL`; `HttpXgsApiTest` 7 tests, 0 failures (reports in `app\build\test-results\desktopTest`).
+Expected: `BUILD SUCCESSFUL`; `HttpXgsApiTest` 12 tests, 0 failures (reports in `app\build\test-results\desktopTest`).
 
 - [ ] **Step 6: Commit**
 
@@ -5475,6 +6009,27 @@ class LabelsTest {
     fun rankIsZeroPadded() {
         assertEquals("007", rankLabel(7))
         assertEquals("999", rankLabel(999))
+    }
+
+    @Test
+    fun rankInputKeepsOnlyUpToThreeDigits() {
+        assertEquals("123", rankInputText("12a3"))
+        assertEquals("500", rankInputText("5000"))
+        assertEquals("", rankInputText(""))
+        assertEquals("", rankInputText("abc"))
+    }
+
+    @Test
+    fun rankFromInputIsNullForEmptyText() {
+        assertNull(rankFromInput(""))
+    }
+
+    @Test
+    fun rankFromInputClampsToTheValidRange() {
+        assertEquals(1, rankFromInput("0"))
+        assertEquals(7, rankFromInput("7"))
+        assertEquals(999, rankFromInput("999"))
+        assertEquals(1, rankFromInput("000"))
     }
 }
 ```
@@ -5547,6 +6102,7 @@ data class UiState(
 package com.xgetsongs.app.state
 
 import com.xgetsongs.shared.api.JobStatus
+import com.xgetsongs.shared.filename.FilenameFormatter
 
 /** The text shown in an item's status cell. */
 fun statusLabel(status: ItemStatus): String = when (status) {
@@ -5573,12 +6129,19 @@ fun summaryText(state: UiState): String? {
 
 /** The zero-padded rank shown in the list, e.g. `007`. */
 fun rankLabel(rank: Int): String = rank.toString().padStart(3, '0')
+
+/** What the rank text field may hold while the user types: digits only, at most three of them. */
+fun rankInputText(raw: String): String = raw.filter(Char::isDigit).take(3)
+
+/** The rank typed so far, kept within the valid range; null while the field is empty. */
+fun rankFromInput(text: String): Int? =
+    text.toIntOrNull()?.coerceIn(FilenameFormatter.MIN_RANK, FilenameFormatter.MAX_RANK)
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.\gradlew.bat :app:desktopTest`
-Expected: `BUILD SUCCESSFUL`; `LabelsTest` 4 tests, 0 failures.
+Expected: `BUILD SUCCESSFUL`; `LabelsTest` 7 tests, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -5613,7 +6176,6 @@ Behaviour to keep: invalid input is rejected locally before any request; the pre
 ```kotlin
 package com.xgetsongs.app.state
 
-import com.xgetsongs.app.api.ApiError
 import com.xgetsongs.app.api.XgsApi
 import com.xgetsongs.shared.api.ActionResult
 import com.xgetsongs.shared.api.InputKind
@@ -5631,8 +6193,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 class FakeApi : XgsApi {
     var toolsStatus = ToolsStatus(ToolInfo(true, "1"), ToolInfo(true, "1"), ToolInfo(true, "24"))
     var resolveResponse: ResolveResponse = playlist()
-    var resolveError: ApiError? = null
-    var startError: ApiError? = null
+    var resolveError: Exception? = null
+    var startError: Exception? = null
+    var toolsError: Exception? = null
     var installMessage = "installed"
 
     val resolveInputs = mutableListOf<String>()
@@ -5643,9 +6206,13 @@ class FakeApi : XgsApi {
     /** What the "server" sends for the running job. Close it to end the stream. */
     var eventChannel = Channel<JobEvent>(Channel.UNLIMITED)
 
-    override suspend fun tools(): ToolsStatus = toolsStatus
+    override suspend fun tools(): ToolsStatus {
+        toolsError?.let { throw it }
+        return toolsStatus
+    }
 
     override suspend fun installYtDlp(): ActionResult {
+        toolsError?.let { throw it }
         installCalls++
         return ActionResult(installMessage)
     }
@@ -6017,6 +6584,153 @@ class AppStateHolderTest {
         assertEquals(false, holder.state.value.toolBusy)
         assertEquals(api.toolsStatus, holder.state.value.tools)
     }
+
+    // ---- job endings and failures ---------------------------------------------------------
+
+    private suspend fun TestScope.finishedWithOneFailure(): Pair<FakeApi, AppStateHolder> {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
+        api.eventChannel.close()
+        runCurrent()
+        return api to holder
+    }
+
+    @Test
+    fun rowsInFlightGoBackToReadyWhenACancelledJobEnds() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.Progress(1, Stage.DOWNLOADING, 40.0))
+        runCurrent()
+        assertEquals(ItemStatus.Downloading(40.0), holder.row(1).status)
+
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.CANCELLED, JobSummary(0, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+
+        assertEquals(ItemStatus.Ready, holder.row(1).status)
+        assertEquals(Phase.FINISHED, holder.state.value.phase)
+        assertEquals(JobStatus.CANCELLED, holder.state.value.jobStatus)
+    }
+
+    @Test
+    fun rowsInFlightGoBackToReadyWhenTheStreamBreaks() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.Progress(1, Stage.CONVERTING))
+        runCurrent()
+        assertEquals(ItemStatus.Converting, holder.row(1).status)
+
+        api.eventChannel.close()
+        runCurrent()
+
+        assertEquals(Phase.FINISHED, holder.state.value.phase)
+        assertEquals("\uc11c\ubc84\uc640\uc758 \uc5f0\uacb0\uc774 \ub04a\uc5b4\uc84c\uc2b5\ub2c8\ub2e4.", holder.state.value.error)
+        assertEquals(ItemStatus.Ready, holder.row(1).status)
+    }
+
+    @Test
+    fun aRawExceptionDuringResolveDoesNotLeaveTheScreenResolving() = runTest {
+        val api = FakeApi().apply { resolveError = IllegalStateException("boom") }
+        val (_, holder) = resolved(api)
+
+        assertEquals(Phase.IDLE, holder.state.value.phase)
+        assertTrue(holder.state.value.error.orEmpty().contains("boom"))
+    }
+
+    @Test
+    fun aRawExceptionFromToolActionsClearsTheBusyFlag() = runTest {
+        val api = FakeApi().apply { toolsError = IllegalStateException("boom") }
+        val (_, holder) = holder(api)
+
+        holder.installYtDlp()
+        runCurrent()
+
+        assertEquals(false, holder.state.value.toolBusy)
+        assertTrue(holder.state.value.toolMessage.orEmpty().contains("boom"))
+
+        holder.refreshTools()
+        runCurrent()
+
+        assertTrue(holder.state.value.error.orEmpty().contains("boom"))
+    }
+
+    @Test
+    fun aFailedStartFromFinishedKeepsThePreviousResults() = runTest {
+        val (api, holder) = finishedWithOneFailure()
+        api.startError = ApiError("\ucd9c\ub825 \ud3f4\ub354\ub97c \ub9cc\ub4e4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4")
+
+        holder.retryFailed()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.FINISHED, state.phase)
+        assertEquals(ItemStatus.Failed("boom"), holder.row(3).status)
+        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals(JobSummary(1, 0, 1), state.summary)
+        assertEquals(JobStatus.COMPLETED, state.jobStatus)
+        assertEquals(listOf(3), state.failedRanks)
+        assertEquals("\ucd9c\ub825 \ud3f4\ub354\ub97c \ub9cc\ub4e4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4", state.error)
+    }
+
+    @Test
+    fun aRawExceptionWhileStartingARetryRestoresThePreviousScreen() = runTest {
+        val (api, holder) = finishedWithOneFailure()
+        api.startError = IllegalStateException("boom")
+
+        holder.retryFailed()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.FINISHED, state.phase)
+        assertEquals(listOf(3), state.failedRanks)
+        assertTrue(state.error.orEmpty().contains("boom"))
+    }
+
+    @Test
+    fun aFailedSecondLookupKeepsThePreviewUsable() = runTest {
+        val (api, holder) = resolved()
+        val rowsBefore = holder.state.value.rows
+        api.resolveError = ApiError("x")
+
+        holder.onInput(playlistId)
+        holder.resolve()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.PREVIEW, state.phase)
+        assertEquals(rowsBefore.map { it.item.rank }, state.rows.map { it.item.rank })
+        assertEquals(rowsBefore.map { it.status }, state.rows.map { it.status })
+        assertEquals("x", state.error)
+    }
+
+    @Test
+    fun aFailedLookupAfterAFinishedJobKeepsTheResults() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+        api.resolveError = ApiError("x")
+
+        holder.resolve()
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.FINISHED, state.phase)
+        assertEquals(JobSummary(1, 0, 0), state.summary)
+        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals("x", state.error)
+    }
 }
 ```
 
@@ -6141,8 +6855,10 @@ class AppStateHolder(
             try {
                 val tools = api.tools()
                 _state.update { it.copy(tools = tools) }
-            } catch (e: ApiError) {
-                _state.update { it.copy(error = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = failureMessage(e)) }
             }
         }
     }
@@ -6158,8 +6874,10 @@ class AppStateHolder(
                 val message = action()
                 val tools = api.tools()
                 _state.update { it.copy(toolBusy = false, toolMessage = message, tools = tools) }
-            } catch (e: ApiError) {
-                _state.update { it.copy(toolBusy = false, toolMessage = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(toolBusy = false, toolMessage = failureMessage(e)) }
             }
         }
     }
@@ -6184,6 +6902,7 @@ class AppStateHolder(
     }
 
     private fun doResolve(input: String) {
+        val before = _state.value
         _state.update { it.copy(phase = Phase.RESOLVING, error = null) }
         scope.launch {
             try {
@@ -6197,8 +6916,12 @@ class AppStateHolder(
                         jobStatus = null,
                     )
                 }
-            } catch (e: ApiError) {
-                _state.update { it.copy(phase = Phase.IDLE, error = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A failed lookup must not strip the buttons from a preview that is still on screen.
+                val phase = if (before.resolved != null) before.phase else Phase.IDLE
+                _state.update { it.copy(phase = phase, error = failureMessage(e)) }
             }
         }
     }
@@ -6236,7 +6959,7 @@ class AppStateHolder(
                 rows = s.rows.map { if (it.item.available) it.copy(status = ItemStatus.Waiting) else it },
             )
         }
-        runJob(JobRequest(resolved.resolveId, jobOptions(state)), fallbackPhase = state.phase)
+        runJob(JobRequest(resolved.resolveId, jobOptions(state)), before = state)
     }
 
     /** Runs a new job for just the items that failed last time. */
@@ -6253,7 +6976,7 @@ class AppStateHolder(
         }
         // A single video is always re-run as a whole; its rank is chosen by the user, not by the list.
         val retryRanks = ranks.takeIf { resolved.kind != InputKind.VIDEO }
-        runJob(JobRequest(resolved.resolveId, jobOptions(state), ranks = retryRanks), fallbackPhase = state.phase)
+        runJob(JobRequest(resolved.resolveId, jobOptions(state), ranks = retryRanks), before = state)
     }
 
     fun cancel() {
@@ -6261,8 +6984,10 @@ class AppStateHolder(
         scope.launch {
             try {
                 api.cancel(id)
-            } catch (e: ApiError) {
-                _state.update { it.copy(error = e.message) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = failureMessage(e)) }
             }
         }
     }
@@ -6274,8 +6999,11 @@ class AppStateHolder(
         concurrency = state.concurrency,
     )
 
-    /** [fallbackPhase] is where the screen returns to when the job cannot even be started. */
-    private fun runJob(request: JobRequest, fallbackPhase: Phase) {
+    /**
+     * [before] is the screen as it was when the user pressed the button. It is restored when the job cannot even be
+     * started, so a failed retry does not wipe the results of the previous run.
+     */
+    private fun runJob(request: JobRequest, before: UiState) {
         jobTask = scope.launch {
             var started = false
             try {
@@ -6285,29 +7013,51 @@ class AppStateHolder(
                 api.events(created.jobId).collect { event -> _state.update { apply(it, event) } }
                 _state.update { state ->
                     if (state.phase == Phase.RUNNING) {
-                        state.copy(phase = Phase.FINISHED, error = "서버와의 연결이 끊어졌습니다.")
+                        state.copy(
+                            phase = Phase.FINISHED,
+                            error = "서버와의 연결이 끊어졌습니다.",
+                            rows = state.rows.map(::resetTransient),
+                        )
                     } else {
                         state
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: ApiError) {
-                _state.update { state ->
-                    state.copy(
-                        phase = if (started) Phase.FINISHED else fallbackPhase,
-                        error = e.message,
-                        rows = state.rows.map(::resetWaiting),
-                    )
-                }
             } catch (e: Exception) {
-                _state.update { it.copy(phase = Phase.FINISHED, error = "서버와 통신 중 오류가 발생했습니다: ${e.message}") }
+                _state.update { state ->
+                    if (started) {
+                        state.copy(
+                            phase = Phase.FINISHED,
+                            error = failureMessage(e),
+                            rows = state.rows.map(::resetTransient),
+                        )
+                    } else {
+                        state.copy(
+                            phase = before.phase,
+                            rows = before.rows,
+                            summary = before.summary,
+                            jobStatus = before.jobStatus,
+                            error = failureMessage(e),
+                        )
+                    }
+                }
             }
         }
     }
 
-    private fun resetWaiting(row: ItemRow): ItemRow =
-        if (row.status is ItemStatus.Waiting) row.copy(status = ItemStatus.Ready) else row
+    /** What the user sees for a failure: the server's own message, or a generic one for transport/decoding errors. */
+    private fun failureMessage(e: Exception): String =
+        if (e is ApiError) e.message.orEmpty() else "서버와 통신 중 오류가 발생했습니다: ${e.message}"
+
+    /**
+     * A cancelled or aborted job sends no final event for the items that were still waiting or in flight, so those
+     * rows go back to [ItemStatus.Ready]. Finished, skipped and failed rows keep their result.
+     */
+    private fun resetTransient(row: ItemRow): ItemRow = when (row.status) {
+        ItemStatus.Waiting, is ItemStatus.Downloading, ItemStatus.Converting -> row.copy(status = ItemStatus.Ready)
+        else -> row
+    }
 
     private fun apply(state: UiState, event: JobEvent): UiState = when (event) {
         is JobEvent.ItemStarted ->
@@ -6327,7 +7077,7 @@ class AppStateHolder(
             phase = Phase.FINISHED,
             jobStatus = event.status,
             summary = event.summary,
-            rows = state.rows.map(::resetWaiting),
+            rows = state.rows.map(::resetTransient),
         )
     }
 
@@ -6339,7 +7089,7 @@ class AppStateHolder(
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `.\gradlew.bat :app:desktopTest`
-Expected: `BUILD SUCCESSFUL`; `AppStateHolderTest` 19, `EndToEndTest` 1, `HttpXgsApiTest` 7, `LabelsTest` 4 tests; 31 in the app module, 0 failures.
+Expected: `BUILD SUCCESSFUL`; `AppStateHolderTest` 27, `EndToEndTest` 1, `HttpXgsApiTest` 12, `LabelsTest` 7 tests; 47 in the app module, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -6442,6 +7192,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.xgetsongs.app.state.Phase
 import com.xgetsongs.app.state.UiState
 import com.xgetsongs.shared.api.ToolInfo
 
@@ -6464,7 +7215,7 @@ fun ToolsPanel(state: UiState, onInstall: () -> Unit, onUpdate: () -> Unit) {
                 if (!tools.ytDlp.found) {
                     Button(enabled = !state.toolBusy, onClick = { confirmInstall = true }) { Text("yt-dlp 설치") }
                 } else {
-                    OutlinedButton(enabled = !state.toolBusy, onClick = onUpdate) { Text("yt-dlp 업데이트") }
+                    OutlinedButton(enabled = !state.toolBusy && state.phase != Phase.RUNNING, onClick = onUpdate) { Text("yt-dlp 업데이트") }
                 }
                 if (!tools.ffmpeg.found) {
                     Text(
@@ -6532,6 +7283,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.xgetsongs.app.state.UiState
 import com.xgetsongs.shared.api.InputKind
@@ -6577,7 +7329,13 @@ fun ResolveInfo(state: UiState, onSwitchToVideoOnly: () -> Unit) {
     ) {
         val title = resolved.playlistTitle ?: "단일 영상"
         val count = if (resolved.kind == InputKind.PLAYLIST) " · ${resolved.items.size}개" else ""
-        Text(title + count, style = MaterialTheme.typography.titleMedium)
+        Text(
+            title + count,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f, fill = false),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (resolved.truncated) {
             Text("999개를 넘어 앞 999개만 표시합니다.", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 4.dp))
         }
@@ -6604,13 +7362,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.state.Phase
 import com.xgetsongs.app.state.UiState
+import com.xgetsongs.app.state.rankFromInput
+import com.xgetsongs.app.state.rankInputText
 import com.xgetsongs.shared.api.InputKind
 import kotlinx.coroutines.launch
 
@@ -6618,6 +7383,11 @@ import kotlinx.coroutines.launch
 fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (String) -> String?) {
     val scope = rememberCoroutineScope()
     val enabled = state.phase != Phase.RUNNING
+    // The raw text is kept here so the field can be empty while the user retypes the number.
+    var rankText by remember { mutableStateOf(state.singleRank.toString()) }
+    LaunchedEffect(state.singleRank) {
+        if (rankFromInput(rankText) != state.singleRank) rankText = state.singleRank.toString()
+    }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -6652,8 +7422,11 @@ fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (St
             }
             if (state.resolved?.kind == InputKind.VIDEO) {
                 OutlinedTextField(
-                    value = state.singleRank.toString(),
-                    onValueChange = { holder.onSingleRank(it.filter(Char::isDigit).toIntOrNull() ?: 1) },
+                    value = rankText,
+                    onValueChange = { raw ->
+                        rankText = rankInputText(raw)
+                        rankFromInput(rankText)?.let(holder::onSingleRank)
+                    },
                     label = { Text("순위 번호") },
                     singleLine = true,
                     enabled = enabled,
@@ -6893,7 +7666,7 @@ Expected on the machine this plan was verified on: a window titled "xGetSongs" w
 - [ ] **Step 5: Run every check**
 
 Run: `.\gradlew.bat check`
-Expected: `BUILD SUCCESSFUL`; 194 tests in total across the four modules, 0 failures.
+Expected: `BUILD SUCCESSFUL`; 241 tests in total across the four modules, 0 failures.
 
 - [ ] **Step 6: Commit**
 
@@ -6948,6 +7721,8 @@ tasks.test {
 val integrationTest by tasks.registering(Test::class) {
     description = "Runs the tests that talk to the real YouTube with the real yt-dlp and ffmpeg."
     group = "verification"
+    // The result depends on the installed tools and the network, which Gradle cannot see, so never skip a run.
+    outputs.upToDateWhen { false }
     testClassesDirs = sourceSets.test.get().output.classesDirs
     classpath = sourceSets.test.get().runtimeClasspath
     useJUnitPlatform { includeTags("integration") }
@@ -6975,6 +7750,7 @@ import com.xgetsongs.shared.api.JobStatus
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Tag
 import java.nio.file.Files
@@ -7005,43 +7781,52 @@ class RealYtDlpIntegrationTest {
     }
 
     @Test
-    fun resolvesTheReferencePlaylistWithoutDownloadingAnything() = runBlocking {
-        val response = YtDlpResolver(runner, locator)
-            .resolve("https://www.youtube.com/playlist?list=PL2HEDIx6Li8jGsqCiXUq9fzCqpH99qqHV")
+    fun resolvesTheReferencePlaylistWithoutDownloadingAnything(): Unit = runBlocking {
+        withTimeout(120_000) {
+            val response = YtDlpResolver(runner, locator)
+                .resolve("https://www.youtube.com/playlist?list=PL2HEDIx6Li8jGsqCiXUq9fzCqpH99qqHV")
 
-        println("playlist '${response.playlistTitle}' has ${response.items.size} items")
-        response.items.take(25).forEach {
-            println("%03d %-5s %s".format(it.rank, if (it.lowConfidence) "WARN" else "ok", it.expectedFileName ?: "(${it.unavailableReason})"))
+            println("playlist '${response.playlistTitle}' has ${response.items.size} items")
+            response.items.take(25).forEach {
+                println("%03d %-5s %s".format(it.rank, if (it.lowConfidence) "WARN" else "ok", it.expectedFileName ?: "(${it.unavailableReason})"))
+            }
+
+            assertTrue(response.items.size > 10, "expected a long chart playlist")
+            assertEquals(response.items.indices.map { it + 1 }, response.items.map { it.rank })
+            val available = response.items.filter { it.available }
+            assertTrue(available.isNotEmpty())
+            assertTrue(available.all { Regex("""\d{3} .+ - .+\.mp3""").matches(it.expectedFileName!!) })
         }
-
-        assertTrue(response.items.size > 10, "expected a long chart playlist")
-        assertEquals(response.items.indices.map { it + 1 }, response.items.map { it.rank })
-        val available = response.items.filter { it.available }
-        assertTrue(available.isNotEmpty())
-        assertTrue(available.all { Regex("""\d{3} .+ - .+\.mp3""").matches(it.expectedFileName!!) })
     }
 
+    // JUnit does not discover test methods with a non-void return type, and the last expression of this
+    // runBlocking block is a Boolean, so the return type must be declared Unit explicitly.
     @Test
-    fun downloadsAShortVideoAsMp3() = runBlocking {
-        // "Me at the zoo": the first video ever uploaded to YouTube, 19 seconds long.
-        val resolver = YtDlpResolver(runner, locator)
-        val resolved = resolver.resolve("https://www.youtube.com/watch?v=jNQXAC9IVRw")
-        val root = Files.createTempDirectory("xgs-integration")
-        val outDir = root.resolve("out")
+    fun downloadsAShortVideoAsMp3(): Unit = runBlocking {
+        withTimeout(180_000) {
+            // "Me at the zoo": the first video ever uploaded to YouTube, 19 seconds long.
+            val resolver = YtDlpResolver(runner, locator)
+            val resolved = resolver.resolve("https://www.youtube.com/watch?v=jNQXAC9IVRw")
+            val root = Files.createTempDirectory("xgs-integration")
+            try {
+                val outDir = root.resolve("out")
 
-        val service = DefaultDownloadService(ItemDownloader(runner, locator, resolver), root.resolve("work"), this)
-        val events = service
-            .start(DownloadRequest(resolved.items, LocalFolderSink(outDir), overwrite = false, concurrency = 1))
-            .events.receiveAsFlow().toList()
+                val service = DefaultDownloadService(ItemDownloader(runner, locator, resolver), root.resolve("work"), this)
+                val events = service
+                    .start(DownloadRequest(resolved.items, LocalFolderSink(outDir), overwrite = false, concurrency = 1))
+                    .events.receiveAsFlow().toList()
 
-        val done = events.last() as JobEvent.JobDone
-        assertEquals(JobStatus.COMPLETED, done.status, events.toString())
-        assertEquals(1, done.summary.succeeded, events.toString())
-        val file = Files.list(outDir).use { it.toList().single() }
-        println("downloaded: ${file.fileName} (${Files.size(file)} bytes)")
-        assertTrue(Regex("""001 .+ - .+\.mp3""").matches(file.fileName.toString()), file.fileName.toString())
-        assertTrue(Files.size(file) > 50_000)
-        root.toFile().deleteRecursively()
+                val done = events.last() as JobEvent.JobDone
+                assertEquals(JobStatus.COMPLETED, done.status, events.toString())
+                assertEquals(1, done.summary.succeeded, events.toString())
+                val file = Files.list(outDir).use { it.toList().single() }
+                println("downloaded: ${file.fileName} (${Files.size(file)} bytes)")
+                assertTrue(Regex("""001 .+ - .+\.mp3""").matches(file.fileName.toString()), file.fileName.toString())
+                assertTrue(Files.size(file) > 50_000)
+            } finally {
+                root.toFile().deleteRecursively()
+            }
+        }
     }
 }
 ```
@@ -7049,7 +7834,7 @@ class RealYtDlpIntegrationTest {
 - [ ] **Step 2: Verify the wiring without yt-dlp**
 
 Run: `.\gradlew.bat check`
-Expected: `BUILD SUCCESSFUL`; the integration tests do not run (194 tests).
+Expected: `BUILD SUCCESSFUL`; the integration tests do not run (241 tests).
 
 Run: `.\gradlew.bat :engine:integrationTest`
 Expected: `BUILD SUCCESSFUL` with both tests reported `SKIPPED` while yt-dlp is not installed.
@@ -7127,6 +7912,15 @@ engine/   yt-dlp·ffmpeg 호출, 재생목록 조회, 다운로드 작업 관리
 server/   Ktor API 서버 (데스크톱 앱이 127.0.0.1에 내장 실행)
 app/      Compose Multiplatform UI (지금은 desktop 타깃만)
 ```
+
+## 알려진 제한 (1단계)
+
+- mp3 품질은 VBR 최고 품질(`--audio-quality 0`)로 고정입니다. ffmpeg는 PATH 또는 `%APPDATA%\xGetSongs\bin`에서 찾으며, 따로 경로를 지정하는 설정은 아직 없습니다.
+- 앱을 두 번 실행하지 마세요. 시작할 때 임시 폴더(`work/`)를 비우므로 먼저 실행한 앱의 진행 중 항목이 실패할 수 있습니다.
+- 이벤트 연결이 끊기면 같은 작업에 다시 붙을 수 없고 취소만 됩니다.
+- 요약의 "건너뜀" 개수에는 조회 단계에서 이미 사용할 수 없던 영상이 빠집니다(목록의 각 행에는 표시됩니다).
+- ffmpeg가 없으면 항목마다 내려받은 뒤 실패합니다. 도구 패널의 안내를 먼저 확인하세요.
+- `packageMsi`로 만든 설치 파일은 아직 검증하지 않았습니다. 실행은 `:app:run`을 쓰세요.
 
 ## 주의
 
@@ -7301,6 +8095,8 @@ Expected: at least one line for each of the five search terms.
 git add docs/superpowers/specs/2026-10-04-xgetsongs-design.md
 git commit -m "docs: sync design spec with the implementation plan" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
+
+After Task 19 the spec was also updated with what the real yt-dlp showed: §11's first bullet now records the verified `--flat-playlist -J` fields (and that deleted/private entries are still unverified), and §6.2 step 1 states that any leading `[...]` block is dropped as a tag, not only a fixed list.
 
 ---
 
