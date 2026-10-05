@@ -91,7 +91,7 @@ fun Application.module(services: Services, config: ServerConfig) {
             if (items.isEmpty()) throw ApiException(HttpStatusCode.BadRequest, "다운로드할 항목이 없습니다.")
 
             val handle = services.downloads.start(
-                DownloadRequest(items, sink, options.overwrite, options.concurrency, album, options.includeRank),
+                DownloadRequest(items, sink, options.overwrite, options.concurrency, album, options.includeRank, options.searchLyricsOnline),
             )
             call.respond(HttpStatusCode.Created, JobCreated(jobs.register(handle)))
         }

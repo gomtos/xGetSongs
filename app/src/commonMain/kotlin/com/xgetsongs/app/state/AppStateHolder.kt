@@ -28,8 +28,8 @@ import kotlinx.coroutines.launch
 /**
  * All screen logic. The composables only render [state] and call these functions.
  *
- * The four options (output folder, overwrite, rank in file names, concurrency) start from what [settings] holds and are
- * saved again a moment after the user changes one of them; see [flushSettings].
+ * The five options (output folder, overwrite, rank in file names, concurrency, lyrics search on the internet) start from
+ * what [settings] holds and are saved again a moment after the user changes one of them; see [flushSettings].
  */
 class AppStateHolder(
     private val api: XgsApi,
@@ -59,6 +59,7 @@ class AppStateHolder(
             overwrite = stored.overwrite,
             includeRank = stored.includeRank,
             concurrency = stored.concurrency.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY),
+            searchLyricsOnline = stored.searchLyricsOnline,
         )
     }
 
@@ -85,6 +86,9 @@ class AppStateHolder(
 
     fun onConcurrency(value: Int) =
         changeOptions { it.copy(concurrency = value.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY)) }
+
+    /** Whether a song whose description has no lyrics is looked up on the internet. It only matters when a job starts. */
+    fun onSearchLyricsOnline(value: Boolean) = changeOptions { it.copy(searchLyricsOnline = value) }
 
     /** Changing the rank of a single video rewrites its file name in the preview. */
     fun onSingleRank(value: Int) = _state.update { state ->
@@ -138,9 +142,11 @@ class AppStateHolder(
         lastKnown = current
     }
 
-    /** The four options that are remembered; nothing else on the screen is. */
-    private fun UiState.options() =
-        UserSettings(outputDir = outputDir, overwrite = overwrite, includeRank = includeRank, concurrency = concurrency)
+    /** The five options that are remembered; nothing else on the screen is. */
+    private fun UiState.options() = UserSettings(
+        outputDir = outputDir, overwrite = overwrite, includeRank = includeRank, concurrency = concurrency,
+        searchLyricsOnline = searchLyricsOnline,
+    )
 
     fun reset() {
         jobTask?.cancel()
@@ -148,7 +154,7 @@ class AppStateHolder(
         _state.update {
             UiState(
                 outputDir = it.outputDir, overwrite = it.overwrite, includeRank = it.includeRank,
-                concurrency = it.concurrency, tools = it.tools,
+                concurrency = it.concurrency, searchLyricsOnline = it.searchLyricsOnline, tools = it.tools,
             )
         }
     }
@@ -311,6 +317,7 @@ class AppStateHolder(
         singleRank = state.singleRank,
         concurrency = state.concurrency,
         includeRank = state.includeRank,
+        searchLyricsOnline = state.searchLyricsOnline,
     )
 
     /**

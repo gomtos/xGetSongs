@@ -303,6 +303,75 @@ class AppStateHolderTest {
         assertEquals(false, holder.state.value.includeRank)
     }
 
+    // ---- lyrics search on the internet ----------------------------------------------------
+
+    @Test
+    fun theLyricsSearchIsOnUntilTheUserTurnsItOff() = runTest {
+        val (_, holder) = holder()
+
+        assertTrue(holder.state.value.searchLyricsOnline)
+        holder.onSearchLyricsOnline(false)
+        assertEquals(false, holder.state.value.searchLyricsOnline)
+        holder.onSearchLyricsOnline(true)
+        assertTrue(holder.state.value.searchLyricsOnline)
+    }
+
+    @Test
+    fun startingSendsTheSearchLyricsOnlineOption() = runTest {
+        val (api, holder) = resolved()
+
+        holder.startDownload()
+        runCurrent()
+
+        assertTrue(api.jobRequests.single().options.searchLyricsOnline, "on by default")
+    }
+
+    @Test
+    fun startingWithTheLyricsSearchOffSendsIt() = runTest {
+        val (api, holder) = resolved()
+        holder.onSearchLyricsOnline(false)
+
+        holder.startDownload()
+        runCurrent()
+
+        assertEquals(false, api.jobRequests.single().options.searchLyricsOnline)
+        assertTrue(api.jobRequests.single().options.includeRank, "the other options are not touched")
+    }
+
+    @Test
+    fun aRetrySendsTheLyricsOptionToo() = runTest {
+        val (api, holder) = finishedWithOneFailure()
+        holder.onSearchLyricsOnline(false)
+
+        holder.retryFailed()
+        runCurrent()
+
+        assertEquals(listOf(3), api.jobRequests.last().ranks)
+        assertEquals(false, api.jobRequests.last().options.searchLyricsOnline)
+    }
+
+    @Test
+    fun theLyricsOptionLeavesThePreviewAndTheFileNamesAlone() = runTest {
+        val (_, holder) = resolved()
+        val before = holder.state.value.rows
+
+        holder.onSearchLyricsOnline(false)
+
+        assertEquals(Phase.PREVIEW, holder.state.value.phase)
+        assertEquals(before, holder.state.value.rows)
+    }
+
+    @Test
+    fun resetKeepsTheSearchLyricsOnlineOption() = runTest {
+        val (_, holder) = resolved()
+        holder.onSearchLyricsOnline(false)
+
+        holder.reset()
+
+        assertEquals(Phase.IDLE, holder.state.value.phase)
+        assertEquals(false, holder.state.value.searchLyricsOnline)
+    }
+
     // ---- remembered options ---------------------------------------------------------------
 
     private fun TestScope.holderWith(store: FakeSettingsStore) = holder(store = store).second
@@ -313,7 +382,8 @@ class AppStateHolderTest {
         overwrite: Boolean = false,
         includeRank: Boolean = true,
         concurrency: Int = 2,
-    ) = UserSettings(outputDir, overwrite, includeRank, concurrency)
+        searchLyricsOnline: Boolean = true,
+    ) = UserSettings(outputDir, overwrite, includeRank, concurrency, searchLyricsOnline)
 
     private fun TestScope.assertSavedOnlyAfterTheQuietPeriod(store: FakeSettingsStore, expected: UserSettings) {
         advanceTimeBy(399)
@@ -326,7 +396,9 @@ class AppStateHolderTest {
 
     @Test
     fun theOptionsStartFromTheStoredSettings() = runTest {
-        val store = FakeSettingsStore(UserSettings(outputDir = "D:/음악", overwrite = true, includeRank = false, concurrency = 4))
+        val store = FakeSettingsStore(
+            UserSettings(outputDir = "D:/음악", overwrite = true, includeRank = false, concurrency = 4, searchLyricsOnline = false),
+        )
 
         val holder = holderWith(store)
 
@@ -335,8 +407,67 @@ class AppStateHolderTest {
         assertTrue(state.overwrite)
         assertEquals(false, state.includeRank)
         assertEquals(4, state.concurrency)
+        assertEquals(false, state.searchLyricsOnline)
         assertEquals(Phase.IDLE, state.phase)
         assertEquals(1, store.loadCalls)
+    }
+
+    @Test
+    fun aStoredFileFromBeforeTheLyricsOptionStartsWithTheSearchOn() = runTest {
+        // What an old settings file loads as: every key it has, and the default for the one it lacks.
+        val holder = holderWith(FakeSettingsStore(UserSettings(outputDir = "D:/Songs", overwrite = true)))
+
+        assertTrue(holder.state.value.searchLyricsOnline)
+    }
+
+    @Test
+    fun changingTheLyricsSearchSavesTheValuesAfterAQuietPeriod() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onSearchLyricsOnline(false)
+
+        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(searchLyricsOnline = false))
+    }
+
+    @Test
+    fun theLyricsOptionIsSavedWhileAJobRunsToo() = runTest {
+        val store = FakeSettingsStore()
+        val (_, holder) = resolved(store = store)
+        holder.startDownload()
+        runCurrent()
+        assertEquals(Phase.RUNNING, holder.state.value.phase)
+
+        holder.onSearchLyricsOnline(false)
+
+        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(searchLyricsOnline = false))
+    }
+
+    @Test
+    fun theLyricsOptionIsRestoredByTheNextHolderFromWhatWasSaved() = runTest {
+        val store = FakeSettingsStore()
+        val first = holderWith(store)
+        first.onSearchLyricsOnline(false)
+        first.flushSettings()
+        assertEquals(listOf(defaultsWith(searchLyricsOnline = false)), store.saved)
+        store.stored = store.saved.single() // what the file holds after the first run
+
+        val second = holderWith(store)
+
+        assertEquals(false, second.state.value.searchLyricsOnline)
+    }
+
+    @Test
+    fun settingTheLyricsOptionToTheValueItAlreadyHasSavesNothing() = runTest {
+        val store = FakeSettingsStore(UserSettings(searchLyricsOnline = false))
+        val holder = holderWith(store)
+
+        holder.onSearchLyricsOnline(false)
+        advanceTimeBy(5_000)
+        runCurrent()
+        holder.flushSettings()
+
+        assertEquals(emptyList(), store.saved)
     }
 
     @Test
@@ -437,6 +568,7 @@ class AppStateHolderTest {
 
         holder.onOverwrite(false)
         holder.onIncludeRank(true)
+        holder.onSearchLyricsOnline(true)
         holder.onConcurrency(4)
         holder.onConcurrency(9) // clamped to 4, which is what it already is
         holder.onOutputDir("C:/Music/xGetSongs")
@@ -587,7 +719,9 @@ class AppStateHolderTest {
 
     @Test
     fun resetKeepsTheOptionsAndSavesNothing() = runTest {
-        val store = FakeSettingsStore(UserSettings(outputDir = "D:/Songs", overwrite = true, includeRank = false, concurrency = 3))
+        val store = FakeSettingsStore(
+            UserSettings(outputDir = "D:/Songs", overwrite = true, includeRank = false, concurrency = 3, searchLyricsOnline = false),
+        )
         val holder = holderWith(store)
         holder.onInput(playlistId)
         holder.resolve()
@@ -603,15 +737,16 @@ class AppStateHolderTest {
         assertTrue(state.overwrite)
         assertEquals(false, state.includeRank)
         assertEquals(3, state.concurrency)
+        assertEquals(false, state.searchLyricsOnline)
         assertEquals(emptyList(), store.saved)
     }
 
     @Test
     fun theTypedInputAndTheSingleVideoRankAreNeverRemembered() = runTest {
-        // The stored form has room for exactly the four options, so neither the address nor the rank can be written.
+        // The stored form has room for exactly the five options, so neither the address nor the rank can be written.
         val keys = Json { encodeDefaults = true }
             .encodeToJsonElement(UserSettings.serializer(), UserSettings()).jsonObject.keys
-        assertEquals(setOf("outputDir", "overwrite", "includeRank", "concurrency"), keys)
+        assertEquals(setOf("outputDir", "overwrite", "includeRank", "concurrency", "searchLyricsOnline"), keys)
 
         // Typing or choosing a rank saves nothing by itself: one change of an option later, there is exactly one save.
         val store = FakeSettingsStore()

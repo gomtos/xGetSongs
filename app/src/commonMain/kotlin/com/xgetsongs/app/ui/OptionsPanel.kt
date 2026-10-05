@@ -2,9 +2,10 @@ package com.xgetsongs.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
@@ -38,10 +39,20 @@ import com.xgetsongs.app.state.rankInputText
 import com.xgetsongs.shared.api.InputKind
 import kotlinx.coroutines.launch
 
+/** A checkbox with its label, as one unit that a [FlowRow] never splits. */
+@Composable
+private fun OptionCheckbox(label: String, checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onChange, enabled = enabled)
+        Text(label)
+    }
+}
+
 /**
  * The options under the preview. [pickFolder] opens the platform folder chooser; [openFolder] shows the given
  * destination path in the platform's file manager (the platform opens the nearest existing folder when it is missing).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OptionsPanel(
     state: UiState,
@@ -98,12 +109,15 @@ fun OptionsPanel(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = state.overwrite, onCheckedChange = holder::onOverwrite, enabled = enabled)
-            Text("기존 파일 덮어쓰기")
-            Spacer(Modifier.width(16.dp))
-            Checkbox(checked = state.includeRank, onCheckedChange = holder::onIncludeRank, enabled = enabled)
-            Text("파일명에 순번 포함")
+        // A checkbox moves to the next line together with its label when the window is too narrow for all three.
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            OptionCheckbox("기존 파일 덮어쓰기", state.overwrite, holder::onOverwrite, enabled)
+            OptionCheckbox("파일명에 순번 포함", state.includeRank, holder::onIncludeRank, enabled)
+            OptionCheckbox("가사가 없으면 인터넷에서 검색", state.searchLyricsOnline, holder::onSearchLyricsOnline, enabled)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("동시 다운로드", modifier = Modifier.widthIn(min = 100.dp), maxLines = 1, softWrap = false)

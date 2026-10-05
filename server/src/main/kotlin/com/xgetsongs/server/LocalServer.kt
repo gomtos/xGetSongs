@@ -2,6 +2,7 @@ package com.xgetsongs.server
 
 import com.xgetsongs.engine.job.DefaultDownloadService
 import com.xgetsongs.engine.job.ItemDownloader
+import com.xgetsongs.engine.lyrics.LrclibLyricsProvider
 import com.xgetsongs.engine.process.SystemProcessRunner
 import com.xgetsongs.engine.tools.DefaultToolManager
 import com.xgetsongs.engine.tools.ToolLocator
@@ -26,7 +27,8 @@ fun createServices(appDataDir: Path, scope: CoroutineScope): Services {
     val runner = SystemProcessRunner()
     val locator = ToolLocator(appBinDir = binDir)
     val resolver = YtDlpResolver(runner, locator)
-    val downloader = ItemDownloader(runner, locator, resolver)
+    // Lyrics are looked up on lrclib.net, but only for the jobs whose options allow it (JobOptions.searchLyricsOnline).
+    val downloader = ItemDownloader(runner, locator, resolver, LrclibLyricsProvider())
     return Services(
         resolver = resolver,
         downloads = DefaultDownloadService(downloader, workDir, scope),

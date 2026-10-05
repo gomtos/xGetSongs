@@ -53,8 +53,12 @@ class RoutesTest {
             setBody(request)
         }
 
-    private fun options(dir: Path? = outDir, singleRank: Int = 1, includeRank: Boolean = true) =
-        JobOptions(outputDir = dir?.toString(), singleRank = singleRank, includeRank = includeRank)
+    private fun options(
+        dir: Path? = outDir,
+        singleRank: Int = 1,
+        includeRank: Boolean = true,
+        searchLyricsOnline: Boolean = true,
+    ) = JobOptions(outputDir = dir?.toString(), singleRank = singleRank, includeRank = includeRank, searchLyricsOnline = searchLyricsOnline)
 
     // ---- /resolve --------------------------------------------------------------------------
 
@@ -170,6 +174,64 @@ class RoutesTest {
         val request = fakes.downloads.requests.single()
         assertFalse(request.includeRank)
         assertEquals(listOf(42), request.items.map { it.rank }, "the rank is still passed on: it is the ID3 track number")
+    }
+
+    @Test
+    fun theLyricsSearchIsOnUnlessTheClientTurnsItOff() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+        // A client that never heard of the option sends no key at all.
+        client.post("/jobs") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"resolveId":"${resolved.resolveId}","options":{"outputDir":${ApiJson.instance.encodeToString(String.serializer(), outDir.toString())}}}""")
+        }
+
+        assertEquals(listOf(true, true), fakes.downloads.requests.map { it.searchLyricsOnline })
+    }
+
+    @Test
+    fun theSearchLyricsOnlineOptionReachesTheEngineForAPlaylistAndForARetry() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(searchLyricsOnline = false)))
+        client.startJob(JobRequest(resolved.resolveId, options(searchLyricsOnline = false), ranks = listOf(3)))
+        client.startJob(JobRequest(resolved.resolveId, options(searchLyricsOnline = true), ranks = listOf(3)))
+
+        assertEquals(listOf(false, false, true), fakes.downloads.requests.map { it.searchLyricsOnline })
+    }
+
+    @Test
+    fun theSearchLyricsOnlineOptionReachesTheEngineForASingleVideoToo() = testApplication {
+        val fakes = TestServices(resolver = FakeResolver(response = sampleVideo()))
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(singleRank = 42, searchLyricsOnline = false)))
+
+        val request = fakes.downloads.requests.single()
+        assertFalse(request.searchLyricsOnline)
+        assertEquals(listOf(42), request.items.map { it.rank })
+    }
+
+    @Test
+    fun theLyricsOptionIsIndependentOfTheRankOption() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(includeRank = false, searchLyricsOnline = true)))
+        client.startJob(JobRequest(resolved.resolveId, options(includeRank = true, searchLyricsOnline = false)))
+
+        assertEquals(listOf(false to true, true to false), fakes.downloads.requests.map { it.includeRank to it.searchLyricsOnline })
     }
 
     @Test
