@@ -40,7 +40,12 @@ class VideoInfoFileTest {
 
     @Test
     fun decodesEscapesInTheAlbum() {
-        assertEquals("Love poem", albumOf("""{"album":"Love poem"}"""))
+        assertEquals("Love \"poem\" \u00e9", albumOf("""{"album":"Love \"poem\" \u00e9"}"""))
+    }
+
+    @Test
+    fun onlyTheAlbumOfTheRootObjectCounts() {
+        assertNull(albumOf("""{"formats":[{"album":"X"}],"meta":{"album":"Y"}}"""))
     }
 
     @Test

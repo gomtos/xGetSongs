@@ -35,11 +35,13 @@ internal fun openInExplorer(path: String) {
     thread(isDaemon = true, name = "open-in-explorer") {
         try {
             val folder = existingFolderFor(path) ?: return@thread
-            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-                Desktop.getDesktop().open(folder.toFile())
-            } else {
-                ProcessBuilder("explorer.exe", folder.toString()).start()
+            val opened = try {
+                Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN) &&
+                    run { Desktop.getDesktop().open(folder.toFile()); true }
+            } catch (e: Exception) {
+                false
             }
+            if (!opened) ProcessBuilder("explorer.exe", folder.toString()).start()
         } catch (e: Exception) {
             // Nothing opens; there is nothing useful to tell the user about it.
         }

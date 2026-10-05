@@ -78,8 +78,9 @@ fun Application.module(services: Services, config: ServerConfig) {
             if (isVideo && options.singleRank !in FilenameFormatter.MIN_RANK..FilenameFormatter.MAX_RANK) {
                 throw ApiException(HttpStatusCode.BadRequest, "순위 번호는 1~999 사이여야 합니다.")
             }
-            // A playlist goes into a folder named after it and its title becomes the album; a single video goes
-            // straight into the output folder. The album is the original title, not the sanitized folder name.
+            // A playlist goes into a folder named after it and its title is the fallback album (a video's own album wins
+            // in the engine); a single video goes straight into the output folder. The fallback is the original title,
+            // not the sanitized folder name.
             val isPlaylist = resolved.kind == InputKind.PLAYLIST
             val folder = if (isPlaylist) FilenameFormatter.folderName(resolved.playlistTitle) else null
             val album = if (isPlaylist) resolved.playlistTitle else null
