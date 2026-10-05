@@ -17,6 +17,7 @@ import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.Stage
 import com.xgetsongs.shared.filename.FilenameFormatter
 import com.xgetsongs.shared.input.ParsedInput
+import com.xgetsongs.shared.lyrics.LyricsExtractor
 import com.xgetsongs.shared.title.TitleParser
 import java.nio.file.Files
 import java.nio.file.Path
@@ -73,8 +74,9 @@ class ItemDownloader(
     /**
      * Runs yt-dlp once, then writes the ID3 tags and the cover (the thumbnail yt-dlp left next to the mp3) into the
      * mp3. The album tag is the video's own album from the info file yt-dlp left next to the mp3, else
-     * [PreparedItem.album]; a missing or broken info file never fails the item. [emit] receives throttled
-     * [JobEvent.Progress] events.
+     * [PreparedItem.album]; the lyrics tag is the lyrics section of the video description in the same file, if it has
+     * one. A missing or broken info file means no own album and no lyrics, and never fails the item. [emit] receives
+     * throttled [JobEvent.Progress] events.
      */
     suspend fun download(prepared: PreparedItem, workDir: Path, emit: (JobEvent) -> Unit): DownloadResult {
         val paths = tools.current()
@@ -109,14 +111,15 @@ class ItemDownloader(
             return DownloadResult.Failed(Failure(FailureKind.OTHER, "변환된 mp3 파일을 찾을 수 없습니다."))
         }
         val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
-        val album = VideoInfoFile.readAlbum(workDir.resolve("$videoId.info.json")) ?: prepared.album
+        val info = VideoInfoFile.read(workDir.resolve("$videoId.info.json"))
         val tags = TrackTags(
             title = prepared.track,
             artist = prepared.artist,
-            album = album,
+            album = info.album ?: prepared.album,
             albumArtist = prepared.artist,
             trackNumber = rank,
             comment = ParsedInput.Video(videoId).canonicalUrl,
+            lyrics = LyricsExtractor.extract(info.description),
         )
         tagger.tag(file, cover, tags)?.let { return DownloadResult.Failed(it) }
         return DownloadResult.Downloaded(file)

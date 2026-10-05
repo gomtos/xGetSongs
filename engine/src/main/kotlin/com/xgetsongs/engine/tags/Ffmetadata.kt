@@ -4,7 +4,8 @@ package com.xgetsongs.engine.tags
  * Renders [TrackTags] as an ffmetadata file (`-f ffmetadata`), so tag text reaches ffmpeg through a file and never
  * through a command line. Write the result as UTF-8.
  *
- * The comment is not rendered: ffmpeg would store it as a `TXXX` frame, so [Id3Tagger] adds a real `COMM` frame itself.
+ * The comment and the lyrics are not rendered: ffmpeg would store them as `TXXX` frames, so [Id3Tagger] adds a real
+ * `COMM` frame and a real `USLT` frame itself.
  */
 object Ffmetadata {
     /** Characters that need a backslash in front: the syntax characters and the line breaks (which stay in place). */

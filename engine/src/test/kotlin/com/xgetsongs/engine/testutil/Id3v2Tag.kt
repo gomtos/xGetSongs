@@ -13,17 +13,32 @@ class Id3v2Tag private constructor(val version: Int, val flags: Int, val size: I
     /** A decoded COMM frame. */
     data class Comment(val encoding: Int, val language: String, val description: String, val text: String)
 
+    /** A decoded USLT (unsynchronised lyrics) frame; it has the same layout as COMM. */
+    data class Lyrics(val encoding: Int, val language: String, val descriptor: String, val text: String)
+
     val ids: List<String> get() = frames.map { it.id }
 
     fun frame(id: String): Frame = frames.first { it.id == id }
 
     /** Every COMM frame, decoded (text encodings 0 = ISO-8859-1 and 1 = UTF-16 with a byte order mark). */
     fun comments(): List<Comment> = frames.filter { it.id == "COMM" }.map { frame ->
+        val (encoding, language, description, text) = decodeLanguageText(frame)
+        Comment(encoding, language, description, text)
+    }
+
+    /** Every USLT frame, decoded the same way as the COMM frames. */
+    fun lyrics(): List<Lyrics> = frames.filter { it.id == "USLT" }.map { frame ->
+        val (encoding, language, descriptor, text) = decodeLanguageText(frame)
+        Lyrics(encoding, language, descriptor, text)
+    }
+
+    /** What COMM and USLT share: encoding byte, 3-byte language, a terminated description, then the text. */
+    private fun decodeLanguageText(frame: Frame): Comment {
         val body = frame.body
         val encoding = body[0].toInt()
         val language = String(body, 1, 3, Charsets.ISO_8859_1)
         val rest = body.copyOfRange(4, body.size)
-        when (encoding) {
+        return when (encoding) {
             0 -> {
                 val end = rest.indexOf(0)
                 Comment(0, language, String(rest, 0, end, Charsets.ISO_8859_1), String(rest, end + 1, rest.size - end - 1, Charsets.ISO_8859_1))

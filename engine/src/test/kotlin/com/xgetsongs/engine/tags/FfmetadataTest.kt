@@ -37,6 +37,14 @@ class FfmetadataTest {
     }
 
     @Test
+    fun theLyricsAreNotRendered() {
+        val withLyrics = tags().copy(lyrics = "Line one\nLine two=three\n첫 번째 줄")
+
+        assertEquals(Ffmetadata.render(tags()), Ffmetadata.render(withLyrics))
+        assertFalse(Ffmetadata.render(withLyrics).contains("lyrics"))
+    }
+
+    @Test
     fun albumArtistComesFromItsOwnField() {
         val text = Ffmetadata.render(tags(artist = "Artist", albumArtist = "Various"))
 

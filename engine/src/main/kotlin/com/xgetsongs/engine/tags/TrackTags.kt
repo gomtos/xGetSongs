@@ -20,4 +20,9 @@ data class TrackTags(
      * write a comment as a `TXXX` frame); a null or blank comment writes no frame.
      */
     val comment: String?,
+    /**
+     * USLT: the lyrics found in the video description, lines separated by `\n`. Written as a real `USLT` frame by
+     * [Id3Frames] after ffmpeg is done (ffmpeg would make a `TXXX` frame of it); a null or blank text writes no frame.
+     */
+    val lyrics: String? = null,
 )

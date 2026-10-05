@@ -104,6 +104,90 @@ class Id3TaggerTest {
         }
     }
 
+    private val lyrics = "첫 번째 줄\nLa la la\n세 번째 줄"
+    private val lyricsInTheFile = "첫 번째 줄\r\nLa la la\r\n세 번째 줄"
+
+    @Test
+    fun addsTheLyricsAsAUsltFrameAfterTheCommentToFfmpegsOutput() = runTest {
+        val runner = FakeProcessRunner { command, _, _ ->
+            writeFakeTagged(command)
+            0
+        }
+
+        val result = tagger(runner).tag(file, null, tags.copy(lyrics = lyrics))
+
+        assertNull(result)
+        val tag = Id3v2Tag.read(file)
+        assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids, "ffmpeg's frame stays, COMM and USLT are added in that order")
+        assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments())
+        assertEquals(listOf(Id3v2Tag.Lyrics(1, "kor", "", lyricsInTheFile)), tag.lyrics())
+        assertTrue(endsWithFakeAudio(file), "the audio of ffmpeg's output must reach the final file")
+        assertEquals(listOf("vid00000001.mp3"), filesInDir())
+    }
+
+    @Test
+    fun lyricsWithoutACommentAreStillWritten() = runTest {
+        val runner = FakeProcessRunner { command, _, _ ->
+            writeFakeTagged(command)
+            0
+        }
+
+        val result = tagger(runner).tag(file, null, tags.copy(comment = null, lyrics = "Line one\nLine two"))
+
+        assertNull(result)
+        val tag = Id3v2Tag.read(file)
+        assertEquals(listOf("TIT2", "USLT"), tag.ids)
+        assertEquals(listOf(Id3v2Tag.Lyrics(1, "eng", "", "Line one\r\nLine two")), tag.lyrics())
+    }
+
+    @Test
+    fun missingOrBlankLyricsAndCommentLeaveFfmpegsOutputUntouched() = runTest {
+        for (blank in listOf(null, "", " \n\t")) {
+            Files.writeString(file, "original-mp3")
+            val runner = FakeProcessRunner { command, _, _ ->
+                writeFakeTagged(command)
+                0
+            }
+
+            val result = tagger(runner).tag(file, null, tags.copy(comment = blank, lyrics = blank))
+
+            assertNull(result)
+            assertContentEquals(fakeTaggedMp3(), Files.readAllBytes(file), "comment and lyrics = [$blank]")
+            assertEquals(listOf("vid00000001.mp3"), filesInDir())
+        }
+    }
+
+    @Test
+    fun theLyricsReachNeitherTheMetadataFileNorTheCommandLine() = runTest {
+        var metadataText: String? = null
+        val runner = FakeProcessRunner { command, _, _ ->
+            metadataText = ffmetadataTextOf(command)
+            writeFakeTagged(command)
+            0
+        }
+        val withLyrics = tags.copy(lyrics = lyrics)
+
+        tagger(runner).tag(file, null, withLyrics)
+
+        assertEquals(Ffmetadata.render(tags), metadataText, "ffmpeg would store the lyrics as a TXXX frame")
+        val commandLine = runner.commands.single().joinToString(" ")
+        assertTrue(listOf("첫 번째", "La la la", "lyrics").none { it in commandLine }, commandLine)
+    }
+
+    @Test
+    fun aTagLayoutTheFrameStepCannotRewriteFailsTheItemWhenOnlyLyricsAreGiven() = runTest {
+        val runner = FakeProcessRunner { command, _, _ ->
+            Files.write(Path.of(command.last()), "ID3".toByteArray() + byteArrayOf(4, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
+            0
+        }
+
+        val result = tagger(runner).tag(file, null, tags.copy(comment = null, lyrics = lyrics))
+
+        assertEquals(Failure(FailureKind.OTHER, "ID3 태그를 쓰지 못했습니다: unsupported ID3 tag layout"), result)
+        assertEquals("original-mp3", Files.readString(file))
+        assertEquals(listOf("vid00000001.mp3"), filesInDir())
+    }
+
     @Test
     fun aTagLayoutTheCommentStepCannotRewriteFailsTheItemAndKeepsTheOriginal() = runTest {
         val runner = FakeProcessRunner { command, _, _ ->

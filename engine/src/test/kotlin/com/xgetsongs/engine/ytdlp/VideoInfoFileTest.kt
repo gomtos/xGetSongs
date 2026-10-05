@@ -124,6 +124,102 @@ class VideoInfoFileTest {
         assertNull(VideoInfoFile.readAlbum(file))
     }
 
+    // ---- read: the album and the description together ----
+
+    /** Writes [json] as UTF-8 into [file] and reads everything the engine needs from it. */
+    private fun infoOf(json: String): VideoInfo {
+        Files.writeString(file, json)
+        return VideoInfoFile.read(file)
+    }
+
+    private val nothing = VideoInfo(album = null, description = null)
+
+    @Test
+    fun readReturnsTheAlbumAndTheDescriptionTogether() {
+        val info = infoOf("""{"id":"vid00000001","album":" Palette ","description":"[Lyrics]\nLine one\nLine two"}""")
+
+        assertEquals(VideoInfo(album = "Palette", description = "[Lyrics]\nLine one\nLine two"), info)
+    }
+
+    @Test
+    fun readKeepsTheInnerLineBreaksAndDecodesEscapesOfTheDescription() {
+        val info = infoOf("""{"description":"첫 줄\r\n\"둘째\" 줄\n\né 🎵"}""")
+
+        assertEquals("첫 줄\r\n\"둘째\" 줄\n\né 🎵", info.description)
+        assertNull(info.album)
+    }
+
+    @Test
+    fun readDropsALeadingAndTrailingBlankRunOfTheDescriptionAndNothingElse() {
+        assertEquals("  Line one\nLine two", infoOf("""{"description":"\n \n  Line one\nLine two\n\n  \t\n"}""").description)
+        assertEquals("a  b", infoOf("""{"description":"a  b"}""").description)
+    }
+
+    @Test
+    fun readGivesAnAlbumWithoutADescriptionAndTheOtherWayRound() {
+        assertEquals(VideoInfo("Palette", null), infoOf("""{"album":"Palette"}"""))
+        assertEquals(VideoInfo(null, "Some text"), infoOf("""{"description":"Some text"}"""))
+    }
+
+    @Test
+    fun aMissingDescriptionGivesNull() {
+        assertNull(infoOf("""{"id":"vid00000001","album":"Palette"}""").description)
+    }
+
+    @Test
+    fun aNullDescriptionGivesNull() {
+        assertNull(infoOf("""{"description":null}""").description)
+    }
+
+    @Test
+    fun aDescriptionThatIsNotAStringGivesNull() {
+        assertNull(infoOf("""{"description":2024}""").description)
+        assertNull(infoOf("""{"description":true}""").description)
+        assertNull(infoOf("""{"description":["Line one"]}""").description)
+        assertNull(infoOf("""{"description":{"text":"Line one"}}""").description)
+    }
+
+    @Test
+    fun aBlankDescriptionGivesNull() {
+        assertNull(infoOf("""{"description":""}""").description)
+        assertNull(infoOf("""{"description":"  \t \n \r\n "}""").description)
+    }
+
+    @Test
+    fun onlyTheDescriptionOfTheRootObjectCounts() {
+        val info = infoOf("""{"formats":[{"description":"X"}],"meta":{"description":"Y"},"album":"Palette"}""")
+
+        assertEquals(VideoInfo("Palette", null), info)
+    }
+
+    @Test
+    fun readGivesNothingForAnyFileItCannotUse() {
+        assertEquals(nothing, infoOf("""{"album":"Palette","description":"Line one""""))
+        assertEquals(nothing, infoOf("not json at all"))
+        assertEquals(nothing, infoOf(""))
+        assertEquals(nothing, infoOf("""[{"album":"Palette","description":"Line one"}]"""))
+        assertEquals(nothing, VideoInfoFile.read(dir.resolve("nothing.info.json")))
+        assertEquals(nothing, VideoInfoFile.read(dir))
+        Files.write(file, """{"album":"Pal""".toByteArray() + byteArrayOf(0xC3.toByte(), 0x28) + """ette","description":"Line one"}""".toByteArray())
+        assertEquals(nothing, VideoInfoFile.read(file))
+    }
+
+    @Test
+    fun readAlbumGivesTheAlbumOfRead() {
+        Files.writeString(file, """{"album":"  Palette ","description":"Line one"}""")
+
+        assertEquals(VideoInfoFile.read(file).album, VideoInfoFile.readAlbum(file))
+        assertEquals("Palette", VideoInfoFile.readAlbum(file))
+    }
+
+    @Test
+    fun readAppliesTheAlbumRulesOfReadAlbum() {
+        assertNull(infoOf("""{"album":"NA","description":"Line one"}""").album)
+        assertNull(infoOf("""{"album":"  ","description":"Line one"}""").album)
+        assertNull(infoOf("""{"album":2024,"description":"Line one"}""").album)
+        assertEquals("Line one", infoOf("""{"album":"NA","description":"Line one"}""").description)
+    }
+
     @Test
     fun aLargeFileWithManyOtherFieldsStillWorks() {
         // A real info file is several hundred KB because of the formats list.
@@ -133,5 +229,6 @@ class VideoInfoFileTest {
         assertTrue(Files.size(file) > 200_000, "the test file must be large: ${Files.size(file)} bytes")
 
         assertEquals("Palette", VideoInfoFile.readAlbum(file))
+        assertEquals(VideoInfo("Palette", "d".repeat(50_000)), VideoInfoFile.read(file))
     }
 }

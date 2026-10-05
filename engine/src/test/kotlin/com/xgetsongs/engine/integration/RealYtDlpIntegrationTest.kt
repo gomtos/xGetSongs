@@ -14,6 +14,7 @@ import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.Stage
 import com.xgetsongs.shared.input.ParsedInput
+import com.xgetsongs.shared.lyrics.LyricsExtractor
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -150,6 +151,53 @@ class RealYtDlpIntegrationTest {
                 val root = Json.parseToJsonElement(Files.readString(info)).jsonObject
                 println("info file: ${Files.size(info)} bytes; album=${root["album"]}, artist=${root["artist"]}, track=${root["track"]}")
                 assertEquals("Love poem", VideoInfoFile.readAlbum(info))
+            } finally {
+                dir.toFile().deleteRecursively()
+            }
+        }
+    }
+
+    /** Counts the kinds of lines in [description]: enough to describe its structure without quoting any of it. */
+    private fun structureOf(description: String): String {
+        val lines = description.replace("\r\n", "\n").split("\n")
+        fun count(predicate: (String) -> Boolean) = lines.count(predicate)
+        val separators = count { line -> line.trim().let { it.length >= 3 && it.all { c -> c == it[0] } && it[0] in "=-_*~#.+" } }
+        val links = count { "http://" in it || "https://" in it || "www." in it }
+        val copyright = count { it.trim().startsWith("©") || it.trim().startsWith("copyright", ignoreCase = true) }
+        val hashtags = count { it.trim().startsWith("#") && it.trim().length > 1 && !it.trim()[1].isWhitespace() }
+        val bracketed = count { it.trim().let { t -> t.length >= 2 && ((t.first() == '[' && t.last() == ']') || (t.first() == '【' && t.last() == '】')) } }
+        return "lines=${lines.size}, blank=${count { it.isBlank() }}, separator lines=$separators, link lines=$links, " +
+            "copyright lines=$copyright, hashtag lines=$hashtags, bracketed headings=$bracketed"
+    }
+
+    @Test
+    fun findsTheLyricsInTheDescriptionOfAVideoThatHasThemWithoutDownloadingAudio(): Unit = runBlocking {
+        withTimeout(120_000) {
+            // Metadata only: --skip-download keeps yt-dlp from fetching any audio. The test asserts structure only, never lyric text.
+            // This depends on the CURRENT description of this video: a "[Lyrics]" heading with 20 or more non-blank lyric
+            // lines below it, "=======" separator lines around the block, and channel link lines. If the uploader edits
+            // the description, pick another video whose description has a lyrics section.
+            val videoId = "7mDDM0eBWR0"
+            val dir = Files.createTempDirectory("xgs-info-integration")
+            try {
+                runDownload(videoId, dir, listOf("--skip-download"))
+
+                val info = dir.resolve("$videoId.info.json")
+                assertTrue(Files.isRegularFile(info), "yt-dlp must write <videoId>.info.json: ${Files.list(dir).use { it.toList() }}")
+                assertTrue(Files.notExists(dir.resolve("$videoId.mp3")), "no audio may be downloaded")
+                val description = VideoInfoFile.read(info).description
+                assertNotNull(description, "the video must have a description")
+                println("description structure: ${structureOf(description)}")
+
+                val lyrics = LyricsExtractor.extract(description)
+                assertNotNull(lyrics, "a lyrics block must be found in the description")
+                val lines = lyrics.split("\n")
+                println("lyrics block: ${lines.size} lines, ${lines.count { it.isNotBlank() }} non-blank, ${lyrics.length} characters")
+                assertTrue(lines.count { it.isNotBlank() } >= 20, "expected at least 20 non-blank lines, got ${lines.count { it.isNotBlank() }}")
+                assertTrue("http" !in lyrics, "no link may be part of the lyrics")
+                assertTrue(lines.none { it.startsWith("i-dle Official") }, "the channel's link block must not be part of the lyrics")
+                assertTrue(lines.none { it == "=======" }, "no separator line may be part of the lyrics")
+                assertTrue('\r' !in lyrics)
             } finally {
                 dir.toFile().deleteRecursively()
             }

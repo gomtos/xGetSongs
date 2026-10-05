@@ -199,6 +199,61 @@ class RealFfmpegTaggingIntegrationTest {
     }
 
     @Test
+    fun lyricsAreWrittenAsOneUsltFrameAndFfprobeShowsThemWhileTheOtherTagsAndTheCoverStay(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3()
+            // Made-up lyrics: Korean and English lines, a blank line and a character outside the BMP.
+            val lyrics = "첫 번째 줄\nLa la la 🎵\n\nSecond line\n마지막 줄"
+            val withLyrics = tags.copy(lyrics = lyrics)
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, redJpg(), withLyrics))
+
+            val tag = Id3v2Tag.read(mp3)
+            assertEquals(1, tag.ids.count { it == "USLT" }, tag.ids.toString())
+            val frame = tag.lyrics().single()
+            assertEquals(1, frame.encoding, "UTF-16 with a byte order mark")
+            assertEquals("kor", frame.language)
+            assertEquals("", frame.descriptor)
+            assertEquals(lyrics.replace("\n", "\r\n"), frame.text)
+            assertTrue('﻿' !in frame.text, "no byte order mark inside the text")
+            // The comment is still a real COMM frame, next to the lyrics.
+            assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments(), tag.ids.toString())
+            for (id in listOf("TIT2", "TPE1", "TPE2", "TALB", "TRCK", "APIC", "COMM", "USLT")) {
+                assertTrue(id in tag.ids, "$id is missing from ${tag.ids}")
+            }
+
+            val probed = ffprobe.probe(mp3)
+            // ffprobe names a lyrics frame "lyrics", or "lyrics-" and the language when it is not English.
+            val shown = probed.tags.filterKeys { it == "lyrics" || it == "lyrics-kor" }
+            assertEquals(1, shown.size, probed.tags.toString())
+            println("ffprobe shows the lyrics as '${shown.keys.single()}'; all tags: ${probed.tags.keys}")
+            assertEquals(lyrics, shown.values.single().replace("\r", ""))
+            assertTags(withLyrics, probed.tags)
+            assertEquals(2, probed.streams.size, probed.toString())
+            val picture = probed.streams.single { it.codecType == "video" }
+            assertTrue(picture.attachedPic)
+            assertEquals(360, picture.width)
+            assertEquals(360, picture.height)
+            assertEquals("mp3", probed.streams.single { it.codecType == "audio" }.codecName)
+            assertFalse(Id3v2Tag.hasId3v1(mp3))
+            val left = Files.list(root).use { files -> files.map { it.fileName.toString() }.sorted().toList() }
+            assertEquals(listOf("track.jpg", "track.mp3"), left, "no temporary file may stay behind")
+        }
+    }
+
+    @Test
+    fun withoutLyricsNoUsltFrameIsWritten(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3()
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, null, tags.copy(lyrics = null)))
+
+            assertTrue("USLT" !in Id3v2Tag.read(mp3).ids)
+            assertTrue(ffprobe.probe(mp3).tags.keys.none { it.startsWith("lyrics") })
+        }
+    }
+
+    @Test
     fun withoutACommentNoCommentFrameIsWritten(): Unit = runBlocking {
         withTimeout(60_000) {
             val mp3 = silentMp3()

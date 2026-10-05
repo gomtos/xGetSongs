@@ -39,6 +39,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
@@ -740,6 +741,86 @@ class DefaultDownloadServiceTest {
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
         assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
         assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
+    }
+
+    // ---- lyrics: the description in the info file ----
+
+    /** An info file whose `description` is [description] (JSON-escaped here, so the tests can use plain text). */
+    private fun infoWithDescription(description: String, album: String? = null): String {
+        val albumPart = if (album != null) "\"album\":${JsonPrimitive(album)}," else ""
+        return "{\"id\":\"vid00000001\",$albumPart\"description\":${JsonPrimitive(description)}}"
+    }
+
+    /** A made-up description: a heading, separators around the block, then links, a copyright line and hashtags. */
+    private val describedLyrics = "Example Artist - Example Song\n=======\n[Lyrics]\n=======\n첫 번째 줄\n두 번째 줄\n\nLa la la\n=======\n" +
+        "Instagram: https://example.invalid/artist\n© 2024 Example Label\n#example"
+
+    /** Downloads item 1 with the info file [infoJson] and returns the tag of the file that reached the sink. */
+    private suspend fun TestScope.deliveredTag(infoJson: String?, texts: MutableList<String> = mutableListOf()): Id3v2Tag {
+        val events = service(infoRunner(texts, infoJson)).start(request(item(1), album = "My List")).collect()
+
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events), events.toString())
+        assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
+        return Id3v2Tag.read(outDir.resolve("001 A1 - T1.mp3"))
+    }
+
+    @Test
+    fun lyricsFromTheInfoDescriptionReachTheFileAsAUsltFrameAndNotTheMetadataFile() = runTest {
+        val texts = mutableListOf<String>()
+
+        val tag = deliveredTag(infoWithDescription(describedLyrics), texts)
+
+        assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids)
+        assertEquals(listOf(Id3v2Tag.Lyrics(1, "kor", "", "첫 번째 줄\r\n두 번째 줄\r\n\r\nLa la la")), tag.lyrics())
+        assertTrue("첫 번째" !in texts.single() && "lyrics" !in texts.single(), "ffmpeg would store the lyrics as a TXXX frame: ${texts.single()}")
+        assertEquals("https://www.youtube.com/watch?v=vid00000001", tag.comments().single().text, "the comment is unchanged")
+    }
+
+    @Test
+    fun theAlbumAndTheLyricsComeFromTheSameInfoFile() = runTest {
+        val texts = mutableListOf<String>()
+
+        val tag = deliveredTag(infoWithDescription("Heading\nLyrics:\nLine one\nLine two\nLine three", album = "Palette"), texts)
+
+        assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
+        assertEquals(listOf(Id3v2Tag.Lyrics(1, "eng", "", "Line one\r\nLine two\r\nLine three")), tag.lyrics())
+    }
+
+    @Test
+    fun withoutAnInfoFileThereIsNoLyricsFrame() = runTest {
+        assertEquals(listOf("TIT2", "COMM"), deliveredTag(infoJson = null).ids)
+    }
+
+    @Test
+    fun anInfoFileWithoutADescriptionGivesNoLyricsFrame() = runTest {
+        assertEquals(listOf("TIT2", "COMM"), deliveredTag("""{"id":"vid00000001","album":"Palette"}""").ids)
+    }
+
+    @Test
+    fun aDescriptionThatIsNotAStringGivesNoLyricsFrame() = runTest {
+        assertEquals(listOf("TIT2", "COMM"), deliveredTag("""{"id":"vid00000001","description":["[Lyrics]","a","b","c"]}""").ids)
+    }
+
+    @Test
+    fun aDescriptionWithoutALyricsSectionGivesNoLyricsFrame() = runTest {
+        val description = "Example Artist - Example Song\nListen everywhere\nhttps://example.invalid\n\n#example"
+
+        assertEquals(listOf("TIT2", "COMM"), deliveredTag(infoWithDescription(description)).ids)
+    }
+
+    @Test
+    fun aLyricsSectionWithFewerThanThreeLinesGivesNoLyricsFrame() = runTest {
+        val description = "[Lyrics]\nLine one\nLine two\n=======\nhttps://example.invalid"
+
+        assertEquals(listOf("TIT2", "COMM"), deliveredTag(infoWithDescription(description)).ids)
+    }
+
+    @Test
+    fun aCorruptInfoFileGivesNoLyricsFrameAndTheItemStillSucceeds() = runTest {
+        // Cut off inside the description: the lyrics section itself is complete, but the file is not valid JSON.
+        val tag = deliveredTag("""{"description":"[Lyrics]\nLine one\nLine two\nLine three""")
+
+        assertEquals(listOf("TIT2", "COMM"), tag.ids)
     }
 
     // ---- file names without the rank ----
