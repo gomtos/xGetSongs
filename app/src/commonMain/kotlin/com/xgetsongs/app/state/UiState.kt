@@ -32,11 +32,13 @@ enum class Phase { IDLE, RESOLVING, PREVIEW, RUNNING, FINISHED }
 data class UiState(
     val phase: Phase = Phase.IDLE,
     val input: String = "",
+    /** [outputDir], [overwrite], [includeRank] and [concurrency] are the options the app remembers between runs. */
     val outputDir: String = "",
     val overwrite: Boolean = false,
     /** Whether file names start with the rank (`001 `). Sent with the job; the preview names follow it. */
     val includeRank: Boolean = true,
     val concurrency: Int = 2,
+    /** Not remembered: it belongs to the video that is on screen. */
     val singleRank: Int = 1,
     val resolved: ResolveResponse? = null,
     val rows: List<ItemRow> = emptyList(),

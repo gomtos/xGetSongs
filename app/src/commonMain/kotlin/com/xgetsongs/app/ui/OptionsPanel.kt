@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -78,7 +79,7 @@ fun OptionsPanel(state: UiState, holder: AppStateHolder, pickFolder: suspend (St
             Text("파일명에 순번 포함")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("동시 다운로드", modifier = Modifier.width(100.dp))
+            Text("동시 다운로드", modifier = Modifier.widthIn(min = 100.dp), maxLines = 1, softWrap = false)
             (1..4).forEach { n ->
                 FilterChip(
                     selected = state.concurrency == n,

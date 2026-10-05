@@ -47,6 +47,8 @@ YouTube 재생목록 ID를 입력하면 목록의 모든 영상에서 오디오�
 .\gradlew.bat :app:run
 ```
 
+앱은 마지막에 쓴 옵션(출력 폴더, 덮어쓰기, 파일명에 순번 포함, 동시 다운로드 수)을 `%APPDATA%\xGetSongs\settings.json`에 저장해 두었다가 다음 실행에 되살리며, 입력한 주소와 영상 1개의 순위 번호는 기억하지 않습니다.
+
 ## 테스트
 
 ```powershell

@@ -28,9 +28,18 @@ fun main() {
     val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     application {
-        val holder = remember { AppStateHolder(HttpXgsApi(http), uiScope, defaultOutputDirectory().toString()) }
+        val holder = remember {
+            AppStateHolder(
+                api = HttpXgsApi(http),
+                scope = uiScope,
+                defaultOutputDir = defaultOutputDirectory().toString(),
+                settings = JsonSettingsStore(appDataDirectory().resolve("settings.json")),
+            )
+        }
         Window(
             onCloseRequest = {
+                // Before the scope goes away: a save that is still waiting for its quiet period would be lost.
+                holder.flushSettings()
                 uiScope.cancel()
                 http.close()
                 server.stop()

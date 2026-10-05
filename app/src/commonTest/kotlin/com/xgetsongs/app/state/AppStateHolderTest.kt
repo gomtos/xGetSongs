@@ -3,6 +3,7 @@
 package com.xgetsongs.app.state
 
 import com.xgetsongs.app.api.ApiError
+import com.xgetsongs.app.settings.UserSettings
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
@@ -12,6 +13,7 @@ import com.xgetsongs.shared.input.RejectReason
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -292,6 +294,245 @@ class AppStateHolderTest {
 
         assertEquals(Phase.IDLE, holder.state.value.phase)
         assertEquals(false, holder.state.value.includeRank)
+    }
+
+    // ---- remembered options ---------------------------------------------------------------
+
+    private fun TestScope.holderWith(store: FakeSettingsStore) =
+        AppStateHolder(FakeApi(), backgroundScope, defaultOutputDir = "C:/Music/xGetSongs", settings = store)
+
+    /** What the holder saves when only the folder differs from the defaults of a fresh [FakeSettingsStore]. */
+    private fun defaultsWith(
+        outputDir: String = "C:/Music/xGetSongs",
+        overwrite: Boolean = false,
+        includeRank: Boolean = true,
+        concurrency: Int = 2,
+    ) = UserSettings(outputDir, overwrite, includeRank, concurrency)
+
+    private fun TestScope.assertSavedOnlyAfterTheQuietPeriod(store: FakeSettingsStore, expected: UserSettings) {
+        advanceTimeBy(399)
+        runCurrent()
+        assertEquals(emptyList(), store.saved, "nothing is saved before 400 ms have passed")
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf(expected), store.saved)
+    }
+
+    @Test
+    fun theOptionsStartFromTheStoredSettings() = runTest {
+        val store = FakeSettingsStore(UserSettings(outputDir = "D:/음악", overwrite = true, includeRank = false, concurrency = 4))
+
+        val holder = holderWith(store)
+
+        val state = holder.state.value
+        assertEquals("D:/음악", state.outputDir)
+        assertTrue(state.overwrite)
+        assertEquals(false, state.includeRank)
+        assertEquals(4, state.concurrency)
+        assertEquals(Phase.IDLE, state.phase)
+        assertEquals(1, store.loadCalls)
+    }
+
+    @Test
+    fun aMissingOrBlankStoredFolderFallsBackToTheDefaultFolder() = runTest {
+        for (stored in listOf(null, "", "   ")) {
+            val holder = holderWith(FakeSettingsStore(UserSettings(outputDir = stored, overwrite = true)))
+
+            assertEquals("C:/Music/xGetSongs", holder.state.value.outputDir, "stored folder: $stored")
+            assertTrue(holder.state.value.overwrite, "the other options are still taken from the store")
+        }
+    }
+
+    @Test
+    fun aStoredConcurrencyOutsideOneToFourIsClamped() = runTest {
+        assertEquals(4, holderWith(FakeSettingsStore(UserSettings(concurrency = 9))).state.value.concurrency)
+        assertEquals(1, holderWith(FakeSettingsStore(UserSettings(concurrency = 0))).state.value.concurrency)
+    }
+
+    @Test
+    fun changingTheOutputFolderSavesTheValuesAfterAQuietPeriod() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onOutputDir("D:/Songs")
+
+        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(outputDir = "D:/Songs"))
+    }
+
+    @Test
+    fun changingOverwriteSavesTheValuesAfterAQuietPeriod() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onOverwrite(true)
+
+        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(overwrite = true))
+    }
+
+    @Test
+    fun changingTheRankOptionSavesTheValuesAfterAQuietPeriod() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onIncludeRank(false)
+
+        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(includeRank = false))
+    }
+
+    @Test
+    fun changingTheConcurrencySavesTheValuesAfterAQuietPeriod() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onConcurrency(3)
+
+        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(concurrency = 3))
+    }
+
+    @Test
+    fun theRankOptionIsSavedWhileAJobRunsToo() = runTest {
+        val store = FakeSettingsStore()
+        val holder = AppStateHolder(FakeApi(), backgroundScope, defaultOutputDir = "C:/Music/xGetSongs", settings = store)
+        holder.onInput(playlistId)
+        holder.resolve()
+        runCurrent()
+        holder.startDownload()
+        runCurrent()
+
+        holder.onIncludeRank(false)
+
+        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(includeRank = false))
+    }
+
+    @Test
+    fun quickChangesAreSavedOnceWithTheLastValues() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onOutputDir("D:/S")
+        advanceTimeBy(300)
+        holder.onOutputDir("D:/Songs")
+        advanceTimeBy(300)
+        holder.onConcurrency(3)
+        advanceTimeBy(399)
+        runCurrent()
+        assertEquals(emptyList(), store.saved, "every change starts the quiet period again")
+        advanceTimeBy(1)
+        runCurrent()
+
+        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", concurrency = 3)), store.saved)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(1, store.saved.size, "no second save follows")
+    }
+
+    @Test
+    fun settingAValueThatIsAlreadySetSavesNothing() = runTest {
+        val store = FakeSettingsStore(UserSettings(concurrency = 4))
+        val holder = holderWith(store)
+
+        holder.onOverwrite(false)
+        holder.onIncludeRank(true)
+        holder.onConcurrency(4)
+        holder.onConcurrency(9) // clamped to 4, which is what it already is
+        holder.onOutputDir("C:/Music/xGetSongs")
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        assertEquals(emptyList(), store.saved)
+    }
+
+    @Test
+    fun repeatingAValueDoesNotRestartTheQuietPeriod() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onOverwrite(true)
+        advanceTimeBy(300)
+        holder.onOverwrite(true)
+        advanceTimeBy(99)
+        runCurrent()
+        assertEquals(emptyList(), store.saved)
+        advanceTimeBy(1)
+        runCurrent()
+
+        assertEquals(listOf(defaultsWith(overwrite = true)), store.saved)
+    }
+
+    @Test
+    fun flushSettingsSavesRightAwayAndCancelsThePendingSave() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+        holder.onOverwrite(true)
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(emptyList(), store.saved)
+
+        holder.flushSettings()
+
+        assertEquals(listOf(defaultsWith(overwrite = true)), store.saved, "saved at once, without waiting")
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(1, store.saved.size, "the pending save was cancelled, so there is no second one")
+    }
+
+    @Test
+    fun flushSettingsSavesTheCurrentValuesEvenWhenNothingWasChanged() = runTest {
+        val store = FakeSettingsStore(UserSettings(outputDir = "D:/Songs", includeRank = false))
+        val holder = holderWith(store)
+
+        holder.flushSettings()
+
+        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", includeRank = false)), store.saved)
+    }
+
+    @Test
+    fun nothingIsSavedAtStartup() = runTest {
+        val store = FakeSettingsStore(UserSettings(outputDir = " ", concurrency = 9))
+
+        holderWith(store)
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        assertEquals(emptyList(), store.saved)
+    }
+
+    @Test
+    fun resetKeepsTheOptionsAndSavesNothing() = runTest {
+        val store = FakeSettingsStore(UserSettings(outputDir = "D:/Songs", overwrite = true, includeRank = false, concurrency = 3))
+        val holder = holderWith(store)
+        holder.onInput(playlistId)
+        holder.resolve()
+        runCurrent()
+
+        holder.reset()
+        advanceTimeBy(5_000)
+        runCurrent()
+
+        val state = holder.state.value
+        assertEquals(Phase.IDLE, state.phase)
+        assertEquals("D:/Songs", state.outputDir)
+        assertTrue(state.overwrite)
+        assertEquals(false, state.includeRank)
+        assertEquals(3, state.concurrency)
+        assertEquals(emptyList(), store.saved)
+    }
+
+    @Test
+    fun theTypedInputAndTheSingleVideoRankAreNeverRemembered() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onInput(playlistId)
+        holder.onSingleRank(42)
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(emptyList(), store.saved, "neither of them is an option that is saved")
+
+        holder.onOverwrite(true)
+        advanceTimeBy(400)
+        runCurrent()
+        assertEquals(listOf(defaultsWith(overwrite = true)), store.saved)
     }
 
     // ---- downloading ----------------------------------------------------------------------

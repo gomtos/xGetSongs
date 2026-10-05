@@ -2,6 +2,9 @@ package com.xgetsongs.app.state
 
 import com.xgetsongs.app.api.ApiError
 import com.xgetsongs.app.api.XgsApi
+import com.xgetsongs.app.settings.NoSettingsStore
+import com.xgetsongs.app.settings.SettingsStore
+import com.xgetsongs.app.settings.UserSettings
 import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobOptions
@@ -15,38 +18,56 @@ import com.xgetsongs.shared.input.ParsedInput
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** All screen logic. The composables only render [state] and call these functions. */
+/**
+ * All screen logic. The composables only render [state] and call these functions.
+ *
+ * The four options (output folder, overwrite, rank in file names, concurrency) start from what [settings] holds and are
+ * saved again a moment after the user changes one of them; see [flushSettings].
+ */
 class AppStateHolder(
     private val api: XgsApi,
     private val scope: CoroutineScope,
     defaultOutputDir: String,
+    private val settings: SettingsStore = NoSettingsStore,
 ) {
-    private val _state = MutableStateFlow(UiState(outputDir = defaultOutputDir))
+    private val _state = MutableStateFlow(initialState(defaultOutputDir))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var jobId: String? = null
     private var jobTask: Job? = null
+    private var saveJob: Job? = null
+
+    private fun initialState(defaultOutputDir: String): UiState {
+        val stored = settings.load()
+        return UiState(
+            outputDir = stored.outputDir?.takeIf { it.isNotBlank() } ?: defaultOutputDir,
+            overwrite = stored.overwrite,
+            includeRank = stored.includeRank,
+            concurrency = stored.concurrency.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY),
+        )
+    }
 
     // ---- simple setters -----------------------------------------------------------------
 
     fun onInput(text: String) = _state.update { it.copy(input = text) }
 
-    fun onOutputDir(dir: String) = _state.update { it.copy(outputDir = dir) }
+    fun onOutputDir(dir: String) = changeOptions { it.copy(outputDir = dir) }
 
-    fun onOverwrite(value: Boolean) = _state.update { it.copy(overwrite = value) }
+    fun onOverwrite(value: Boolean) = changeOptions { it.copy(overwrite = value) }
 
     /**
      * Turning the rank in the file name on or off rewrites the names shown in the preview. Rows of a running or finished
      * job are left alone: they show the names the server really used, and the rows of a job that ended before it
      * started them (cancelled or aborted) keep the preview names they had.
      */
-    fun onIncludeRank(value: Boolean) = _state.update { state ->
+    fun onIncludeRank(value: Boolean) = changeOptions { state ->
         if (state.phase != Phase.PREVIEW) {
             state.copy(includeRank = value)
         } else {
@@ -54,7 +75,8 @@ class AppStateHolder(
         }
     }
 
-    fun onConcurrency(value: Int) = _state.update { it.copy(concurrency = value.coerceIn(1, 4)) }
+    fun onConcurrency(value: Int) =
+        changeOptions { it.copy(concurrency = value.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY)) }
 
     /** Changing the rank of a single video rewrites its file name in the preview. */
     fun onSingleRank(value: Int) = _state.update { state ->
@@ -67,6 +89,42 @@ class AppStateHolder(
     }
 
     fun dismissError() = _state.update { it.copy(error = null) }
+
+    // ---- remembered options -----------------------------------------------------------------
+
+    /** Applies [change] and, if it altered one of the remembered options, schedules a save. */
+    private fun changeOptions(change: (UiState) -> UiState) {
+        var altered = false
+        _state.update { old ->
+            val new = change(old)
+            altered = new.options() != old.options()
+            new
+        }
+        if (altered) scheduleSave()
+    }
+
+    /** Each change restarts the wait, so typing a folder name produces one save, with the finished text. */
+    private fun scheduleSave() {
+        saveJob?.cancel()
+        saveJob = scope.launch {
+            delay(SAVE_DELAY_MS)
+            settings.save(_state.value.options())
+        }
+    }
+
+    /**
+     * Saves the options as they are now, at once, and drops a save that is still waiting. Call it when the window
+     * closes, because a change made in the last moments would otherwise be lost.
+     */
+    fun flushSettings() {
+        saveJob?.cancel()
+        saveJob = null
+        settings.save(_state.value.options())
+    }
+
+    /** The four options that are remembered; nothing else on the screen is. */
+    private fun UiState.options() =
+        UserSettings(outputDir = outputDir, overwrite = overwrite, includeRank = includeRank, concurrency = concurrency)
 
     fun reset() {
         jobTask?.cancel()
@@ -323,4 +381,9 @@ class AppStateHolder(
 
     private fun UiState.updateRow(rank: Int, change: (ItemRow) -> ItemRow): UiState =
         copy(rows = rows.map { if (it.item.rank == rank && it.item.available) change(it) else it })
+
+    private companion object {
+        /** How long the options must stay unchanged before they are written. */
+        const val SAVE_DELAY_MS = 400L
+    }
 }
