@@ -483,3 +483,41 @@ Added after the user's request "진단 로그와 UI 멈춤 감시기 추가해�
 - [ ] **Step 4: Run** `.\gradlew.bat --no-daemon check` (green, none skipped; test methods return `Unit`).
 - [ ] **Step 5: Real run check** (no network, no UI): write a throwaway `main` (NOT committed; delete it afterwards) that calls `Diagnostics.start(<a temp dir>)`, keeps a fake UI executor blocked for about 7 seconds so the watchdog fires, then prints the size and the first lines of the produced `ui-hang-*.txt` and ends with `System.exit(0)` so the exit logger writes its `JVM 종료 시작` line classified as `외부 종료 요청`. Report the observed lines (structure only; there are no secrets involved).
 - [ ] **Step 6: Commit** in Korean (see the project rule: Korean commit messages, trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`), a few commits are fine (app diagnostics, server logging, docs).
+
+---
+
+### Task 11: Show the lyrics result of every file in the list
+
+Added after the user's request "가사 저장 성공 여부를 각각의 파일에 표시해줘". Every finished row of the file list says where its lyrics came from or why it has none, so the user sees at a glance which files got lyrics and which did not. The lyrics are written in the same tagging step that already fails the item when the tag cannot be written, so a finished item with a lyrics outcome of DESCRIPTION or ONLINE really has the lyrics frame in its mp3.
+
+**Files:**
+- Modify: `shared/src/commonMain/kotlin/com/xgetsongs/shared/api/ApiModels.kt` (new `LyricsOutcome`, `JobEvent.ItemDone.lyrics`)
+- Modify: `engine/src/main/kotlin/com/xgetsongs/engine/job/ItemDownloader.kt` (`DownloadResult.Downloaded.lyrics`), `engine/.../job/DefaultDownloadService.kt`
+- Modify: `server/src/main/kotlin/com/xgetsongs/server/JobLog.kt`
+- Modify: `app/src/commonMain/kotlin/com/xgetsongs/app/state/UiState.kt`, `AppStateHolder.kt`, `Labels.kt`; `app/.../ui/PreviewList.kt` only if the label needs layout care
+- Tests: `shared/.../ApiModelsTest.kt`, `engine/.../job/DefaultDownloadServiceTest.kt`, `server/.../JobLogTest.kt`, `app/.../LabelsTest.kt`, `app/.../AppStateHolderTest.kt`, `app/src/desktopTest/.../EndToEndTest.kt` and every test that compares with `ItemStatus.Done`
+- Modify: `README.md`, and one sentence of spec 6.4/7 (the controller edits the spec: do not touch `docs/superpowers`)
+
+**Interfaces:**
+- Produces: `@Serializable enum class LyricsOutcome { DESCRIPTION, ONLINE, NOT_FOUND, SEARCH_OFF }` in `com.xgetsongs.shared.api`; `JobEvent.ItemDone(rank: Int, fileName: String, lyrics: LyricsOutcome? = null)` (the new field is last and nullable with default null: an event without it decodes to null and means "not known"); `DownloadResult.Downloaded(file: Path, lyrics: LyricsOutcome)`; `ItemStatus.Done(val lyrics: LyricsOutcome? = null)` (was `data object Done`: it becomes `data class Done`).
+
+**Behaviour**
+
+1. **Outcome rules** (`ItemDownloader.download`, after the tag step succeeded): `DESCRIPTION` when the lyrics came from the video description; else `ONLINE` when the provider found lyrics; else `SEARCH_OFF` when the lyrics lookup was off for this item (`prepared.searchLyricsOnline` false) and the description had none; else `NOT_FOUND` (the lookup ran, or failed, and gave nothing). The outcome must describe what was WRITTEN: if the tag step fails the item fails as before and no outcome is reported. A provider exception counts as `NOT_FOUND`.
+2. **Event:** `DefaultDownloadService` sends `ItemDone(rank, fileName, outcome)`. Items skipped because the file already existed (`ItemSkipped` "이미 존재") and failed items carry no outcome; nothing else about events changes.
+3. **Server:** no route change (the SSE JSON simply carries the new field; keep `encodeDefaults` behaviour as is). `JobLog.describe(ItemDone)` appends the outcome name when present: `항목 완료: 순위 3, 가사 ONLINE` (no title, no file name, no lyrics).
+4. **App state:** the holder maps `ItemDone` to `ItemStatus.Done(event.lyrics)`; everything else that treats `Done` (counting, retry, reset of in-flight rows, summaries) keeps working; update the code and tests that used `ItemStatus.Done` as an object.
+5. **Labels:** `statusLabel(Done(lyrics))` returns `완료` for null, `완료 · 가사 ✓ 설명란` for DESCRIPTION, `완료 · 가사 ✓ 인터넷` for ONLINE, `완료 · 가사 없음` for NOT_FOUND, `완료 · 가사 없음 (검색 끔)` for SEARCH_OFF. The status cell is 220.dp wide: check the longest label fits on one line in `StatusCell` at the current font (if it would wrap, allow two lines or shorten the label to `완료 · 가사 없음 (검색 끔)` -> `완료 · 가사 없음(검색 끔)`; do not truncate). Optionally colour the lyrics part (a check mark in the primary colour, "없음" in the outline colour) only if it is simple with the existing `StatusCell`; the plain text labels are the requirement.
+6. **README:** one sentence in the lyrics part: every finished row shows `가사 ✓ 설명란`, `가사 ✓ 인터넷`, `가사 없음` or `가사 없음 (검색 끔)`.
+
+**Tests (write them first)**
+- `ApiModelsTest`: `ItemDone` round trip with each outcome and with null; JSON of an old-style event without the field decodes to `lyrics == null`; the SSE name stays `item-done`.
+- `DefaultDownloadServiceTest` (existing fakes: fake yt-dlp info file with/without a lyrics section in the description, fake `LyricsProvider`): description lyrics give `ItemDone(..., DESCRIPTION)` and the provider is not called; no description lyrics + provider returns text gives ONLINE; provider returns null gives NOT_FOUND; provider throws gives NOT_FOUND and the item still succeeds; lookup off (`searchLyricsOnline = false`) with no description lyrics gives SEARCH_OFF; lookup off but the description has lyrics gives DESCRIPTION; a tag failure gives `ItemFailed` and no `ItemDone`; an existing-file skip gives `ItemSkipped`.
+- `JobLogTest`: the new log line for each outcome and for null; still no title/file name.
+- `LabelsTest`: all five labels. `AppStateHolderTest`: the event updates the row to `Done(outcome)` for each outcome and the fileName; a retry run replaces it; reset clears. `EndToEndTest` and the other tests that asserted `ItemStatus.Done` are adapted.
+
+- [ ] **Step 1: Write failing tests**
+- [ ] **Step 2: Run to see them fail:** `.\gradlew.bat --no-daemon check --console=plain` (compile errors count as failing)
+- [ ] **Step 3: Implement** behaviours 1-6.
+- [ ] **Step 4: Run** `.\gradlew.bat --no-daemon check --console=plain` (green, none skipped; test methods return `Unit`).
+- [ ] **Step 5: Commit** in Korean (trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`), a few commits are fine (shared+engine, server+app, docs).
