@@ -228,6 +228,46 @@ class LyricsMatcherTest {
     }
 
     @Test
+    fun aVersionMarkerOfTheQueryKeepsItFromMatchingTheBaseSongToo() {
+        val markers = listOf(
+            "Japanese Ver.", "English Version", "Chinese", "Inst.", "Instrumental", "Remix", "Radio Edit", "Club Mix", "Remastered 2011",
+            "Demo", "Cover", "ver", "일본어 버전", "영어", "중국어", "한국어", "반주", "리믹스", "인스트", "밴드 버전", "커버", "데모", "리마스터", "믹스", "에디트",
+        )
+        for (marker in markers) {
+            assertFalse(
+                LyricsMatcher.isMatch(query(title = "Hello ($marker)"), candidate(trackName = "Hello")),
+                "the video of a version is not the base song: $marker",
+            )
+        }
+        assertFalse(LyricsMatcher.isMatch(query(title = "Hello (Japanese Ver.) feat. X"), candidate(trackName = "Hello")))
+        assertFalse(LyricsMatcher.isMatch(query(title = "Hello feat. X (Instrumental)"), candidate(trackName = "Hello")))
+    }
+
+    @Test
+    fun aLiveOrAcousticTakeInTheQueryStillMatchesTheBaseSong() {
+        for (marker in listOf("Live", "live", "Acoustic", "Lives", "라이브", "어쿠스틱")) {
+            assertTrue(LyricsMatcher.isMatch(query(title = "Hello ($marker)"), candidate(trackName = "Hello")), marker)
+        }
+        // Live is no marker for the query, but one for the candidate: a record of a live take is its own entry.
+        assertFalse(LyricsMatcher.isMatch(query(title = "Hello"), candidate(trackName = "Hello (Live)")))
+        // Together with another version word the query is another version again.
+        assertFalse(LyricsMatcher.isMatch(query(title = "Hello (Live Ver.)"), candidate(trackName = "Hello")))
+        assertFalse(LyricsMatcher.isMatch(query(title = "Hello (Live) (Remix)"), candidate(trackName = "Hello")))
+    }
+
+    @Test
+    fun aVersionOfTheQueryMatchesTheRecordOfTheSameVersionThroughTheWholeTitle() {
+        assertTrue(LyricsMatcher.isMatch(query(title = "Hello (Japanese Ver.)"), candidate(trackName = "Hello (Japanese Ver.)")))
+        assertEquals(
+            "japanese",
+            LyricsMatcher.pick(
+                query(title = "Hello (Japanese Ver.)"),
+                listOf(candidate(trackName = "Hello", plainLyrics = "korean"), candidate(trackName = "Hello (Japanese Ver.)", plainLyrics = "japanese")),
+            )?.plainLyrics,
+        )
+    }
+
+    @Test
     fun aVersionMarkerOfTheCandidateKeepsItFromMatchingAShorterTitle() {
         val markers = listOf(
             "ver", "Ver.", "version", "Japanese Ver.", "English Version", "Chinese", "Korean ver", "Inst", "Inst.", "Instrumental",

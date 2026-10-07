@@ -58,7 +58,16 @@ object LyricsMatcher {
     )
 
     /** Korean version words: Korean text has no spaces to cut it into words, so these count anywhere inside. */
-    private val VERSION_KOREAN = listOf("반주", "일본어", "영어", "중국어", "한국어", "라이브", "리믹스", "어쿠스틱")
+    private val VERSION_KOREAN = listOf(
+        "반주", "일본어", "영어", "중국어", "한국어", "라이브", "리믹스", "어쿠스틱", "버전", "커버", "데모", "리마스터", "믹스", "에디트", "인스트",
+    )
+
+    /**
+     * The version words a bracketed part of the QUERY may hold without making its video another song: a live or acoustic
+     * take has the lyrics of the song, a Japanese version, an instrumental or a remix has not.
+     */
+    private val LIVE_LIKE_WORD = Regex("(?:live|acoustic)(?:ed|es|s|d)?[0-9]*")
+    private val LIVE_LIKE_KOREAN = listOf("라이브", "어쿠스틱")
 
     /** How well the titles agree; a lower number is a better match. */
     private const val TITLE_WHOLE = 0
@@ -124,10 +133,11 @@ object LyricsMatcher {
      * known, they differ by at most eight seconds.
      *
      * The titles agree when they are equal after [normalize], or when a shorter form of the query (without its bracketed
-     * parts, its trailing credit) equals the candidate's title, or the other way round. A shorter form of the CANDIDATE's
-     * title is only used when what it leaves out is no version marker: `Hello (Japanese Ver.)` is not `Hello`, whereas
-     * `LOVE ATTACK (LOVE ATTACK)` is `LOVE ATTACK`. (A video of a live version has the lyrics of the song, so the query's
-     * own bracketed parts may always be left out.)
+     * parts, its trailing credit) equals the candidate's title, or the other way round. A shorter form of a title is only
+     * used when what it leaves out is no version marker, on either side: `Hello (Japanese Ver.)` is not `Hello` (a video
+     * of the Japanese version must not get the lyrics of the original, nor the other way round), whereas `LOVE ATTACK
+     * (LOVE ATTACK)` is `LOVE ATTACK`. The one exception: a video of a live or acoustic take has the lyrics of the song,
+     * so the QUERY's own `(Live)` or `(Acoustic)` may be left out.
      */
     fun isMatch(query: LyricsQuery, candidate: LyricsCandidate): Boolean = rank(query, candidate) != null
 
@@ -169,14 +179,15 @@ object LyricsMatcher {
     }
 
     /**
-     * The normalised forms of [title]. For a candidate, a shorter form is left out when a bracketed part or the credit it
-     * lacks holds a version marker, so that the song and a version of it are not taken for each other.
+     * The normalised forms of [title]. A shorter form is left out when a bracketed part or the credit it lacks holds a
+     * version marker, so that the song and a version of it are not taken for each other, whichever side the version is
+     * on. (The query's own `Live` and `Acoustic` do not count: see [hasVersionMarker].)
      */
     private fun titleKeys(title: String, forCandidate: Boolean): TitleKeys {
         val reduction = reduce(title)
         val whole = normalize(reduction.whole)
-        val bracketsMayGo = !forCandidate || !hasVersionMarker(reduction.bracketedParts)
-        val creditMayGo = bracketsMayGo && (!forCandidate || !hasVersionMarker(reduction.credit))
+        val bracketsMayGo = !hasVersionMarker(reduction.bracketedParts, forCandidate)
+        val creditMayGo = bracketsMayGo && !hasVersionMarker(reduction.credit, forCandidate)
         val shorter = buildList {
             if (bracketsMayGo) add(reduction.withoutBrackets)
             if (creditMayGo) {
@@ -197,11 +208,16 @@ object LyricsMatcher {
         return Reduction(whole, withoutBrackets, brackets.second, withoutCredit, credit, withoutQuotes)
     }
 
-    /** True when [removed] (a bracketed part or a credit of a title) has a version marker word in it. */
-    private fun hasVersionMarker(removed: String): Boolean {
+    /**
+     * True when [removed] (a bracketed part or a credit of a title) has a version marker word in it. For the QUERY
+     * ([forCandidate] false) `live` and `acoustic` are no marker: a video of a live or acoustic take has the lyrics of the
+     * song. For a record of the service they are, because the record of a live take is its own entry.
+     */
+    private fun hasVersionMarker(removed: String, forCandidate: Boolean): Boolean {
         if (removed.isBlank()) return false
         val text = Normalizer.normalize(removed, Normalizer.Form.NFKC).lowercase()
-        return VERSION_KOREAN.any { it in text } || words(text).any { VERSION_WORD.matches(it) }
+        val korean = VERSION_KOREAN.any { word -> word in text && (forCandidate || word !in LIVE_LIKE_KOREAN) }
+        return korean || words(text).any { VERSION_WORD.matches(it) && (forCandidate || !LIVE_LIKE_WORD.matches(it)) }
     }
 
     /** The artist forms of both sides that are long enough; a match needs one of each to be the same name. */

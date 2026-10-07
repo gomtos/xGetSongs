@@ -202,7 +202,7 @@ class LrclibLyricsProvider(
             return stream.readNBytes(limit)
         } catch (e: IOException) {
             val causes = generateSequence<Throwable>(e) { it.cause }
-            if (Thread.currentThread().isInterrupted || causes.any { it is InterruptedException || it is InterruptedIOException }) {
+            if (Thread.currentThread().isInterrupted || causes.any { it is InterruptedException || (it is InterruptedIOException && it !is SocketTimeoutException) }) {
                 throw InterruptedException()
             }
             throw e
