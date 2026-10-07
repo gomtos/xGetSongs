@@ -16,8 +16,13 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.ProxySelector
+import java.net.SocketAddress
+import java.net.URI
 import java.net.URLDecoder
 import java.net.http.HttpClient
 import java.util.concurrent.CopyOnWriteArrayList
@@ -26,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,7 +39,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
+import kotlin.time.TimeSource
 
 /**
  * [LrclibLyricsProvider] against a fake LRCLIB on the loopback interface (the JDK's own HttpServer). Every record and
@@ -93,13 +102,18 @@ class LrclibLyricsProviderTest {
         maxConcurrent: Int = 2,
         requestTimeout: Duration = 5.seconds,
         baseUrl: String = base,
+        timeSource: TimeSource = clock,
     ) = LrclibLyricsProvider(
         baseUrl = baseUrl,
         userAgent = "xGetSongs-test/1.0 (https://example.invalid)",
         requestTimeout = requestTimeout,
         maxRequests = maxRequests,
         maxConcurrent = maxConcurrent,
+        timeSource = timeSource,
     )
+
+    /** The clock of the providers of a test: it only moves when the test moves it, so no test sleeps through a cool-down. */
+    private val clock = TestTimeSource()
 
     /** Runs [block] on the calling thread, in real time; the return type is Unit, which JUnit needs to run the test. */
     private fun blocking(block: suspend CoroutineScope.() -> Unit) = runBlocking(block = block)
@@ -429,7 +443,7 @@ class LrclibLyricsProviderTest {
 
     @Test
     fun everyAnswerThatIsNot200CountsAsNoResultAndTheNextRequestIsStillMade() = blocking {
-        for (status in listOf(400, 403, 404, 500, 502, 503)) {
+        for (status in listOf(400, 403, 404, 500)) {
             seen.clear()
             onGet = { it.reply(status, "x") }
             onSearch = { it.reply(status, "x") }
@@ -507,36 +521,66 @@ class LrclibLyricsProviderTest {
     }
 
     @Test
-    fun anAcceptedRecordWhoseLyricsAreTooShortGivesNullAndEndsTheCall() = blocking {
+    fun aGetRecordWhoseLyricsAreTooShortIsNotAnAnswerAndTheSearchIsStillTried() = blocking {
         onGet = { it.reply(200, record(lyrics = "Line one\nLine two")) }
+        onSearch = { it.reply(200, array(record(lyrics = lyricsOf("full")))) }
+
+        assertEquals(lyricsOf("full"), provider().find(query()))
+        assertEquals(listOf("/api/get", "/api/search"), paths)
+    }
+
+    @Test
+    fun aCloserSearchRecordWithTooShortLyricsDoesNotHideAnotherAcceptedRecordWithFullLyrics() = blocking {
+        onSearch = {
+            it.reply(
+                200,
+                array(
+                    record(duration = 258, lyrics = "Line one\nLine two"),
+                    record(duration = 258.2, lyrics = "  \n "),
+                    record(duration = 258.4, lyrics = null),
+                    record(duration = 263, lyrics = lyricsOf("full")),
+                ),
+            )
+        }
+
+        assertEquals(lyricsOf("full"), provider().find(query()))
+        assertEquals(listOf("/api/get", "/api/search"), paths)
+    }
+
+    @Test
+    fun whenNoRecordHasLyricsOfEnoughLinesTheResultIsNull() = blocking {
+        onGet = { it.reply(200, record(lyrics = "Line one\nLine two")) }
+        onSearch = { it.reply(200, array(record(lyrics = "Only one"), record(lyrics = ""))) }
 
         assertNull(provider().find(query()))
-        assertEquals(listOf("/api/get"), paths, "the first accepted result ends the call, whatever its lyrics turn out to be")
     }
 
     @Test
     fun aReadTimeoutGivesNullAndEndsTheCall() = blocking {
         onGet = {
-            Thread.sleep(3_000)
+            Thread.sleep(5_000)
             it.reply(200, record())
         }
         val begin = System.nanoTime()
 
-        val lyrics = provider(requestTimeout = 300.milliseconds).find(query())
+        val lyrics = provider(requestTimeout = 1.seconds).find(query())
 
         assertNull(lyrics)
-        assertTrue(System.nanoTime() - begin < 2_500_000_000L, "the call must end by itself soon after the time limit")
+        assertTrue(System.nanoTime() - begin < 4_000_000_000L, "the call must end at the time limit, not when the server wakes up")
         assertEquals(listOf("/api/get"), paths, "a service that does not answer is not asked again")
     }
 
     @Test
     fun aSlowSearchAfterAFastGetEndsTheCallToo() = blocking {
         onSearch = {
-            Thread.sleep(3_000)
+            Thread.sleep(5_000)
             it.reply(200, "[]")
         }
+        val begin = System.nanoTime()
 
-        assertNull(provider(requestTimeout = 300.milliseconds).find(query(artist = "소연 (SOYEON)")))
+        assertNull(provider(requestTimeout = 1.seconds).find(query(artist = "소연 (SOYEON)")))
+
+        assertTrue(System.nanoTime() - begin < 4_000_000_000L, "the call must end at the time limit, not when the server wakes up")
         assertEquals(listOf("/api/get", "/api/search"), paths)
     }
 
@@ -575,11 +619,312 @@ class LrclibLyricsProviderTest {
     @Test
     fun aGivenHttpClientIsUsed() = blocking {
         onGet = { it.reply(200, record(lyrics = lyricsOf("given"))) }
-        val client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
+        // The given client leaves two traces that a client the provider builds itself cannot: its proxy selector is asked
+        // where to connect, and its executor runs the tasks of the exchange.
+        val proxySelections = AtomicInteger()
+        val executedTasks = AtomicInteger()
+        val client = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .proxy(
+                object : ProxySelector() {
+                    override fun select(uri: URI?): List<Proxy> {
+                        proxySelections.incrementAndGet()
+                        return listOf(Proxy.NO_PROXY)
+                    }
+
+                    override fun connectFailed(uri: URI?, address: SocketAddress?, failure: IOException?) = Unit
+                },
+            )
+            .executor { task ->
+                executedTasks.incrementAndGet()
+                task.run()
+            }
+            .build()
 
         val lyrics = LrclibLyricsProvider(client = client, baseUrl = base).find(query())
 
         assertEquals(lyricsOf("given"), lyrics)
+        assertTrue(proxySelections.get() > 0, "the request must have gone through the given client")
+        assertTrue(executedTasks.get() > 0, "the request must have been run by the executor of the given client")
+    }
+
+    // ---- the cool-down after trouble ----
+
+    @Test
+    fun afterATooManyRequestsAnswerTheNextCallsMakeNoRequestAtAll() = blocking {
+        val provider = provider()
+        onGet = { it.reply(429, "{}") }
+        assertNull(provider.find(query()))
+        assertEquals(1, seen.size)
+        onGet = { it.reply(200, record(lyrics = lyricsOf("recovered"))) }
+
+        repeat(3) { assertNull(provider.find(query(title = "Another song $it")), "call $it") }
+
+        assertEquals(1, seen.size, "the service gets its rest: no request while the provider cools down")
+    }
+
+    @Test
+    fun theCoolDownEndsAfterFiveMinutesAndTheNextCallAsksAgain() = blocking {
+        val provider = provider()
+        onGet = { it.reply(429, "{}") }
+        assertNull(provider.find(query()))
+        onGet = { it.reply(200, record(lyrics = lyricsOf("recovered"))) }
+
+        clock += 4.minutes + 59.seconds
+        assertNull(provider.find(query()))
+        assertEquals(1, seen.size, "4 minutes 59 seconds are not enough")
+
+        clock += 1.seconds
+        assertEquals(lyricsOf("recovered"), provider.find(query()))
+        assertEquals(2, seen.size)
+    }
+
+    @Test
+    fun aSecondTroubleAfterTheCoolDownStartsANewOne() = blocking {
+        val provider = provider()
+        onGet = { it.reply(429, "{}") }
+        assertNull(provider.find(query()))
+        clock += 5.minutes
+
+        assertNull(provider.find(query()))
+        assertEquals(2, seen.size, "after the cool-down it asks again, and is throttled again")
+        clock += 4.minutes
+        assertNull(provider.find(query()))
+        assertEquals(2, seen.size, "the new cool-down counts from the second trouble")
+        clock += 1.minutes
+        assertNull(provider.find(query()))
+        assertEquals(3, seen.size)
+    }
+
+    @Test
+    fun theCoolDownIsAConstructorParameter() = blocking {
+        val provider = LrclibLyricsProvider(baseUrl = base, coolDown = 30.seconds, timeSource = clock)
+        onGet = { it.reply(429, "{}") }
+        assertNull(provider.find(query()))
+
+        clock += 29.seconds
+        assertNull(provider.find(query()))
+        assertEquals(1, seen.size)
+        clock += 1.seconds
+        assertNull(provider.find(query()))
+        assertEquals(2, seen.size)
+    }
+
+    @Test
+    fun badGatewayServiceUnavailableAndGatewayTimeoutAreTroubleLikeTooManyRequests() = blocking {
+        for (status in listOf(502, 503, 504)) {
+            seen.clear()
+            val provider = provider()
+            onGet = { it.reply(status, "x") }
+            onSearch = { it.reply(status, "x") }
+
+            assertNull(provider.find(query(artist = "소연 (SOYEON)")), "status $status")
+            assertEquals(listOf("/api/get"), paths, "status $status stops the call after one request")
+            assertNull(provider.find(query(artist = "소연 (SOYEON)")), "status $status")
+            assertEquals(listOf("/api/get"), paths, "status $status: no request while it cools down")
+        }
+    }
+
+    @Test
+    fun aBadGatewayOnASearchStopsTheCallAndStartsTheCoolDownToo() = blocking {
+        val provider = provider()
+        onSearch = { it.reply(502, "x") }
+
+        assertNull(provider.find(query(artist = "소연 (SOYEON)")))
+        assertEquals(listOf("/api/get", "/api/search"), paths)
+        assertNull(provider.find(query()))
+        assertEquals(2, seen.size)
+    }
+
+    @Test
+    fun notFoundAndServerErrorsAndOtherClientErrorsDoNotStartACoolDown() = blocking {
+        for (status in listOf(400, 403, 404, 500)) {
+            seen.clear()
+            val provider = provider()
+            onGet = { it.reply(status, "x") }
+            onSearch = { it.reply(status, "x") }
+
+            assertNull(provider.find(query()), "status $status")
+            assertNull(provider.find(query()), "status $status")
+
+            assertEquals(4, seen.size, "status $status: both calls made their get and their search")
+        }
+    }
+
+    @Test
+    fun aTimeoutStartsTheCoolDown() = blocking {
+        val provider = provider(requestTimeout = 1.seconds)
+        onGet = {
+            Thread.sleep(5_000)
+            it.reply(200, record())
+        }
+        assertNull(provider.find(query()))
+        assertEquals(1, seen.size)
+        onGet = { it.reply(200, record(lyrics = lyricsOf("recovered"))) }
+
+        assertNull(provider.find(query()))
+        assertEquals(1, seen.size, "no request while it cools down")
+        clock += 5.minutes
+        assertEquals(lyricsOf("recovered"), provider.find(query()))
+    }
+
+    @Test
+    fun aRefusedConnectionStartsTheCoolDown() = blocking {
+        val deadBase = base
+        stopServer()
+        // A request cannot be counted at a server that is not there, but the proxy selector of a client is asked once per request.
+        val requests = AtomicInteger()
+        val client = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .proxy(
+                object : ProxySelector() {
+                    override fun select(uri: URI?): List<Proxy> {
+                        requests.incrementAndGet()
+                        return listOf(Proxy.NO_PROXY)
+                    }
+
+                    override fun connectFailed(uri: URI?, address: SocketAddress?, failure: IOException?) = Unit
+                },
+            )
+            .build()
+        val provider = LrclibLyricsProvider(client = client, baseUrl = deadBase, timeSource = clock)
+
+        assertNull(provider.find(query()))
+        assertEquals(1, requests.get(), "the get request fails to connect and ends the call")
+        assertNull(provider.find(query()))
+        assertEquals(1, requests.get(), "no request while it cools down")
+        clock += 5.minutes
+        assertNull(provider.find(query()))
+        assertEquals(2, requests.get(), "after the cool-down it tries again")
+    }
+
+    @Test
+    fun anEmptyAnswerABadAnswerAndTheRequestCapDoNotStartACoolDown() = blocking {
+        val empty = provider()
+        assertNull(empty.find(query()))
+        assertNull(empty.find(query()))
+        assertEquals(4, seen.size, "get and an empty search, twice")
+
+        seen.clear()
+        onGet = { it.reply(200, "not json") }
+        val bad = provider()
+        assertNull(bad.find(query()))
+        assertNull(bad.find(query()))
+        assertEquals(4, seen.size)
+
+        seen.clear()
+        val capped = provider(maxRequests = 1)
+        assertNull(capped.find(query()))
+        assertNull(capped.find(query()))
+        assertEquals(2, seen.size, "reaching the cap is not trouble of the service")
+    }
+
+    @Test
+    fun theCoolDownBelongsToTheInstance() = blocking {
+        val throttled = provider()
+        val other = provider()
+        onGet = { it.reply(429, "{}") }
+        assertNull(throttled.find(query()))
+        onGet = { it.reply(200, record(lyrics = lyricsOf("other"))) }
+
+        assertEquals(lyricsOf("other"), other.find(query()))
+        assertNull(throttled.find(query()))
+    }
+
+    @Test
+    fun callsWaitingForASlotStopWhenAnotherCallRunsIntoTrouble() = blocking {
+        onGet = {
+            Thread.sleep(300)
+            it.reply(429, "{}")
+        }
+        val provider = provider(maxConcurrent = 1)
+
+        val results = coroutineScope { (1..3).map { async { provider.find(query(title = "Song $it")) } }.awaitAll() }
+
+        assertEquals(List(3) { null }, results)
+        assertEquals(1, seen.size, "the two calls queued behind the first one never made their request")
+    }
+
+    // ---- the size of an answer ----
+
+    private val twoMebibytes = 2 * 1024 * 1024
+
+    /** A record of exactly [size] bytes: its fields, and a field the provider does not read as padding. */
+    private fun recordOfSize(size: Int, lyrics: String): String {
+        val head = record(lyrics = lyrics).dropLast(1) + ",\"padding\":\""
+        val tail = "\"}"
+        return head + "x".repeat(size - head.length - tail.length) + tail
+    }
+
+    @Test
+    fun anAnswerOfExactlyTwoMebibytesIsRead() = blocking {
+        val answer = recordOfSize(twoMebibytes, lyricsOf("big"))
+        assertEquals(twoMebibytes, answer.toByteArray(Charsets.UTF_8).size)
+        onGet = { it.reply(200, answer) }
+
+        assertEquals(lyricsOf("big"), provider().find(query()))
+        assertEquals(listOf("/api/get"), paths)
+    }
+
+    @Test
+    fun anAnswerOfOneByteMoreIsAMissAndTheNextRequestIsStillMade() = blocking {
+        val answer = recordOfSize(twoMebibytes + 1, lyricsOf("too big"))
+        assertEquals(twoMebibytes + 1, answer.toByteArray(Charsets.UTF_8).size)
+        onGet = { it.reply(200, answer) }
+        onSearch = { it.reply(200, array(record(lyrics = lyricsOf("small")))) }
+
+        assertEquals(lyricsOf("small"), provider().find(query()))
+        assertEquals(listOf("/api/get", "/api/search"), paths)
+    }
+
+    @Test
+    fun aBodyThatNeverEndsIsCutOffAfterTwoMebibytesAndNeverBuffered() = blocking {
+        val written = AtomicLong()
+        val handlerDone = CountDownLatch(1)
+        val total = 32L * 1024 * 1024
+        onGet = { exchange ->
+            try {
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, 0) // chunked: no length is announced
+                val block = ByteArray(64 * 1024) { 'x'.code.toByte() }
+                exchange.responseBody.use { out ->
+                    while (written.get() < total) {
+                        out.write(block)
+                        written.addAndGet(block.size.toLong())
+                    }
+                }
+            } catch (e: IOException) {
+                // The client went away: that is what is meant to happen.
+            } finally {
+                handlerDone.countDown()
+            }
+        }
+
+        assertNull(provider().find(query()))
+
+        assertTrue(handlerDone.await(15, TimeUnit.SECONDS), "the server must notice that the client went away")
+        assertTrue(written.get() < total, "the whole body must not have been read: the server wrote ${written.get()} of $total bytes")
+        assertEquals(listOf("/api/get", "/api/search"), paths, "a body that is too large is a miss, the next request is still made")
+    }
+
+    @Test
+    fun aBodyThatStallsAfterItsHeadersEndsTheCallAtTheTimeLimitAndStartsTheCoolDown() = blocking {
+        onGet = { exchange ->
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.write("[".toByteArray())
+            exchange.responseBody.flush()
+            Thread.sleep(5_000)
+        }
+        val provider = provider(requestTimeout = 1.seconds)
+        val begin = System.nanoTime()
+
+        assertNull(provider.find(query()))
+
+        assertTrue(System.nanoTime() - begin < 4_000_000_000L, "the call must end at the time limit, not when the server wakes up")
+        assertEquals(listOf("/api/get"), paths, "a service that stalls is not asked again")
+        assertNull(provider.find(query()))
+        assertEquals(1, seen.size, "no request while it cools down")
     }
 
     // ---- cancellation and concurrency ----
