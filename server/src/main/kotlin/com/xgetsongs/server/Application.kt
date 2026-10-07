@@ -31,6 +31,8 @@ import io.ktor.server.routing.routing
 import io.ktor.server.sse.SSE
 import io.ktor.server.sse.sse
 import io.ktor.sse.ServerSentEvent
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -38,10 +40,18 @@ import java.nio.file.Path
 /** A client mistake that maps straight to an HTTP status with a user-facing message. */
 class ApiException(val status: HttpStatusCode, message: String) : Exception(message)
 
-fun Application.module(services: Services, config: ServerConfig) {
+private val jobLog = LoggerFactory.getLogger(JobLog.LOGGER_NAME)
+
+private fun Logger.write(tag: String, line: JobLogLine) = when (line.level) {
+    JobLogLevel.DEBUG -> debug("[{}] {}", tag, line.text)
+    JobLogLevel.INFO -> info("[{}] {}", tag, line.text)
+    JobLogLevel.WARN -> warn("[{}] {}", tag, line.text)
+}
+
+/** [jobs] is the registry the routes use; the caller passes its own to be able to ask how many jobs are running. */
+fun Application.module(services: Services, config: ServerConfig, jobs: JobRegistry = JobRegistry()) {
     val json = ApiJson.instance
     val resolveCache = ResolveCache()
-    val jobs = JobRegistry()
 
     install(ContentNegotiation) { json(json) }
     install(SSE)
@@ -93,7 +103,9 @@ fun Application.module(services: Services, config: ServerConfig) {
             val handle = services.downloads.start(
                 DownloadRequest(items, sink, options.overwrite, options.concurrency, album, options.includeRank, options.searchLyricsOnline),
             )
-            call.respond(HttpStatusCode.Created, JobCreated(jobs.register(handle)))
+            val jobId = jobs.register(handle)
+            jobLog.info("[{}] {}", JobLog.shortId(jobId), JobLog.started(jobId, resolved.kind, items.size, options))
+            call.respond(HttpStatusCode.Created, JobCreated(jobId))
         }
 
         sse("/jobs/{id}/events") {
@@ -104,7 +116,9 @@ fun Application.module(services: Services, config: ServerConfig) {
                 send(ServerSentEvent(data = json.encodeToString(ErrorResponse.serializer(), ErrorResponse(message)), event = "error"))
                 return@sse
             }
+            val tag = JobLog.shortId(id)
             for (event in handle.events) {
+                JobLog.describe(event)?.let { jobLog.write(tag, it) }
                 send(ServerSentEvent(data = json.encodeToString(JobEvent.serializer(), event), event = event.sseName))
             }
             // Only reached when the job ended; a dropped connection leaves the job cancellable.
@@ -114,6 +128,7 @@ fun Application.module(services: Services, config: ServerConfig) {
         delete("/jobs/{id}") {
             val id = call.parameters["id"].orEmpty()
             if (!jobs.cancel(id)) throw ApiException(HttpStatusCode.NotFound, "작업을 찾을 수 없습니다.")
+            jobLog.info("[{}] {}", JobLog.shortId(id), JobLog.CANCEL_REQUESTED)
             call.respond(HttpStatusCode.NoContent)
         }
     }

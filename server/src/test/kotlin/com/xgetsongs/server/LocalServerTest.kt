@@ -1,5 +1,8 @@
 package com.xgetsongs.server
 
+import ch.qos.logback.classic.Level
+import com.xgetsongs.engine.tools.ToolPathProvider
+import com.xgetsongs.engine.tools.ToolPaths
 import com.xgetsongs.shared.api.ApiHeaders
 import com.xgetsongs.shared.api.ApiJson
 import com.xgetsongs.shared.api.JobCreated
@@ -34,11 +37,13 @@ import kotlinx.coroutines.withTimeout
 import java.net.ConnectException
 import java.net.Socket
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** Runs the real Netty server on a random loopback port, which the in-memory test host cannot do. */
@@ -154,6 +159,67 @@ class LocalServerTest {
                     first.join()
                 }
             }
+        }
+    }
+
+    @Test
+    fun theNumberOfRunningJobsIsTheNumberOfJobsWhoseEventStreamHasNotEnded() = runBlocking {
+        fakes.downloads.queued = listOf(JobEvent.ItemStarted(1, "vid00000001", "001 A - One.mp3"))
+        fakes.downloads.closeAfterQueued = false
+        assertEquals(0, server.runningJobs())
+        client().use { client ->
+            withTimeout(30_000) {
+                val jobId = client.startJob()
+                assertEquals(1, server.runningJobs(), "registered by POST /jobs")
+                val firstSeen = CompletableDeferred<Unit>()
+                coroutineScope {
+                    val reader = launch {
+                        client.sse("/jobs/$jobId/events") {
+                            incoming.collect { if (it.event == "item-started") firstSeen.complete(Unit) }
+                        }
+                    }
+                    firstSeen.await()
+                    assertEquals(1, server.runningJobs(), "still running while its events are read")
+                    fakes.downloads.channel!!.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+                    fakes.downloads.channel!!.close()
+                    reader.join()
+                }
+                assertEquals(0, server.runningJobs(), "gone once the job ended")
+            }
+        }
+    }
+
+    @Test
+    fun startingLogsThePortAndTheToolPathsButNotTheToken() {
+        val tools = ToolPathProvider {
+            ToolPaths(ytDlp = Path.of("C:/t/yt-dlp.exe"), ffmpeg = null, jsRuntime = Path.of("C:/t/node.exe"))
+        }
+
+        LogCapture(LocalServer::class.java.name).use { capture ->
+            val started = LocalServer.start(fakes.services, tools = tools)
+            try {
+                val record = capture.at(Level.INFO).single()
+                assertTrue("127.0.0.1:${started.port}" in record.formattedMessage, record.formattedMessage)
+                assertTrue("yt-dlp=${Path.of("C:/t/yt-dlp.exe")}" in record.formattedMessage, record.formattedMessage)
+                assertTrue("ffmpeg=없음" in record.formattedMessage, record.formattedMessage)
+                assertTrue("JS 런타임=${Path.of("C:/t/node.exe")}" in record.formattedMessage, record.formattedMessage)
+                assertFalse(started.token in capture.events.joinToString("\n") { it.formattedMessage })
+            } finally {
+                started.stop()
+            }
+        }
+    }
+
+    @Test
+    fun startingWithoutToolPathsLogsJustThePortAndStoppingIsLogged() {
+        LogCapture(LocalServer::class.java.name).use { capture ->
+            val started = LocalServer.start(fakes.services)
+            started.stop()
+
+            val messages = capture.at(Level.INFO).map { it.formattedMessage }
+            assertEquals(2, messages.size, messages.toString())
+            assertTrue("127.0.0.1:${started.port}" in messages[0] && "yt-dlp" !in messages[0], messages[0])
+            assertEquals("내장 서버 정지", messages[1])
         }
     }
 

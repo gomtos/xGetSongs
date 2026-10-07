@@ -39,6 +39,9 @@ class JobRegistry {
 
     fun exists(id: String): Boolean = jobs.containsKey(id)
 
+    /** How many jobs are registered: those that are running, plus any that ended but whose last events nobody has read yet. */
+    fun size(): Int = jobs.size
+
     /** Returns the handle to the first caller and null to everyone after (or when the job is unknown). */
     fun claim(id: String): JobHandle? = jobs[id]?.takeIf { it.claimed.compareAndSet(false, true) }?.handle
 

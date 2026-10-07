@@ -15,9 +15,11 @@ dependencies {
     implementation(libs.ktor.server.sse)
     implementation(libs.ktor.server.status.pages)
     implementation(libs.ktor.serialization.kotlinx.json)
+    implementation(libs.slf4j.api)
     runtimeOnly(libs.logback.classic)
 
     testImplementation(kotlin("test"))
+    testImplementation(libs.logback.classic) // ListAppender: the tests read the job log
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.client.cio)
