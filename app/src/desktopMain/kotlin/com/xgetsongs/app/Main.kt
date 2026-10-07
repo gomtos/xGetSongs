@@ -7,6 +7,8 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.xgetsongs.app.api.HttpXgsApi
 import com.xgetsongs.app.api.configureXgs
+import com.xgetsongs.app.diagnostics.Diagnostics
+import com.xgetsongs.app.diagnostics.LOG_DIR_PROPERTY
 import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.ui.App
 import com.xgetsongs.server.LocalServer
@@ -19,7 +21,12 @@ import kotlinx.coroutines.cancel
 import java.nio.file.Path
 
 fun main() {
+    // First of all: logback reads the log folder from this property the first time anything asks for a logger, and the
+    // server's classes do that as soon as they load. (This file declares no logger of its own, for the same reason.)
+    val logDir = appDataDirectory().resolve("logs").also { System.setProperty(LOG_DIR_PROPERTY, it.toString()) }
+    val diagnostics = Diagnostics.start(logDir)
     val server = LocalServer.start(appDataDirectory())
+    diagnostics.runningJobs = server::runningJobs
     val http = HttpClient(CIO) {
         configureXgs(token = server.token, baseUrl = "http://127.0.0.1:${server.port}")
         // No request timeout: resolving a big playlist and the SSE stream can legitimately be silent for a while.
@@ -38,11 +45,14 @@ fun main() {
         }
         Window(
             onCloseRequest = {
+                // The exit record tells this from a process that was terminated from outside.
+                diagnostics.markUserExit()
                 // Before the scope goes away: a save that is still waiting for its quiet period would be lost.
                 holder.flushSettings()
                 uiScope.cancel()
                 http.close()
                 server.stop()
+                diagnostics.stop()
                 exitApplication()
             },
             title = "xGetSongs",

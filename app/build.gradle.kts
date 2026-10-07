@@ -34,10 +34,14 @@ kotlin {
                 implementation(project(":server"))
                 implementation(libs.ktor.client.cio)
                 implementation(libs.kotlinx.coroutines.swing)
+                // The diagnostics code logs through SLF4J; logback itself comes along at run time through :server.
+                implementation(libs.slf4j.api)
             }
         }
         val desktopTest by getting {
             dependencies {
+                // The diagnostics tests configure logback directly and read what it writes.
+                implementation(libs.logback.classic)
                 implementation(libs.ktor.server.test.host)
                 implementation(libs.ktor.server.sse)
                 implementation(libs.ktor.client.cio)
@@ -55,7 +59,8 @@ compose.desktop {
             packageName = "xGetSongs"
             packageVersion = "1.0.0"
             // The default jlink runtime lacks these: java.net.http (yt-dlp download) and jdk.unsupported (Netty).
-            modules("java.net.http", "jdk.unsupported")
+            // java.management is for the garbage collector figures in the thread dump of a frozen UI (it is left out when missing).
+            modules("java.net.http", "jdk.unsupported", "java.management")
         }
     }
 }
