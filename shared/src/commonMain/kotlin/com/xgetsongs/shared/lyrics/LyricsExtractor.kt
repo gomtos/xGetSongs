@@ -7,8 +7,9 @@ package com.xgetsongs.shared.lyrics
  * The first heading line wins (a line of hashtags such as `#Lyrics #가사` is never a heading); the block that follows it
  * runs up to the first line that cannot be a lyric (a separator, a link, a copyright or hashtag line, the heading of
  * another section such as `[Rom]`) or to the end of the text. A line in parentheses, `(Follow me)`, is an echo line of the
- * song and never a heading. Anything that does not look like a lyrics block gives null: it is better to write no lyrics
- * than somebody's links.
+ * song, not a heading, unless it is exactly the name of another section: `(English)`, `(Translation)`, `(Romanized)`,
+ * `(Credits)` or their Korean counterparts. Anything that does not look like a lyrics block gives null: it is better to
+ * write no lyrics than somebody's links.
  *
  * Before anything else the zero-width characters (U+200B, U+200C, U+200D, U+2060, U+FEFF) are removed and the Hangul filler
  * (U+3164, a letter that draws nothing, often typed to fake a blank line) becomes a space, so that they cannot hide a
@@ -63,6 +64,15 @@ object LyricsExtractor {
 
     /** The pairs that enclose a section heading. Parentheses are not among them: `(Follow me)` is an echo line of the song. */
     private val BRACKETS = listOf('[' to ']', '【' to '】')
+
+    /**
+     * What is left of a line in parentheses (only letters and digits, lowercase) when it is the heading of another
+     * section. Exactly these and nothing else: `(English)` ends the block, `(English version part)` or `(Romantic)` is a
+     * lyric. Of the words in square brackets only these few are also written in parentheses.
+     */
+    private val PARENTHESISED_SECTION_HEADINGS = setOf(
+        "english", "englishtranslation", "translation", "romanized", "romanization", "번역", "해석", "영문", "로마자", "credit", "credits",
+    )
 
     /**
      * The lyrics found in [description] as plain text: the lines are joined with `\n`, trailing whitespace of every line
@@ -138,8 +148,12 @@ object LyricsExtractor {
         if (isHashtagLine(trimmed)) return true
         val key = key(trimmed)
         if (BOILERPLATE_PREFIXES.any { key.startsWith(it) }) return true
-        return isBracketed(trimmed) && (key in MARKERS || OTHER_SECTION_PREFIXES.any { key.startsWith(it) })
+        if (isBracketed(trimmed)) return key in MARKERS || OTHER_SECTION_PREFIXES.any { key.startsWith(it) }
+        return isParenthesised(trimmed) && key in PARENTHESISED_SECTION_HEADINGS
     }
+
+    /** The whole line is enclosed in one pair of `( )`. */
+    private fun isParenthesised(trimmed: String): Boolean = trimmed.length >= 2 && trimmed.first() == '(' && trimmed.last() == ')'
 
     /** The whole line is enclosed in one pair of `[ ]` or `【 】`. Song-structure tags such as `[Chorus]` are enclosed too, they just do not name another section. */
     private fun isBracketed(trimmed: String): Boolean =

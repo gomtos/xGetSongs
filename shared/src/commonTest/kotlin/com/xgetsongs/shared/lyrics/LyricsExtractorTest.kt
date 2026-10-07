@@ -233,15 +233,34 @@ class LyricsExtractorTest {
     }
 
     @Test
-    fun aLineInParenthesesIsNeverTheHeadingOfAnotherSection() {
-        // Echo and background lines look like these; only `[ ]` and `【 】` mark a section.
+    fun aLineInParenthesesStaysInTheLyricsUnlessItIsExactlyTheHeadingOfAnotherSection() {
+        // Echo and background lines look like these; only a handful of words in parentheses name a section.
         val echoes = listOf(
-            "(Follow me)", "(Romantic)", "(English)", "(Translation)", "(Credits)", "(Info)", "(Link my hands)", "(Rom)", "(Lyrics)",
-            "(가사)", "(번역)", "  (Staff)  ",
+            "(Follow me)", "(Romantic)", "(English version part)", "(English Ver.)", "(Info)", "(Link my hands)", "(Rom)",
+            "(Lyrics)", "(가사)", "  (Staff)  ", "(Credits to you)", "(Translated)", "(Roman)", "(영어)", "(번역가)", "(Ooh)",
         )
         val description = text("[Lyrics]", "Line one", *echoes.toTypedArray(), "Line two", "Line three", "=======", "Tail")
 
         assertEquals(text("Line one", *echoes.map { it.trimEnd() }.toTypedArray(), "Line two", "Line three"), LyricsExtractor.extract(description))
+    }
+
+    @Test
+    fun aLineInParenthesesThatIsExactlyTheHeadingOfAnotherSectionEndsTheBlock() {
+        val headings = listOf(
+            "(English)", "(English Translation)", "(Translation)", "(Romanized)", "(Romanization)", "(번역)", "(해석)", "(영문)",
+            "(로마자)", "(Credit)", "(Credits)", "( ENGLISH )", "  (English)  ", "(english translation)", "(English-Translation)", "(Roman-ized)",
+        )
+        for (heading in headings) {
+            assertEquals("Line one\nLine two\n\nLine three", LyricsExtractor.extract(withTerminator(heading)), "heading: [$heading]")
+        }
+    }
+
+    @Test
+    fun theHeadingsOfAnotherSectionInSquareBracketsAreUnchanged() {
+        // [ ] and 【 】 keep the broader rule: a heading that merely starts like one of the words ends the block.
+        for (heading in listOf("[English Ver.]", "[Rom]", "【Romanized】", "[Credits to you]", "[Info]", "[Follow us]")) {
+            assertEquals("Line one\nLine two\n\nLine three", LyricsExtractor.extract(withTerminator(heading)), "heading: [$heading]")
+        }
     }
 
     @Test
