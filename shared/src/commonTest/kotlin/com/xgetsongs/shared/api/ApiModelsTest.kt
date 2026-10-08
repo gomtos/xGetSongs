@@ -3,6 +3,7 @@ package com.xgetsongs.shared.api
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ApiModelsTest {
@@ -38,6 +39,54 @@ class ApiModelsTest {
         events.forEach { event ->
             val encoded = json.encodeToString(JobEvent.serializer(), event)
             assertTrue(encoded.contains("\"type\":\"${event.sseName}\""), encoded)
+        }
+    }
+
+    @Test
+    fun anItemDoneSurvivesARoundTripWithEachLyricsOutcomeAndWithNone() {
+        for (outcome in LyricsOutcome.entries + null) {
+            val event = JobEvent.ItemDone(4, "004 A - B.mp3", outcome)
+
+            assertEquals(event, roundTrip(event), "$outcome")
+            assertEquals(outcome, (roundTrip(event) as JobEvent.ItemDone).lyrics, "$outcome")
+        }
+    }
+
+    @Test
+    fun theLyricsOutcomeIsSentByItsName() {
+        val expectedNames = listOf("DESCRIPTION", "ONLINE", "NOT_FOUND", "SEARCH_OFF")
+        assertEquals(expectedNames, LyricsOutcome.entries.map { it.name })
+        for (name in expectedNames) {
+            val encoded = json.encodeToString(JobEvent.serializer(), JobEvent.ItemDone(1, "x.mp3", LyricsOutcome.valueOf(name)))
+
+            assertTrue(encoded.contains("\"lyrics\":\"$name\""), encoded)
+        }
+    }
+
+    @Test
+    fun anItemDoneWithoutTheLyricsFieldDecodesToNotKnown() {
+        val decoded = json.decodeFromString(JobEvent.serializer(), """{"type":"item-done","rank":2,"fileName":"002 A - B.mp3"}""")
+
+        assertEquals(JobEvent.ItemDone(2, "002 A - B.mp3", lyrics = null), decoded)
+        assertNull((decoded as JobEvent.ItemDone).lyrics)
+        assertNull(JobEvent.ItemDone(2, "002 A - B.mp3").lyrics, "the field defaults to not known")
+    }
+
+    @Test
+    fun anItemDoneWithAnExplicitNullLyricsFieldDecodesToNotKnown() {
+        val decoded = json.decodeFromString(JobEvent.serializer(), """{"type":"item-done","rank":2,"fileName":"x.mp3","lyrics":null}""")
+
+        assertEquals(JobEvent.ItemDone(2, "x.mp3", null), decoded)
+    }
+
+    @Test
+    fun theSseNameOfAnItemDoneStaysItemDoneWhateverTheOutcome() {
+        for (outcome in LyricsOutcome.entries + null) {
+            val event = JobEvent.ItemDone(1, "x.mp3", outcome)
+            val encoded = json.encodeToString(JobEvent.serializer(), event)
+
+            assertEquals("item-done", event.sseName, "$outcome")
+            assertTrue(encoded.contains("\"type\":\"item-done\""), encoded)
         }
     }
 

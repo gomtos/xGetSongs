@@ -30,6 +30,7 @@ import com.xgetsongs.engine.ytdlp.VideoMetadataSource
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.Stage
 import com.xgetsongs.shared.filename.FilenameFormatter
@@ -1079,6 +1080,266 @@ class DefaultDownloadServiceTest {
         assertFalse(downloader.prepare(item(1), "My List", true, searchLyricsOnline = false).searchLyricsOnline)
     }
 
+    // ---- lyrics: the outcome reported with every finished item ----
+
+    /** The events of a job over item 1 (a made-up description decides what the info file holds) with [provider] and the lookup [online]. */
+    private suspend fun TestScope.eventsWith(provider: LyricsProvider, infoJson: String?, online: Boolean): List<JobEvent> =
+        service(infoRunner(mutableListOf(), infoJson), lyrics = provider)
+            .start(request(item(1), searchLyricsOnline = online))
+            .collect()
+
+    private fun itemDone(events: List<JobEvent>) = events.filterIsInstance<JobEvent.ItemDone>().single()
+
+    /**
+     * Like [infoRunner]; [interceptor] may answer a command first (with an exit code, after writing to stderr) and returns
+     * null to leave the command to the usual handling.
+     */
+    private fun infoRunnerWith(infoJson: String?, interceptor: (List<String>, (String) -> Unit) -> Int?) =
+        FakeProcessRunner { command, _, onStderr ->
+            interceptor(command, onStderr) ?: run {
+                if (isFfmpegCommand(command)) {
+                    writeFakeTagged(command)
+                } else {
+                    writeFakeMp3(command)
+                    if (infoJson != null) writeFakeInfo(command, infoJson)
+                }
+                0
+            }
+        }
+
+    @Test
+    fun lyricsFromTheDescriptionAreReportedAsDescriptionAndTheProviderIsNotAsked() = runTest {
+        val provider = FakeLyricsProvider { onlineLyrics }
+
+        val events = eventsWith(provider, infoWithDescription(describedLyrics), online = true)
+
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION), itemDone(events))
+        assertEquals(emptyList(), provider.queries.toList())
+        assertEquals(JobSummary(1, 0, 0), done(events).summary)
+    }
+
+    @Test
+    fun lyricsFoundByTheProviderAreReportedAsOnline() = runTest {
+        val provider = FakeLyricsProvider { onlineLyrics }
+
+        val events = eventsWith(provider, infoWithDescription(descriptionWithoutLyrics), online = true)
+
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE), itemDone(events))
+        assertEquals(1, provider.queries.size)
+    }
+
+    @Test
+    fun aMissingOrCorruptInfoFileStillLetsTheLookupReportOnline() = runTest {
+        for (infoJson in listOf(null, """{"description":"[Lyrics]\nLine one""")) {
+            val events = eventsWith(FakeLyricsProvider { onlineLyrics }, infoJson, online = true)
+
+            assertEquals(LyricsOutcome.ONLINE, itemDone(events).lyrics, "$infoJson")
+            Files.deleteIfExists(outDir.resolve("001 A1 - T1.mp3"))
+        }
+    }
+
+    @Test
+    fun aProviderThatFindsNothingIsReportedAsNotFound() = runTest {
+        val provider = FakeLyricsProvider { null }
+
+        val events = eventsWith(provider, infoWithDescription(descriptionWithoutLyrics), online = true)
+
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.NOT_FOUND), itemDone(events))
+        assertEquals(1, provider.queries.size)
+    }
+
+    @Test
+    fun aBlankAnswerIsReportedAsNotFound() = runTest {
+        val events = eventsWith(FakeLyricsProvider { "  \n " }, infoWithDescription(descriptionWithoutLyrics), online = true)
+
+        assertEquals(LyricsOutcome.NOT_FOUND, itemDone(events).lyrics)
+    }
+
+    @Test
+    fun withTheLookupOnAndTheEnginesDefaultProviderTheOutcomeIsNotFound() = runTest {
+        val events = service(infoRunner(mutableListOf(), infoWithDescription(descriptionWithoutLyrics)))
+            .start(request(item(1), searchLyricsOnline = true))
+            .collect()
+
+        assertEquals(LyricsOutcome.NOT_FOUND, itemDone(events).lyrics, "a lookup that ran and found nothing is not 'search off'")
+    }
+
+    @Test
+    fun aProviderThatThrowsIsReportedAsNotFoundAndTheItemStillSucceeds() = runTest {
+        val failures = listOf(RuntimeException("boom"), IllegalStateException("bad state"), IOException("offline"), UnsupportedOperationException())
+        for (failure in failures) {
+            val events = eventsWith(FakeLyricsProvider { throw failure }, infoWithDescription(descriptionWithoutLyrics), online = true)
+
+            assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.NOT_FOUND), itemDone(events), "$failure")
+            assertEquals(JobSummary(1, 0, 0), done(events).summary, "$failure")
+            assertTrue(events.none { it is JobEvent.ItemFailed }, "$failure")
+            Files.deleteIfExists(outDir.resolve("001 A1 - T1.mp3"))
+        }
+    }
+
+    @Test
+    fun withTheLookupOffAndNoLyricsInTheDescriptionTheOutcomeIsSearchOff() = runTest {
+        val provider = FakeLyricsProvider { onlineLyrics }
+        val infos = listOf(infoWithDescription(descriptionWithoutLyrics), null, """{"id":"vid00000001"}""", """{"description":"[Lyrics]\nLine one""")
+        for (infoJson in infos) {
+            val events = eventsWith(provider, infoJson, online = false)
+
+            assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.SEARCH_OFF), itemDone(events), "$infoJson")
+            Files.deleteIfExists(outDir.resolve("001 A1 - T1.mp3"))
+        }
+        assertEquals(emptyList(), provider.queries.toList(), "with the lookup off nobody is asked")
+    }
+
+    @Test
+    fun withTheLookupOffButLyricsInTheDescriptionTheOutcomeIsDescription() = runTest {
+        val provider = FakeLyricsProvider { onlineLyrics }
+
+        val events = eventsWith(provider, infoWithDescription(describedLyrics), online = false)
+
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION), itemDone(events))
+        assertEquals(emptyList(), provider.queries.toList())
+    }
+
+    @Test
+    fun theRequestsOptionIsOffByDefaultSoTheOutcomeIsSearchOff() = runTest {
+        val events = service(infoRunner(mutableListOf(), infoWithDescription(descriptionWithoutLyrics)), lyrics = FakeLyricsProvider { onlineLyrics })
+            .start(DownloadRequest(listOf(item(1)), LocalFolderSink(outDir), overwrite = false, concurrency = 1))
+            .collect()
+
+        assertEquals(LyricsOutcome.SEARCH_OFF, itemDone(events).lyrics)
+    }
+
+    @Test
+    fun everyItemOfAJobGetsItsOwnOutcome() = runTest {
+        val provider = FakeLyricsProvider { query -> if (query.title == "T1") null else onlineLyrics }
+
+        val events = service(infoRunner(mutableListOf(), infoWithDescription(descriptionWithoutLyrics)), lyrics = provider)
+            .start(request(item(1), item(2), searchLyricsOnline = true))
+            .collect()
+
+        assertEquals(
+            mapOf(1 to LyricsOutcome.NOT_FOUND, 2 to LyricsOutcome.ONLINE),
+            events.filterIsInstance<JobEvent.ItemDone>().associate { it.rank to it.lyrics },
+        )
+    }
+
+    @Test
+    fun aRetriedItemReportsTheOutcomeOfTheAttemptThatSucceeded() = runTest {
+        val provider = FakeLyricsProvider { onlineLyrics }
+        val calls = AtomicInteger()
+        val flaky = infoRunnerWith(infoWithDescription(descriptionWithoutLyrics)) { command, onStderr ->
+            if (!isFfmpegCommand(command) && calls.incrementAndGet() == 1) {
+                onStderr("ERROR: unable to download video data: HTTP Error 503: Service Unavailable")
+                1
+            } else {
+                null
+            }
+        }
+
+        val events = service(flaky, lyrics = provider).start(request(item(1), searchLyricsOnline = true)).collect()
+
+        assertEquals(2, flaky.ytDlpCommands.size)
+        assertEquals(1, provider.queries.size, "the failed attempt looked nothing up")
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE), itemDone(events))
+    }
+
+    @Test
+    fun aTaggingFailureFailsTheItemAndReportsNoOutcome() = runTest {
+        // Lyrics are in the description, so a finished item would say DESCRIPTION: a failed one must say nothing.
+        val runner = infoRunnerWith(infoWithDescription(describedLyrics)) { command, onStderr ->
+            if (isFfmpegCommand(command) && command.any { it.contains("vid00000001") }) {
+                onStderr("Error while writing the tag")
+                1
+            } else {
+                null
+            }
+        }
+
+        val events = service(runner).start(request(item(1), item(2))).collect()
+
+        assertEquals(
+            listOf(JobEvent.ItemFailed(1, "ID3 태그를 쓰지 못했습니다: Error while writing the tag")),
+            events.filterIsInstance<JobEvent.ItemFailed>(),
+        )
+        assertEquals(
+            listOf(JobEvent.ItemDone(2, "002 A2 - T2.mp3", LyricsOutcome.DESCRIPTION)),
+            events.filterIsInstance<JobEvent.ItemDone>(),
+            "no item-done at all for the item whose tag could not be written",
+        )
+        assertEquals(JobSummary(1, 0, 1), done(events).summary)
+    }
+
+    @Test
+    fun aFailureWhileAddingTheLyricsFrameFailsTheItemAndReportsNoOutcome() = runTest {
+        // ffmpeg "succeeds" but leaves a tag of another version, which the engine does not extend with its USLT frame.
+        val runner = FakeProcessRunner { command, _, _ ->
+            if (isFfmpegCommand(command)) {
+                Files.write(Path.of(command.last()), "ID3".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(4, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
+            } else {
+                writeFakeMp3(command)
+                writeFakeInfo(command, infoWithDescription(describedLyrics))
+            }
+            0
+        }
+
+        val events = service(runner).start(request(item(1))).collect()
+
+        val failed = events.filterIsInstance<JobEvent.ItemFailed>().single()
+        assertTrue(failed.message.startsWith("ID3 태그를 쓰지 못했습니다"), failed.message)
+        assertTrue(events.none { it is JobEvent.ItemDone }, events.toString())
+        assertFalse(Files.exists(outDir.resolve("001 A1 - T1.mp3")), "an untagged file must not reach the sink")
+        assertEquals(JobSummary(0, 0, 1), done(events).summary)
+    }
+
+    @Test
+    fun anExistingFileIsSkippedWithoutAnOutcomeAndWithoutALookup() = runTest {
+        Files.createDirectories(outDir)
+        Files.writeString(outDir.resolve("001 A1 - T1.mp3"), "old")
+        val provider = FakeLyricsProvider { onlineLyrics }
+
+        val events = service(infoRunner(mutableListOf(), infoWithDescription(describedLyrics)), lyrics = provider)
+            .start(request(item(1), searchLyricsOnline = true))
+            .collect()
+
+        assertEquals(listOf(JobEvent.ItemSkipped(1, "이미 존재")), events.filterIsInstance<JobEvent.ItemSkipped>())
+        assertTrue(events.none { it is JobEvent.ItemDone }, events.toString())
+        assertEquals(emptyList(), provider.queries.toList())
+        assertEquals("old", Files.readString(outDir.resolve("001 A1 - T1.mp3")))
+    }
+
+    @Test
+    fun aFailedDownloadReportsNoOutcome() = runTest {
+        val events = service(failingWith("ERROR: something odd"), lyrics = FakeLyricsProvider { onlineLyrics })
+            .start(request(item(1), searchLyricsOnline = true))
+            .collect()
+
+        assertTrue(events.none { it is JobEvent.ItemDone }, events.toString())
+        assertEquals(1, events.filterIsInstance<JobEvent.ItemFailed>().size)
+    }
+
+    private class DownloaderCase(val answer: String?, val infoJson: String, val online: Boolean, val expected: LyricsOutcome)
+
+    @Test
+    fun theDownloaderReturnsTheOutcomeWithTheFile() = runTest {
+        val cases = listOf(
+            DownloaderCase(onlineLyrics, infoWithDescription(describedLyrics), online = true, expected = LyricsOutcome.DESCRIPTION),
+            DownloaderCase(onlineLyrics, infoWithDescription(descriptionWithoutLyrics), online = true, expected = LyricsOutcome.ONLINE),
+            DownloaderCase(null, infoWithDescription(descriptionWithoutLyrics), online = true, expected = LyricsOutcome.NOT_FOUND),
+            DownloaderCase(onlineLyrics, infoWithDescription(descriptionWithoutLyrics), online = false, expected = LyricsOutcome.SEARCH_OFF),
+        )
+        for ((index, case) in cases.withIndex()) {
+            val provider = FakeLyricsProvider { case.answer }
+            val downloader = ItemDownloader(infoRunner(mutableListOf(), case.infoJson), toolsOf(), VideoMetadataSource { null }, provider)
+            val workDir = Files.createDirectories(tempRoot.resolve("direct-$index"))
+
+            val result = downloader.download(downloader.prepare(item(1), searchLyricsOnline = case.online), workDir) { }
+
+            val downloaded = result as DownloadResult.Downloaded
+            assertEquals(case.expected, downloaded.lyrics, "case $index")
+            assertTrue(Files.isRegularFile(downloaded.file), "case $index")
+        }
+    }
+
     // ---- file names without the rank ----
 
     private fun filesIn(dir: Path): List<String> =
@@ -1109,7 +1370,7 @@ class DefaultDownloadServiceTest {
         assertEquals(listOf("exists:$name", "put:$name"), recorded)
         assertEquals(listOf(name), filesIn(outDir))
         assertEquals(JobEvent.ItemStarted(5, "vid00000005", name), events.filterIsInstance<JobEvent.ItemStarted>().single())
-        assertEquals(JobEvent.ItemDone(5, name), events.filterIsInstance<JobEvent.ItemDone>().single())
+        assertEquals(JobEvent.ItemDone(5, name, LyricsOutcome.SEARCH_OFF), events.filterIsInstance<JobEvent.ItemDone>().single())
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
         val lines = texts.single().lines()
         assertTrue("track=5" in lines, "the track number is the rank whatever the file name says: ${texts.single()}")
@@ -1156,7 +1417,7 @@ class DefaultDownloadServiceTest {
         val events = service(runner).start(request(firstTwin, secondTwin, concurrency = 1, includeRank = false)).collect()
 
         assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
-        assertEquals(listOf(JobEvent.ItemDone(1, "Same - Song.mp3")), events.filterIsInstance<JobEvent.ItemDone>())
+        assertEquals(listOf(JobEvent.ItemDone(1, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF)), events.filterIsInstance<JobEvent.ItemDone>())
         assertEquals(listOf(JobEvent.ItemSkipped(2, "이미 존재")), events.filterIsInstance<JobEvent.ItemSkipped>())
         assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 1, 0)), done(events))
@@ -1188,7 +1449,7 @@ class DefaultDownloadServiceTest {
         assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
         assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")))
         assertEquals(
-            listOf(JobEvent.ItemDone(1, "Same - Song.mp3"), JobEvent.ItemDone(2, "Same - Song.mp3")),
+            listOf(JobEvent.ItemDone(1, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF), JobEvent.ItemDone(2, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF)),
             events.filterIsInstance<JobEvent.ItemDone>().sortedBy { it.rank },
             events.toString(),
         )
@@ -1209,7 +1470,7 @@ class DefaultDownloadServiceTest {
         assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
         assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")))
         assertEquals(
-            listOf(JobEvent.ItemDone(1, "Same - Song.mp3"), JobEvent.ItemDone(2, "Same - Song.mp3")),
+            listOf(JobEvent.ItemDone(1, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF), JobEvent.ItemDone(2, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF)),
             events.filterIsInstance<JobEvent.ItemDone>().sortedBy { it.rank },
             events.toString(),
         )

@@ -91,6 +91,25 @@ enum class JobStatus { COMPLETED, CANCELLED, FAILED }
 @Serializable
 data class JobSummary(val succeeded: Int, val skipped: Int, val failed: Int)
 
+/**
+ * What a finished file got as lyrics, or why it has none. It describes what was written into the file's tag: the engine
+ * reports it only after the tag was written successfully.
+ */
+@Serializable
+enum class LyricsOutcome {
+    /** The lyrics section of the video description. */
+    DESCRIPTION,
+
+    /** Not in the description; the internet lookup (lrclib.net) found them. */
+    ONLINE,
+
+    /** The description had none and the lookup ran, or failed, and found nothing: the file has no lyrics. */
+    NOT_FOUND,
+
+    /** The description had none and the lookup was switched off for the job: the file has no lyrics. */
+    SEARCH_OFF,
+}
+
 @Serializable
 sealed interface JobEvent {
     @Serializable
@@ -103,7 +122,12 @@ sealed interface JobEvent {
 
     @Serializable
     @SerialName("item-done")
-    data class ItemDone(val rank: Int, val fileName: String) : JobEvent
+    data class ItemDone(
+        val rank: Int,
+        val fileName: String,
+        /** Null when not known: an event from a server that does not report it. */
+        val lyrics: LyricsOutcome? = null,
+    ) : JobEvent
 
     @Serializable
     @SerialName("item-skipped")

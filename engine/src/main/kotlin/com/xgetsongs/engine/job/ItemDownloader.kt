@@ -16,6 +16,7 @@ import com.xgetsongs.engine.ytdlp.VideoInfoFile
 import com.xgetsongs.engine.ytdlp.VideoMetadataSource
 import com.xgetsongs.engine.ytdlp.YtDlpCommands
 import com.xgetsongs.shared.api.JobEvent
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.Stage
 import com.xgetsongs.shared.filename.FilenameFormatter
@@ -42,8 +43,11 @@ data class PreparedItem(
 )
 
 sealed interface DownloadResult {
-    /** The finished mp3, still inside the job's work directory. */
-    data class Downloaded(val file: Path) : DownloadResult
+    /**
+     * The finished mp3, still inside the job's work directory. [lyrics] says what the file got as lyrics, or why it got
+     * none: it describes what the tag step wrote, so it exists only for a file whose tags were written.
+     */
+    data class Downloaded(val file: Path, val lyrics: LyricsOutcome) : DownloadResult
 
     data class Failed(val failure: Failure) : DownloadResult
 }
@@ -94,7 +98,9 @@ class ItemDownloader(
      * one, else (when [PreparedItem.searchLyricsOnline] is set) what the lyrics provider finds for the artist, title, tag
      * album and length of the video, else nothing: with no lyrics from either source no lyrics frame is written. A
      * missing or broken info file means no own album, no description lyrics and no length, and never fails the item; a
-     * lookup that fails is no lyrics. [emit] receives throttled [JobEvent.Progress] events.
+     * lookup that fails is no lyrics. The [DownloadResult.Downloaded.lyrics] of the result tells which of these happened;
+     * it is reported only once the tags are written, so a tag failure is a failure with no outcome. [emit] receives
+     * throttled [JobEvent.Progress] events.
      */
     suspend fun download(prepared: PreparedItem, workDir: Path, emit: (JobEvent) -> Unit): DownloadResult {
         val paths = tools.current()
@@ -131,6 +137,8 @@ class ItemDownloader(
         val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
         val info = VideoInfoFile.read(workDir.resolve("$videoId.info.json"))
         val album = info.album ?: prepared.album
+        val fromDescription = LyricsExtractor.extract(info.description)
+        val found = if (fromDescription == null) lookUpLyrics(prepared, album, info.duration) else null
         val tags = TrackTags(
             title = prepared.track,
             artist = prepared.artist,
@@ -138,10 +146,22 @@ class ItemDownloader(
             albumArtist = prepared.artist,
             trackNumber = rank,
             comment = ParsedInput.Video(videoId).canonicalUrl,
-            lyrics = LyricsExtractor.extract(info.description) ?: lookUpLyrics(prepared, album, info.duration),
+            lyrics = fromDescription ?: found,
         )
         tagger.tag(file, cover, tags)?.let { return DownloadResult.Failed(it) }
-        return DownloadResult.Downloaded(file)
+        return DownloadResult.Downloaded(file, lyricsOutcome(fromDescription, found, prepared.searchLyricsOnline))
+    }
+
+    /**
+     * What [Id3Tagger] wrote as lyrics: the description's, else the lookup's, else nothing, which is "off" when the
+     * lookup was not allowed and "not found" when it ran (or failed) and gave nothing. Both texts are non-blank when
+     * present, so a non-null one is a real lyrics frame.
+     */
+    private fun lyricsOutcome(fromDescription: String?, found: String?, lookupAllowed: Boolean): LyricsOutcome = when {
+        fromDescription != null -> LyricsOutcome.DESCRIPTION
+        found != null -> LyricsOutcome.ONLINE
+        !lookupAllowed -> LyricsOutcome.SEARCH_OFF
+        else -> LyricsOutcome.NOT_FOUND
     }
 
     /**

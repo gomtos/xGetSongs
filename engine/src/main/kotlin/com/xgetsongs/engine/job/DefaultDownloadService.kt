@@ -130,7 +130,7 @@ class DefaultDownloadService(
                             skip(item, ALREADY_EXISTS, events, counters)
                             return
                         }
-                        events.trySend(JobEvent.ItemDone(item.rank, prepared.fileName))
+                        events.trySend(JobEvent.ItemDone(item.rank, prepared.fileName, result.lyrics))
                         counters.succeeded.incrementAndGet()
                         return
                     }
