@@ -77,8 +77,9 @@ javafx = "21.0.12"
 
 ```toml
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
-javafx-web = { module = "org.openjfx:javafx-web", version.ref = "javafx" }
 ```
+
+(JavaFX는 라이브러리 항목 없이 버전 `javafx`만 둔다. Task 6에서 빌드 스크립트가 분류자를 붙여 직접 선언한다.)
 
 `engine/build.gradle.kts`의 `dependencies`에서 `implementation(libs.kotlinx.serialization.json)` 다음 줄에 추가한다.
 
@@ -1337,20 +1338,23 @@ JavaFX가 필요한 첫 Task다. 이 클래스는 FX 스레드와 네이티브 �
 
 - [ ] **Step 1: 의존성 추가**
 
-`engine/build.gradle.kts`의 `implementation(libs.jsoup)` 다음 줄에 추가한다.
+Gradle은 이 구성에서 JavaFX의 Windows 빌드를 스스로 고르지 못하고 클래스가 없는 빈 jar(`javafx-web-21.0.12.jar`)를 가져온다(실제로 겪었다). 그리고 `javafx-web`이 필요로 하는 모듈들도 분류자 없이 온다. 그래서 5개 모듈을 모두 `win` 분류자로 선언한다. `engine/build.gradle.kts`의 `implementation(libs.jsoup)` 다음에 추가한다.
 
 ```kotlin
-    implementation(libs.javafx.web)
+    // The hidden web view of the Google lyrics lookup. Gradle does not pick the Windows build of JavaFX by itself here
+    // (it would take the empty, platform-less jars), and the modules that javafx-web needs come without it too, so all
+    // five are named with the `win` classifier. The app is Windows only.
+    val javafxVersion = libs.versions.javafx.get()
+    for (module in listOf("base", "graphics", "controls", "media", "web")) {
+        implementation("org.openjfx:javafx-$module:$javafxVersion:win")
+    }
 ```
 
-- [ ] **Step 2: Windows용 네이티브가 해석되는지 확인**
+- [ ] **Step 2: Windows용 jar가 받아지는지 확인**
 
-Run: `.\gradlew.bat --no-daemon --console=plain :engine:dependencies --configuration runtimeClasspath`
-Expected: 출력에 `org.openjfx:javafx-web:21.0.12`, `javafx-controls`, `javafx-graphics`, `javafx-base`, `javafx-media`가 `21.0.12`로 보인다. 그다음 실제 jar에 `win` 네이티브가 들어오는지 확인한다.
-
-Run: `.\gradlew.bat --no-daemon --console=plain :engine:build -x test` 후 PowerShell에서
-`(Get-ChildItem -Recurse "$env:USERPROFILE\.gradle\caches\modules-2\files-2.1\org.openjfx" -Filter "javafx-web-21.0.12*.jar").Name`
-Expected: `javafx-web-21.0.12-win.jar`가 보인다. **`-win` 없이 `javafx-web-21.0.12.jar`만 보이면** Gradle이 OS 변형을 고르지 못한 것이므로, `libs.versions.toml`의 `javafx-web` 줄을 `{ module = "org.openjfx:javafx-web", version.ref = "javafx" }` 대신 모듈 표기 뒤에 분류자를 붙이는 방식으로 바꾼다: `engine/build.gradle.kts`에서 `implementation("org.openjfx:javafx-web:${libs.versions.javafx.get()}:win")` 한 줄로 대체하고 다시 확인한다.
+Run: `.\gradlew.bat --no-daemon --console=plain :engine:compileKotlin` (Step 3 뒤에)
+그다음 PowerShell에서 `(Get-ChildItem -Recurse "$env:USERPROFILE\.gradle\caches\modules-2\files-2.1\org.openjfx" -Filter "*21.0.12*win.jar").Name`
+Expected: `javafx-base`, `javafx-controls`, `javafx-graphics`, `javafx-media`, `javafx-web`의 `-21.0.12-win.jar` 다섯 개.
 
 - [ ] **Step 3: 구현**
 
@@ -1504,7 +1508,7 @@ internal class FxWebViewBrowser(
 - [ ] **Step 4: 컴파일 확인**
 
 Run: `.\gradlew.bat --no-daemon --console=plain :engine:compileKotlin`
-Expected: `BUILD SUCCESSFUL`. 실패하면 오류의 JavaFX 심볼(`Platform`, `WebEngine`)이 컴파일 클래스패스에 없는 것이므로 Step 2의 분류자 방식으로 바꾸거나 `javafx-graphics`, `javafx-base`를 `implementation`에 같이 둔다.
+Expected: `BUILD SUCCESSFUL`. 실패하면 오류의 JavaFX 심볼(`Platform`, `WebEngine`)이 컴파일 클래스패스에 없는 것이므로 Step 1의 분류자 선언(5개 모듈, `win`)이 빠졌는지 본다.
 
 - [ ] **Step 5: 기존 단위 테스트가 그대로인지 확인**
 

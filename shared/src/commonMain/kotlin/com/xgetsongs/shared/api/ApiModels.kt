@@ -100,7 +100,7 @@ enum class LyricsOutcome {
     /** The lyrics section of the video description. */
     DESCRIPTION,
 
-    /** Not in the description; the internet lookup (lrclib.net) found them. */
+    /** Not in the description; the internet lookup (lrclib.net, or Google's lyrics card) found them. */
     ONLINE,
 
     /** The description had none and the lookup ran, or failed, and found nothing: the file has no lyrics. */
