@@ -13,6 +13,7 @@ import com.xgetsongs.shared.api.JobOptions
 import com.xgetsongs.shared.api.JobRequest
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolveRequest
 import com.xgetsongs.shared.api.ResolveResponse
 import com.xgetsongs.shared.api.Stage
@@ -421,7 +422,7 @@ class RoutesTest {
     private val finished = listOf(
         JobEvent.ItemStarted(1, "vid00000001", "001 A - One.mp3"),
         JobEvent.Progress(1, Stage.DOWNLOADING, 50.0),
-        JobEvent.ItemDone(1, "001 A - One.mp3"),
+        JobEvent.ItemDone(1, "001 A - One.mp3", LyricsOutcome.ONLINE),
         JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)),
     )
 
@@ -445,6 +446,8 @@ class RoutesTest {
         assertEquals(listOf("item-started", "progress", "item-done", "job-done"), received.map { it.first })
         val decoded = received.map { ApiJson.instance.decodeFromString(JobEvent.serializer(), it.second!!) }
         assertEquals(finished, decoded)
+        val itemDone = received.single { it.first == "item-done" }.second!!
+        assertTrue("\"lyrics\":\"ONLINE\"" in itemDone, "the lyrics outcome travels in the item-done data: $itemDone")
     }
 
     @Test

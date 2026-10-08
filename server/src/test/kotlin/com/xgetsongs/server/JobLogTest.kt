@@ -9,6 +9,7 @@ import com.xgetsongs.shared.api.JobOptions
 import com.xgetsongs.shared.api.JobRequest
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolveRequest
 import com.xgetsongs.shared.api.ResolveResponse
 import com.xgetsongs.shared.api.Stage
@@ -57,6 +58,26 @@ class JobLogTest {
 
         assertEquals(JobLogLevel.INFO, line.level)
         assertEquals("항목 완료: 순위 12", line.text)
+    }
+
+    @Test
+    fun aFinishedItemNamesItsLyricsOutcomeButNotItsFileName() {
+        for (outcome in LyricsOutcome.entries) {
+            val line = assertNotNull(JobLog.describe(JobEvent.ItemDone(3, "FILENAME-MARKER.mp3", outcome)))
+
+            assertEquals(JobLogLevel.INFO, line.level)
+            assertEquals("항목 완료: 순위 3, 가사 ${outcome.name}", line.text)
+            assertFalse("FILENAME-MARKER" in line.text, line.text)
+        }
+        assertEquals("항목 완료: 순위 3, 가사 ONLINE", JobLog.describe(JobEvent.ItemDone(3, "x.mp3", LyricsOutcome.ONLINE))?.text)
+    }
+
+    @Test
+    fun aFinishedItemWithoutAKnownOutcomeAddsNothingToTheLine() {
+        val line = assertNotNull(JobLog.describe(JobEvent.ItemDone(3, "FILENAME-MARKER.mp3", lyrics = null)))
+
+        assertEquals(JobLogLevel.INFO, line.level)
+        assertEquals("항목 완료: 순위 3", line.text)
     }
 
     @Test
@@ -221,7 +242,7 @@ class JobLogTest {
         fakes.downloads.queued = listOf(
             JobEvent.ItemStarted(1, "vid00000001", "TITLE-MARKER-ONE.mp3"),
             JobEvent.Progress(1, Stage.DOWNLOADING, 50.0),
-            JobEvent.ItemDone(1, "TITLE-MARKER-ONE.mp3"),
+            JobEvent.ItemDone(1, "TITLE-MARKER-ONE.mp3", LyricsOutcome.ONLINE),
             JobEvent.ItemFailed(3, "연결이 끊어졌습니다"),
             JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)),
         )
@@ -240,7 +261,7 @@ class JobLogTest {
             assertEquals(Level.INFO, start.level)
             assertTrue(start.formattedMessage.startsWith("$tag 작업 시작: id=$jobId, 종류=재생목록, 항목=2개, overwrite=true, includeRank=true, concurrency=3, searchLyricsOnline=true, outputDir=$outDir"), start.formattedMessage)
             assertEquals(Level.DEBUG, byText["$tag 항목 시작: 순위 1, 영상 vid00000001"])
-            assertEquals(Level.INFO, byText["$tag 항목 완료: 순위 1"])
+            assertEquals(Level.INFO, byText["$tag 항목 완료: 순위 1, 가사 ONLINE"])
             assertEquals(Level.WARN, byText["$tag 항목 실패: 순위 3, 사유: 연결이 끊어졌습니다"])
             assertEquals(Level.INFO, byText["$tag 작업 종료: 상태=COMPLETED, 성공 1, 건너뜀 0, 실패 1"])
             assertEquals(5, records.size, "start, started, done, failed, summary: no line for the progress event: ${records.map { it.formattedMessage }}")
@@ -268,7 +289,7 @@ class JobLogTest {
         val fakes = TestServices()
         fakes.downloads.queued = listOf(
             JobEvent.ItemStarted(1, "vid00000001", "TITLE-MARKER-ONE.mp3"),
-            JobEvent.ItemDone(1, "TITLE-MARKER-ONE.mp3"),
+            JobEvent.ItemDone(1, "TITLE-MARKER-ONE.mp3", LyricsOutcome.DESCRIPTION),
             JobEvent.ItemStarted(3, "vid00000003", "TITLE-MARKER-THREE.mp3"),
             JobEvent.ItemFailed(
                 3,

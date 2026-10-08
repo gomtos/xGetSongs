@@ -13,8 +13,9 @@ internal class JobLogLine(val level: JobLogLevel, val text: String) {
 
 /**
  * The words the job log is written in, kept apart from the logging itself so they can be tested. A line holds ranks, video
- * ids, statuses, counts, options and the reason text of a skipped or failed item, and nothing that names a song: no title,
- * no file name, no path, no lyrics. (The request's headers, and with them the token, never get here at all.)
+ * ids, statuses, counts, options, the lyrics outcome of a finished item (the name of the enum, such as `ONLINE`) and the
+ * reason text of a skipped or failed item, and nothing that names a song: no title, no file name, no path, no lyrics.
+ * (The request's headers, and with them the token, never get here at all.)
  */
 internal object JobLog {
     const val LOGGER_NAME = "com.xgetsongs.server.Jobs"
@@ -50,7 +51,7 @@ internal object JobLog {
     fun describe(event: JobEvent, fileNames: Map<Int, String> = emptyMap()): JobLogLine? = when (event) {
         is JobEvent.ItemStarted -> JobLogLine(JobLogLevel.DEBUG, "항목 시작: 순위 ${event.rank}, 영상 ${event.videoId}")
         is JobEvent.Progress -> null
-        is JobEvent.ItemDone -> JobLogLine(JobLogLevel.INFO, "항목 완료: 순위 ${event.rank}")
+        is JobEvent.ItemDone -> JobLogLine(JobLogLevel.INFO, finished(event))
         is JobEvent.ItemSkipped -> JobLogLine(JobLogLevel.INFO, "항목 건너뜀: 순위 ${event.rank}, 사유: ${reason(event.reason, event.rank, fileNames)}")
         is JobEvent.ItemFailed -> JobLogLine(JobLogLevel.WARN, "항목 실패: 순위 ${event.rank}, 사유: ${reason(event.message, event.rank, fileNames)}")
         is JobEvent.JobDone -> JobLogLine(
@@ -58,6 +59,10 @@ internal object JobLog {
             "작업 종료: 상태=${event.status}, 성공 ${event.summary.succeeded}, 건너뜀 ${event.summary.skipped}, 실패 ${event.summary.failed}",
         )
     }
+
+    /** The rank, and the name of the lyrics outcome when the event has one (`ONLINE`, not the lyrics and not the file name). */
+    private fun finished(event: JobEvent.ItemDone): String =
+        "항목 완료: 순위 ${event.rank}" + (event.lyrics?.let { ", 가사 ${it.name}" } ?: "")
 
     // Redacted before it is cut, so no part of a path survives the cut; and before the line breaks go, which end a path.
     private fun reason(text: String, rank: Int, fileNames: Map<Int, String>): String =

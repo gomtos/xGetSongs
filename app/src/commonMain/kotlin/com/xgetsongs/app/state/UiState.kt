@@ -2,6 +2,7 @@ package com.xgetsongs.app.state
 
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolveResponse
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.ToolsStatus
@@ -15,7 +16,9 @@ sealed interface ItemStatus {
 
     data class Downloading(val percent: Double?) : ItemStatus
     data object Converting : ItemStatus
-    data object Done : ItemStatus
+
+    /** [lyrics] is what the finished file got as lyrics (or why it got none); null when the server did not say. */
+    data class Done(val lyrics: LyricsOutcome? = null) : ItemStatus
     data class Skipped(val reason: String) : ItemStatus
     data class Failed(val message: String) : ItemStatus
 }

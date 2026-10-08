@@ -391,7 +391,8 @@ class AppStateHolder(
                 },
             )
         }
-        is JobEvent.ItemDone -> state.updateRow(event.rank) { it.copy(fileName = event.fileName, status = ItemStatus.Done) }
+        is JobEvent.ItemDone ->
+            state.updateRow(event.rank) { it.copy(fileName = event.fileName, status = ItemStatus.Done(event.lyrics)) }
         is JobEvent.ItemSkipped -> state.updateRow(event.rank) { it.copy(status = ItemStatus.Skipped(event.reason)) }
         is JobEvent.ItemFailed -> state.updateRow(event.rank) { it.copy(status = ItemStatus.Failed(event.message)) }
         is JobEvent.JobDone -> state.copy(

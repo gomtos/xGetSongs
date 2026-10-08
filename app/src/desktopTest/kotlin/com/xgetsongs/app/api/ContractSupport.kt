@@ -14,6 +14,7 @@ import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolveResponse
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.ToolInfo
@@ -37,7 +38,7 @@ class FakeEngine {
 
     val finishedEvents = listOf(
         JobEvent.ItemStarted(1, "vid00000001", "001 A - One.mp3"),
-        JobEvent.ItemDone(1, "001 A - One.mp3"),
+        JobEvent.ItemDone(1, "001 A - One.mp3", LyricsOutcome.ONLINE),
         JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)),
     )
 

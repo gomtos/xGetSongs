@@ -9,6 +9,7 @@ import com.xgetsongs.app.settings.UserSettings
 import com.xgetsongs.shared.api.JobEvent
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.Stage
 import com.xgetsongs.shared.input.RejectReason
@@ -809,12 +810,138 @@ class AppStateHolderTest {
         runCurrent()
 
         val state = holder.state.value
-        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals(ItemStatus.Done(null), holder.row(1).status, "an event without an outcome leaves it not known")
         assertEquals(ItemStatus.Failed("boom"), holder.row(3).status)
         assertEquals(Phase.FINISHED, state.phase)
         assertEquals(JobSummary(1, 0, 1), state.summary)
         assertEquals(JobStatus.COMPLETED, state.jobStatus)
         assertEquals(listOf(3), state.failedRanks)
+    }
+
+    // ---- the lyrics outcome of a finished row ----
+
+    @Test
+    fun aFinishedRowShowsTheLyricsOutcomeOfItsEventAndTheFinalFileName() = runTest {
+        for (outcome in LyricsOutcome.entries + null) {
+            val (api, holder) = resolved()
+            holder.startDownload()
+            runCurrent()
+            api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Preview - Name.mp3"))
+
+            api.eventChannel.trySend(JobEvent.ItemDone(1, "001 Real - Name.mp3", outcome))
+            runCurrent()
+
+            assertEquals(ItemStatus.Done(outcome), holder.row(1).status, "$outcome")
+            assertEquals("001 Real - Name.mp3", holder.row(1).fileName, "$outcome")
+        }
+    }
+
+    @Test
+    fun everyFinishedRowKeepsItsOwnOutcome() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.ItemDone(3, "003 A3 - T3.mp3", LyricsOutcome.SEARCH_OFF))
+        runCurrent()
+
+        assertEquals("완료 · 가사 ✓ 인터넷", statusLabel(holder.row(1).status))
+        assertEquals("완료 · 가사 없음 (검색 끔)", statusLabel(holder.row(3).status))
+        assertEquals(ItemStatus.Skipped("비공개 영상"), holder.row(2).status)
+    }
+
+    @Test
+    fun aNewRunReplacesTheOutcomeOfTheRowsItRuns() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+        assertEquals(ItemStatus.Done(LyricsOutcome.ONLINE), holder.row(1).status)
+
+        holder.startDownload()
+        runCurrent()
+        assertEquals(ItemStatus.Waiting, holder.row(1).status, "the old outcome is gone as soon as the new run starts")
+
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.NOT_FOUND))
+        runCurrent()
+
+        assertEquals(ItemStatus.Done(LyricsOutcome.NOT_FOUND), holder.row(1).status)
+    }
+
+    @Test
+    fun aRetryReplacesTheFailureWithTheOutcomeAndLeavesTheOtherOutcomesAlone() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION))
+        api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
+        api.eventChannel.close()
+        runCurrent()
+        holder.retryFailed()
+        runCurrent()
+
+        api.eventChannel.trySend(JobEvent.ItemDone(3, "003 A3 - T3.mp3", LyricsOutcome.NOT_FOUND))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+
+        assertEquals(ItemStatus.Done(LyricsOutcome.DESCRIPTION), holder.row(1).status)
+        assertEquals(ItemStatus.Done(LyricsOutcome.NOT_FOUND), holder.row(3).status)
+        assertEquals(emptyList(), holder.state.value.failedRanks)
+    }
+
+    @Test
+    fun anEndedOrBrokenJobKeepsTheOutcomeOfTheRowsThatFinished() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.ItemStarted(3, "vid00000003", "003 A3 - T3.mp3"))
+        runCurrent()
+
+        api.eventChannel.close() // no JobDone: the connection broke while row 3 was in flight
+        runCurrent()
+
+        assertEquals(ItemStatus.Done(LyricsOutcome.ONLINE), holder.row(1).status)
+        assertEquals(ItemStatus.Ready, holder.row(3).status)
+        assertEquals("서버와의 연결이 끊어졌습니다.", holder.state.value.error)
+    }
+
+    @Test
+    fun aCancelledJobKeepsTheOutcomeOfTheRowsThatFinished() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.SEARCH_OFF))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.CANCELLED, JobSummary(1, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+
+        assertEquals(ItemStatus.Done(LyricsOutcome.SEARCH_OFF), holder.row(1).status)
+        assertEquals(ItemStatus.Ready, holder.row(3).status)
+    }
+
+    @Test
+    fun resetClearsTheFinishedRowsWithTheirOutcomes() = runTest {
+        val (api, holder) = resolved()
+        holder.startDownload()
+        runCurrent()
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        api.eventChannel.close()
+        runCurrent()
+        assertEquals(ItemStatus.Done(LyricsOutcome.ONLINE), holder.row(1).status)
+
+        holder.reset()
+
+        assertTrue(holder.state.value.rows.isEmpty())
+        assertEquals(Phase.IDLE, holder.state.value.phase)
+        assertNull(holder.state.value.summary)
     }
 
     @Test
@@ -834,7 +961,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION))
         api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
         api.eventChannel.close()
@@ -845,7 +972,7 @@ class AppStateHolderTest {
 
         assertEquals(listOf(3), api.jobRequests.last().ranks)
         assertEquals(Phase.RUNNING, holder.state.value.phase)
-        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals(ItemStatus.Done(LyricsOutcome.DESCRIPTION), holder.row(1).status)
         assertEquals(ItemStatus.Waiting, holder.row(3).status)
     }
 
@@ -1051,7 +1178,7 @@ class AppStateHolderTest {
         val state = holder.state.value
         assertEquals(Phase.FINISHED, state.phase)
         assertEquals(ItemStatus.Failed("boom"), holder.row(3).status)
-        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals(ItemStatus.Done(null), holder.row(1).status)
         assertEquals(JobSummary(1, 0, 1), state.summary)
         assertEquals(JobStatus.COMPLETED, state.jobStatus)
         assertEquals(listOf(3), state.failedRanks)
@@ -1119,7 +1246,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
         api.eventChannel.close()
         runCurrent()
@@ -1131,7 +1258,7 @@ class AppStateHolderTest {
         val state = holder.state.value
         assertEquals(Phase.FINISHED, state.phase)
         assertEquals(JobSummary(1, 0, 0), state.summary)
-        assertEquals(ItemStatus.Done, holder.row(1).status)
+        assertEquals(ItemStatus.Done(LyricsOutcome.ONLINE), holder.row(1).status)
         assertEquals("x", state.error)
     }
 }

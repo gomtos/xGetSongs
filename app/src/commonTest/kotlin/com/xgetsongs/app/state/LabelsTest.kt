@@ -3,10 +3,12 @@ package com.xgetsongs.app.state
 import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.JobSummary
+import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolveResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class LabelsTest {
     @Test
@@ -16,9 +18,41 @@ class LabelsTest {
         assertEquals("다운로드 중…", statusLabel(ItemStatus.Downloading(null)))
         assertEquals("다운로드 42%", statusLabel(ItemStatus.Downloading(42.9)))
         assertEquals("mp3 변환 중…", statusLabel(ItemStatus.Converting))
-        assertEquals("완료", statusLabel(ItemStatus.Done))
+        assertEquals("완료", statusLabel(ItemStatus.Done()))
         assertEquals("건너뜀: 비공개 영상", statusLabel(ItemStatus.Skipped("비공개 영상")))
         assertEquals("실패: boom", statusLabel(ItemStatus.Failed("boom")))
+    }
+
+    @Test
+    fun aFinishedRowSaysWhereItsLyricsCameFromOrWhyItHasNone() {
+        assertEquals("완료", statusLabel(ItemStatus.Done(null)))
+        assertEquals("완료 · 가사 ✓ 설명란", statusLabel(ItemStatus.Done(LyricsOutcome.DESCRIPTION)))
+        assertEquals("완료 · 가사 ✓ 인터넷", statusLabel(ItemStatus.Done(LyricsOutcome.ONLINE)))
+        assertEquals("완료 · 가사 없음", statusLabel(ItemStatus.Done(LyricsOutcome.NOT_FOUND)))
+        assertEquals("완료 · 가사 없음 (검색 끔)", statusLabel(ItemStatus.Done(LyricsOutcome.SEARCH_OFF)))
+    }
+
+    @Test
+    fun aFinishedRowWithoutAKnownOutcomeIsTheSameAsTheDefault() {
+        assertEquals(ItemStatus.Done(null), ItemStatus.Done())
+        assertEquals(statusLabel(ItemStatus.Done()), statusLabel(ItemStatus.Done(null)))
+    }
+
+    @Test
+    fun everyLyricsOutcomeHasItsOwnLabelStartingWithDone() {
+        val labels = LyricsOutcome.entries.map { statusLabel(ItemStatus.Done(it)) }
+
+        assertEquals(labels.size, labels.toSet().size, "no two outcomes may look alike: $labels")
+        assertTrue(labels.all { it.startsWith("완료 · 가사 ") }, labels.toString())
+    }
+
+    @Test
+    fun theLongestFinishedLabelStillFitsOnOneLineOfTheStatusCell() {
+        // The status cell is 220.dp wide and its text is 12.sp (bodySmall). No character is wider than one em, so a label
+        // of at most 17 characters needs at most 17 * 12 = 204.dp: it never wraps, whatever the font.
+        val longest = (LyricsOutcome.entries.map { ItemStatus.Done(it) } + ItemStatus.Done(null)).maxOf { statusLabel(it).length }
+
+        assertTrue(longest * 12 <= 220, "the longest finished label has $longest characters")
     }
 
     @Test
