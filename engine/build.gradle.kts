@@ -11,6 +11,7 @@ dependencies {
     api(project(":shared"))
     api(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.jsoup)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
