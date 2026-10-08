@@ -2,7 +2,10 @@ package com.xgetsongs.server
 
 import com.xgetsongs.engine.job.DefaultDownloadService
 import com.xgetsongs.engine.job.ItemDownloader
+import com.xgetsongs.engine.lyrics.FallbackLyricsProvider
 import com.xgetsongs.engine.lyrics.LrclibLyricsProvider
+import com.xgetsongs.engine.lyrics.google.GoogleLyricsLog
+import com.xgetsongs.engine.lyrics.google.GoogleLyricsProvider
 import com.xgetsongs.engine.process.SystemProcessRunner
 import com.xgetsongs.engine.tools.DefaultToolManager
 import com.xgetsongs.engine.tools.ToolLocator
@@ -16,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
@@ -26,6 +30,15 @@ import java.util.Base64
 /** Where the app keeps its own tools (a yt-dlp it installed). */
 private fun binDirOf(appDataDir: Path): Path = appDataDir.resolve("bin")
 
+private val googleLyricsLogger = LoggerFactory.getLogger("com.xgetsongs.engine.lyrics.google")
+
+/** Hands the lines of the Google lookup to the app's log (the lines hold counts and result names only). */
+private val googleLyricsLog = object : GoogleLyricsLog {
+    override fun info(message: String) = googleLyricsLogger.info("{}", message)
+
+    override fun warn(message: String) = googleLyricsLogger.warn("{}", message)
+}
+
 /** Wires the real engine implementations. Leftover work files from a previous run are removed. */
 fun createServices(appDataDir: Path, scope: CoroutineScope): Services {
     val binDir = binDirOf(appDataDir)
@@ -35,8 +48,12 @@ fun createServices(appDataDir: Path, scope: CoroutineScope): Services {
     val runner = SystemProcessRunner()
     val locator = ToolLocator(appBinDir = binDir)
     val resolver = YtDlpResolver(runner, locator)
-    // Lyrics are looked up on lrclib.net, but only for the jobs whose options allow it (JobOptions.searchLyricsOnline).
-    val downloader = ItemDownloader(runner, locator, resolver, LrclibLyricsProvider())
+    // Lyrics are looked up on lrclib.net and then, for what it does not have, in Google's lyrics card (a web view that is
+    // never shown), but only for the jobs whose options allow it (JobOptions.searchLyricsOnline).
+    val googleLyrics = GoogleLyricsProvider(googleLyricsLog)
+    // The web view's runtime keeps the JVM alive until it is shut down, so it goes down with the server's scope.
+    scope.coroutineContext.job.invokeOnCompletion { googleLyrics.close() }
+    val downloader = ItemDownloader(runner, locator, resolver, FallbackLyricsProvider(LrclibLyricsProvider(), googleLyrics))
     return Services(
         resolver = resolver,
         downloads = DefaultDownloadService(downloader, workDir, scope),
