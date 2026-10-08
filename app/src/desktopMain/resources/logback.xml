@@ -6,12 +6,17 @@
 <configuration>
     <property name="LOG_DIR" value="${xgs.logDir:-${java.io.tmpdir}/xgetsongs-logs}"/>
 
-    <!-- The console shows INFO and above only; DEBUG lines go to the file alone. -->
+    <!--
+      The console shows INFO and above only; DEBUG lines go to the file alone. It writes in the encoding of System.out (the
+      stdout.encoding property of the JVM, which follows the code page of the console), or in UTF-8 when the JVM has none, so
+      that Korean text is not garbled on a cp949 console. The file is always UTF-8.
+    -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>INFO</level>
         </filter>
         <encoder>
+            <charset>${stdout.encoding:-UTF-8}</charset>
             <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n</pattern>
         </encoder>
     </appender>
@@ -36,8 +41,9 @@
     <logger name="io.ktor" level="INFO"/>
     <logger name="com.xgetsongs" level="DEBUG"/>
 
+    <!-- The file comes first: a console that blocks (a full pipe, a paused terminal) must not delay the write to the file. -->
     <root level="INFO">
-        <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
+        <appender-ref ref="CONSOLE"/>
     </root>
 </configuration>

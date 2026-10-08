@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 // The detector has no clock: every call says what time it is, so none of these tests waits for anything.
 class HangDetectorTest {
@@ -15,7 +16,8 @@ class HangDetectorTest {
         thresholdMs: Long = 5_000,
         repeatMs: Long = 30_000,
         maxTickGapMs: Long = 4_000,
-    ) = HangDetector(startMs, thresholdMs, repeatMs, maxTickGapMs)
+        maxRepeatMs: Long = 30 * 60_000,
+    ) = HangDetector(startMs, thresholdMs, repeatMs, maxTickGapMs, maxRepeatMs)
 
     /** Ticks once a second from [fromMs] to [toMs] (both included) and returns the events with the time they came at. */
     private fun HangDetector.tickEverySecond(fromMs: Long, toMs: Long): List<Pair<Long, HangEvent>> {
@@ -66,16 +68,92 @@ class HangDetectorTest {
 
     @Test
     fun aLastingHangIsReportedAgainOnlyAfterTheRepeatInterval() {
-        val events = detector().tickEverySecond(1_000, 70_000)
+        val events = detector().tickEverySecond(1_000, 100_000)
 
         assertEquals(
             listOf<Pair<Long, HangEvent>>(
                 6_000L to Hung(6_000, repeat = false),
-                36_000L to Hung(36_000, repeat = true),
-                66_000L to Hung(66_000, repeat = true),
+                36_000L to Hung(36_000, repeat = true), // 30 s after the first report
+                96_000L to Hung(96_000, repeat = true), // then 60 s
             ),
             events,
         )
+    }
+
+    private fun HangDetector.reportTimesUntil(toMs: Long, from: Long = 1_000): List<Long> = tickEverySecond(from, toMs).map { it.first }
+
+    @Test
+    fun theRepeatIntervalDoublesFromThirtySecondsUpToThirtyMinutes() {
+        val times = detector().reportTimesUntil(5 * 60 * 60 * 1_000L) // five hours
+
+        val gapsInSeconds = times.zipWithNext { a, b -> (b - a) / 1_000 }
+        assertEquals(6_000L, times.first(), "the first report")
+        assertEquals(listOf(30L, 60, 120, 240, 480, 960, 1_800, 1_800, 1_800, 1_800), gapsInSeconds.take(10))
+        assertTrue(gapsInSeconds.all { it <= 1_800 }, "never more than 30 minutes apart")
+    }
+
+    @Test
+    fun theLimitOfTheRepeatIntervalCanBeChosen() {
+        val times = detector(repeatMs = 10_000, maxRepeatMs = 25_000).reportTimesUntil(200_000)
+
+        assertEquals(listOf(10L, 20, 25, 25, 25), times.zipWithNext { a, b -> (b - a) / 1_000 }.take(5))
+    }
+
+    @Test
+    fun aRecoveryStartsTheRepeatIntervalOverAgain() {
+        val detector = detector()
+        val before = detector.reportTimesUntil(1_000_000) // well into the 480 s steps
+        assertTrue(before.size >= 6, before.toString())
+
+        detector.onUiBeat(1_000_500)
+        assertEquals(Recovered(1_000_500), detector.onTick(1_001_000))
+
+        // The new hang counts from the beat at 1000.5 s: reported at 1006 s, then 30 s later, then 60 s later.
+        assertEquals(listOf(1_006_000L, 1_036_000L, 1_096_000L), detector.reportTimesUntil(1_120_000, from = 1_002_000))
+    }
+
+    @Test
+    fun aGapThatDropsTheHangStartsTheRepeatIntervalOverAgain() {
+        val detector = detector()
+        detector.reportTimesUntil(100_000) // reports at 6, 36 and 96 s: the next gap would be 120 s
+        assertNull(detector.onTick(500_000)) // asleep: the hang is forgotten
+
+        val after = detector.tickEverySecond(501_000, 600_000).map { it.first }
+
+        assertEquals(listOf(506_000L, 536_000L, 596_000L), after)
+    }
+
+    @Test
+    fun aTickThatTookLongIsNotAGapOnceItsEndIsReported() {
+        val detector = detector()
+        assertEquals(listOf<Pair<Long, HangEvent>>(6_000L to Hung(6_000, repeat = false)), detector.tickEverySecond(1_000, 6_000))
+
+        detector.onTickFinished(40_000) // the dump of that tick took 34 s
+
+        assertEquals(Hung(41_000, repeat = true), detector.onTick(41_000), "the hang is still there: the repeat is due")
+        assertEquals(0, detector.gapsIgnored)
+    }
+
+    @Test
+    fun withoutTheEndOfTheSlowTickTheNextOneLooksLikeAGap() {
+        val detector = detector()
+        detector.tickEverySecond(1_000, 6_000)
+
+        assertNull(detector.onTick(41_000))
+        assertEquals(1, detector.gapsIgnored)
+    }
+
+    @Test
+    fun theEndOfATickMovesTheGapBaselineOnly() {
+        val detector = detector()
+        detector.tickEverySecond(1_000, 3_000)
+        detector.onUiBeat(3_000)
+
+        detector.onTickFinished(3_500)
+
+        assertNull(detector.onTick(7_000), "3.5 s after the end of the last tick: not a gap, and 4 s without a beat is fine")
+        assertEquals(0, detector.gapsIgnored)
+        assertEquals(Hung(6_000, repeat = false), detector.onTick(9_000), "the silence still counts from the last beat")
     }
 
     @Test
@@ -222,5 +300,6 @@ class HangDetectorTest {
         assertFailsWith<IllegalArgumentException> { detector(thresholdMs = 0) }
         assertFailsWith<IllegalArgumentException> { detector(repeatMs = 0) }
         assertFailsWith<IllegalArgumentException> { detector(maxTickGapMs = 0) }
+        assertFailsWith<IllegalArgumentException> { detector(repeatMs = 30_000, maxRepeatMs = 29_999) }
     }
 }

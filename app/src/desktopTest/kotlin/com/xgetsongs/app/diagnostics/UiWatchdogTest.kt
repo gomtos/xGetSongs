@@ -7,6 +7,7 @@ import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,6 +25,7 @@ class UiWatchdogTest {
     private var wallTime = LocalDateTime.of(2026, 10, 7, 21, 3, 11)
     private var uiAnswers = false
     private val queuedHeartbeats = mutableListOf<Runnable>()
+    private var posts = 0
     private val dumps = mutableListOf<String>()
 
     @AfterTest
@@ -44,14 +46,19 @@ class UiWatchdogTest {
     private fun watchdog(
         logDir: Path = dir,
         maxDumpFiles: Int = 20,
+        maxDumpFileBytes: Long = 5L * 1024 * 1024,
         dump: (Long, String) -> String = { silentMs, reason -> syntheticDump(silentMs, reason).also { dumps += it } },
     ) = UiWatchdog(
         logDir = logDir,
-        postToUi = { heartbeat -> if (uiAnswers) heartbeat.run() else queuedHeartbeats += heartbeat },
+        postToUi = { heartbeat ->
+            posts++
+            if (uiAnswers) heartbeat.run() else queuedHeartbeats += heartbeat
+        },
         dump = dump,
         clockMs = { now },
         wallClock = { wallTime },
         maxDumpFiles = maxDumpFiles,
+        maxDumpFileBytes = maxDumpFileBytes,
     )
 
     /** One second passes, then the watchdog thread's loop body runs; [count] times. */
@@ -90,7 +97,56 @@ class UiWatchdogTest {
         assertEquals(1, errors.size)
         assertTrue("UI 스레드가 6초 동안 응답하지 않음" in errors.single(), errors.single())
         assertTrue(dumps.single() in errors.single(), "the log record holds the dump too")
-        assertEquals(10, queuedHeartbeats.size, "every tick posts one heartbeat")
+        assertEquals(1, queuedHeartbeats.size, "only one heartbeat waits in the queue of the blocked UI thread")
+    }
+
+    @Test
+    fun aNewHeartbeatIsPostedOnlyWhenThePreviousOneHasRun() {
+        val watchdog = watchdog()
+
+        watchdog.ticks(10)
+        assertEquals(1, posts, "ten ticks, one heartbeat")
+
+        answerQueuedHeartbeats()
+        assertEquals(0, queuedHeartbeats.size)
+        watchdog.ticks(1)
+        assertEquals(2, posts, "the next tick posts again")
+        watchdog.ticks(5)
+        assertEquals(2, posts)
+    }
+
+    @Test
+    fun theBeatCountsFromTheTimeTheHeartbeatRunsNotFromTheTimeItWasPosted() {
+        val watchdog = watchdog()
+        watchdog.ticks(3) // the heartbeat is posted at 1 s and waits in the queue
+
+        now = 4_000
+        answerQueuedHeartbeats() // it runs at 4 s: that is the beat
+        watchdog.ticks(5) // 5 s to 9 s; the next heartbeat (posted at 5 s) is never run
+
+        assertEquals(0, dumps.size, "9 s after the post but only 5 s after the beat: not more than the threshold")
+        watchdog.ticks(1)
+        assertEquals(1, dumps.size, "10 s: 6 s since the beat")
+    }
+
+    @Test
+    fun aHeartbeatThatCouldNotBePostedIsNotLeftPendingForever() {
+        var failNext = true
+        val delivered = mutableListOf<Runnable>()
+        val watchdog = UiWatchdog(
+            logDir = dir,
+            postToUi = { heartbeat ->
+                if (failNext) throw IllegalStateException("no queue")
+                delivered += heartbeat
+            },
+            clockMs = { now },
+        )
+        watchdog.ticks(2) // both fail
+
+        failNext = false
+        watchdog.ticks(2)
+
+        assertEquals(1, delivered.size, "the post that works goes out, and the next waits for it to run")
     }
 
     @Test
@@ -289,5 +345,152 @@ class UiWatchdogTest {
         } finally {
             watchdog.stop()
         }
+    }
+
+    // ---- keeping going after anything ------------------------------------------------------
+
+    @Test
+    fun aDumpThatFailsWithAnErrorDoesNotStopTheLaterTicks() {
+        var attempts = 0
+        val watchdog = watchdog(dump = { _, _ -> attempts++; throw OutOfMemoryError("while building the dump") })
+
+        watchdog.ticks(8) // must not throw
+
+        assertEquals(1, attempts)
+        assertEquals(1, messages(Level.ERROR).size, "the hang itself is still logged")
+        assertTrue(messages(Level.WARN).any { "OutOfMemoryError" in it }, messages(Level.WARN).toString())
+        watchdog.ticks(30) // 38 s: the repeat is due at 36 s
+        assertEquals(2, attempts, "it went on ticking and tried again")
+    }
+
+    @Test
+    fun anErrorFromThePostIsSurvivedToo() {
+        val watchdog = UiWatchdog(logDir = dir, postToUi = { throw NoClassDefFoundError("java/awt/EventQueue") }, clockMs = { now })
+
+        watchdog.ticks(3) // must not throw
+
+        assertTrue(messages(Level.WARN).any { "NoClassDefFoundError" in it }, messages(Level.WARN).toString())
+    }
+
+    @Test
+    fun theThreadKeepsRunningAfterErrors() {
+        val calls = AtomicInteger()
+        val answered = CountDownLatch(3)
+        val watchdog = UiWatchdog(
+            logDir = dir,
+            postToUi = { heartbeat ->
+                if (calls.incrementAndGet() <= 3) throw OutOfMemoryError("simulated")
+                heartbeat.run()
+                answered.countDown()
+            },
+            intervalMs = 5,
+        )
+
+        watchdog.start()
+        try {
+            assertTrue(answered.await(30, TimeUnit.SECONDS), "it went on after the three errors")
+        } finally {
+            watchdog.stop()
+        }
+    }
+
+    // ---- a slow tick ------------------------------------------------------------------------
+
+    @Test
+    fun aSlowDumpDoesNotMakeTheNextTickAGapThatDropsTheHang() {
+        var calls = 0
+        val watchdog = watchdog(dump = { silentMs, reason ->
+            calls++
+            now += 30_000 // building and writing this dump takes half a minute
+            syntheticDump(silentMs, reason).also { dumps += it }
+        })
+
+        watchdog.ticks(6) // the hang is reported at 6 s; that tick ends at 36 s
+        assertEquals(1, calls)
+
+        watchdog.ticks(1) // 37 s: one second after the end of that tick, and the repeat is due
+
+        assertEquals(2, calls, "the hang is still known: no gap came between the ticks")
+        assertEquals(emptyList(), capture.at(Level.INFO), "no gap line")
+    }
+
+    // ---- backing off ------------------------------------------------------------------------
+
+    @Test
+    fun theRepeatsOfALongHangBackOff() {
+        val watchdog = watchdog()
+
+        watchdog.ticks(300)
+        assertEquals(4, dumps.size, "at 6, 36, 96 and 216 s")
+
+        watchdog.ticks(160) // 460 s: the next one was due at 456 s
+        assertEquals(5, dumps.size)
+    }
+
+    // ---- the size of the file ---------------------------------------------------------------
+
+    private val notice = "이후 덤프는 생략함(파일 크기 제한)"
+
+    /** A dump of exactly [bytes] bytes, whatever the clock says. */
+    private fun fixedDump(bytes: Int = 100) = "X".repeat(bytes - 1) + "\n"
+
+    private fun dumpText(file: String = "ui-hang-20261007-210311.txt") = Files.readString(dir.resolve(file))
+
+    @Test
+    fun theDumpFileStopsGrowingAtTheSizeLimitWithOneNoticeAndTheLogGetsOneLines() {
+        var calls = 0
+        val watchdog = watchdog(maxDumpFileBytes = 250, dump = { _, _ -> calls++; fixedDump() })
+
+        watchdog.ticks(500) // reports at 6, 36, 96, 216 and 456 s
+
+        assertEquals(fixedDump() + fixedDump() + notice + "\n", dumpText(), "two sections fit, the third would make 300 bytes")
+        assertEquals(3, calls, "once the file is full the dump is not even made")
+        val errors = messages(Level.ERROR)
+        assertEquals(5, errors.size)
+        assertTrue("계속" in errors[1] && "ui-hang-20261007-210311.txt" in errors[1], errors[1])
+        for (i in 2..4) {
+            assertTrue("크기 제한" in errors[i] && "ui-hang" !in errors[i] && "XXXX" !in errors[i], errors[i])
+        }
+        assertEquals(listOf("ui-hang-20261007-210311.txt"), dumpFiles())
+    }
+
+    @Test
+    fun theLimitIsInBytesNotCharacters() {
+        val korean = "가".repeat(30) + "\n" // 31 characters, 91 bytes
+        val watchdog = watchdog(maxDumpFileBytes = 150, dump = { _, _ -> korean })
+
+        watchdog.ticks(40) // reports at 6 s and 36 s
+
+        assertEquals(korean + notice + "\n", dumpText(), "a second section of 91 bytes would make 182")
+    }
+
+    @Test
+    fun aFirstDumpBiggerThanTheLimitIsStillWritten() {
+        val watchdog = watchdog(maxDumpFileBytes = 50, dump = { _, _ -> fixedDump() })
+
+        watchdog.ticks(7)
+        assertEquals(fixedDump(), dumpText(), "the first section is the main evidence: no limit applies to it")
+
+        watchdog.ticks(30) // the repeat at 36 s
+        assertEquals(fixedDump() + notice + "\n", dumpText())
+    }
+
+    @Test
+    fun aNewHangAfterARecoveryHasAFreshFileAndAFreshLimit() {
+        var calls = 0
+        val watchdog = watchdog(maxDumpFileBytes = 150, dump = { _, _ -> calls++; fixedDump() })
+        watchdog.ticks(40) // 6 s: written; 36 s: would make 200 bytes: notice
+        assertEquals(fixedDump() + notice + "\n", dumpText())
+
+        answerQueuedHeartbeats()
+        uiAnswers = true
+        watchdog.ticks(1) // recovered
+        uiAnswers = false
+        wallTime = LocalDateTime.of(2026, 10, 7, 21, 10, 0)
+        watchdog.ticks(8) // nobody answers: a new hang
+
+        assertEquals(3, calls)
+        assertEquals(fixedDump(), dumpText("ui-hang-20261007-211000.txt"), "its first section is written and has no notice")
+        assertEquals(fixedDump() + notice + "\n", dumpText(), "the first file is left as it was")
     }
 }

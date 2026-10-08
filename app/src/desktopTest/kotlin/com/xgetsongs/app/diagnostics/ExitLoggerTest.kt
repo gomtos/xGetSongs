@@ -22,7 +22,9 @@ class ExitLoggerTest {
     private fun logger(
         runningJobs: () -> Int = { 0 },
         uptime: () -> Duration = { 90.seconds },
-    ) = ExitLogger(runningJobs, uptime, heapMb = { 100L to 2_000L })
+        uncaughtSeen: () -> Boolean = { false },
+        onExit: (Boolean) -> Unit = {},
+    ) = ExitLogger(runningJobs, uptime, heapMb = { 100L to 2_000L }, uncaughtSeen = uncaughtSeen, onExit = onExit)
 
     // ---- describeExit ----------------------------------------------------------------------
 
@@ -33,9 +35,9 @@ class ExitLoggerTest {
         assertFalse(exit.warn)
         assertTrue("JVM 종료 시작" in exit.text, exit.text)
         assertTrue("사용자가 창을 닫음" in exit.text, exit.text)
-        assertTrue("진행 중인 작업 0개" in exit.text, exit.text)
+        assertTrue("등록된 작업 0개" in exit.text, exit.text)
         assertTrue("가동 3초" in exit.text, exit.text)
-        assertFalse("외부 종료 요청" in exit.text, exit.text)
+        assertFalse("창을 닫지 않은 종료" in exit.text, exit.text)
     }
 
     @Test
@@ -43,7 +45,7 @@ class ExitLoggerTest {
         val exit = describeExit(userRequested = true, runningJobs = 2, uptime = 61.seconds)
 
         assertFalse(exit.warn)
-        assertTrue("진행 중인 작업 2개" in exit.text, exit.text)
+        assertTrue("등록된 작업 2개" in exit.text, exit.text)
         assertTrue("가동 1분 1초" in exit.text, exit.text)
     }
 
@@ -53,9 +55,26 @@ class ExitLoggerTest {
 
         assertTrue(exit.warn)
         assertTrue("JVM 종료 시작" in exit.text, exit.text)
-        assertTrue("외부 종료 요청: 콘솔 종료, SIGTERM, 로그오프·시스템 종료 등" in exit.text, exit.text)
-        assertTrue("진행 중인 작업 1개" in exit.text, exit.text)
+        assertTrue("창을 닫지 않은 종료 (콘솔 종료, SIGTERM, 로그오프·시스템 종료, 또는 처리되지 않은 예외 뒤의 종료)" in exit.text, exit.text)
+        assertTrue("등록된 작업 1개" in exit.text, exit.text)
         assertFalse("사용자가 창을 닫음" in exit.text, exit.text)
+    }
+
+    @Test
+    fun anExitAfterAnUncaughtExceptionSaysSo() {
+        val exit = describeExit(userRequested = false, runningJobs = 0, uptime = 1.seconds, uncaughtBefore = true)
+
+        assertTrue(exit.warn)
+        assertTrue(exit.text.endsWith(" | 직전에 처리되지 않은 예외가 있었음"), exit.text)
+        assertFalse("직전에" in describeExit(userRequested = false, runningJobs = 0, uptime = 1.seconds).text)
+    }
+
+    @Test
+    fun aUserExitKeepsItsTextWhateverHappenedBefore() {
+        val clean = describeExit(userRequested = true, runningJobs = 1, uptime = 1.seconds)
+        val afterAnException = describeExit(userRequested = true, runningJobs = 1, uptime = 1.seconds, uncaughtBefore = true)
+
+        assertEquals(clean, afterAnException)
     }
 
     @Test
@@ -63,7 +82,7 @@ class ExitLoggerTest {
         for (userRequested in listOf(true, false)) {
             val exit = describeExit(userRequested, runningJobs = -1, uptime = 10.seconds)
 
-            assertTrue("진행 중인 작업 수를 알 수 없음" in exit.text, exit.text)
+            assertTrue("등록된 작업 수를 알 수 없음" in exit.text, exit.text)
             assertFalse("-1" in exit.text, exit.text)
         }
     }
@@ -94,7 +113,7 @@ class ExitLoggerTest {
         assertEquals(Level.INFO, record.level)
         assertTrue("JVM 종료 시작" in record.formattedMessage, record.formattedMessage)
         assertTrue("사용자가 창을 닫음" in record.formattedMessage, record.formattedMessage)
-        assertTrue("진행 중인 작업 3개" in record.formattedMessage, record.formattedMessage)
+        assertTrue("등록된 작업 3개" in record.formattedMessage, record.formattedMessage)
         assertTrue("가동 2분 5초" in record.formattedMessage, record.formattedMessage)
         assertTrue("힙 사용 100MB (최대 2000MB)" in record.formattedMessage, record.formattedMessage)
     }
@@ -107,8 +126,39 @@ class ExitLoggerTest {
 
         val record = capture.events.single()
         assertEquals(Level.WARN, record.level)
-        assertTrue("외부 종료 요청" in record.formattedMessage, record.formattedMessage)
-        assertTrue("진행 중인 작업 1개" in record.formattedMessage, record.formattedMessage)
+        assertTrue("창을 닫지 않은 종료" in record.formattedMessage, record.formattedMessage)
+        assertTrue("등록된 작업 1개" in record.formattedMessage, record.formattedMessage)
+    }
+
+    @Test
+    fun theHookMentionsAnUncaughtExceptionBeforeTheHeapFigure() {
+        val exitLogger = logger(uncaughtSeen = { true })
+
+        exitLogger.logExit()
+
+        val message = capture.events.single().formattedMessage
+        assertTrue("창을 닫지 않은 종료" in message && " | 직전에 처리되지 않은 예외가 있었음 | 힙 사용" in message, message)
+    }
+
+    @Test
+    fun theExitCallbackGetsTheUserFlagAfterTheRecordIsWritten() {
+        val seen = mutableListOf<Pair<Boolean, Int>>()
+        val exitLogger = logger(onExit = { user -> seen += user to capture.events.size })
+
+        exitLogger.logExit()
+        exitLogger.markUserExit()
+        exitLogger.logExit()
+
+        assertEquals(listOf(false to 1, true to 2), seen, "false, then true, each after its own log record")
+    }
+
+    @Test
+    fun aFailingExitCallbackAndAFailingFlagNeverBreakTheHook() {
+        val exitLogger = logger(uncaughtSeen = { throw IllegalStateException("flag") }, onExit = { throw IllegalStateException("callback") })
+
+        exitLogger.logExit() // must not throw
+
+        assertEquals(1, capture.events.size)
     }
 
     @Test
@@ -119,7 +169,7 @@ class ExitLoggerTest {
 
         val record = capture.events.single()
         assertEquals(Level.WARN, record.level)
-        assertTrue("진행 중인 작업 수를 알 수 없음" in record.formattedMessage, record.formattedMessage)
+        assertTrue("등록된 작업 수를 알 수 없음" in record.formattedMessage, record.formattedMessage)
     }
 
     @Test
@@ -160,6 +210,6 @@ class ExitLoggerTest {
         assertEquals(emptyList(), capture.events, "registering logs nothing")
         hook.run() // what the JVM does on its exit thread
         assertEquals(1, capture.events.size)
-        assertTrue("진행 중인 작업 4개" in capture.events.single().formattedMessage)
+        assertTrue("등록된 작업 4개" in capture.events.single().formattedMessage)
     }
 }

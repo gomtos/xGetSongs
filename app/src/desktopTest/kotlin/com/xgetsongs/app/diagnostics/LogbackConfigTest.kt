@@ -5,6 +5,7 @@ import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.encoder.PatternLayoutEncoder
 import ch.qos.logback.classic.joran.JoranConfigurator
 import ch.qos.logback.classic.util.LogbackMDCAdapter
+import ch.qos.logback.core.ConsoleAppender
 import ch.qos.logback.core.rolling.RollingFileAppender
 import ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy
 import ch.qos.logback.core.rolling.TimeBasedRollingPolicy
@@ -12,6 +13,7 @@ import ch.qos.logback.core.status.Status
 import ch.qos.logback.core.util.FileSize
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
+import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
 import java.nio.file.Path
@@ -49,16 +51,19 @@ class LogbackConfigTest {
         context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).getAppender("FILE") as RollingFileAppender<*>
 
     /** Runs [block] with System.out going into a buffer (the console appender writes to whatever System.out is at the time). */
-    private fun captureConsole(block: () -> Unit): String {
+    private fun captureConsoleBytes(block: () -> Unit): ByteArray {
         val buffer = ByteArrayOutputStream()
-        System.setOut(PrintStream(buffer, true, UTF_8))
+        System.setOut(PrintStream(buffer, true))
         try {
             block()
         } finally {
             System.setOut(realOut)
         }
-        return buffer.toString(UTF_8)
+        return buffer.toByteArray()
     }
+
+    /** The console as text, for lines that are plain ASCII (the console's code page does not matter for those). */
+    private fun captureConsole(block: () -> Unit): String = captureConsoleBytes(block).toString(UTF_8)
 
     private fun field(owner: Class<*>, name: String, instance: Any): Any? =
         owner.getDeclaredField(name).apply { isAccessible = true }.get(instance)
@@ -156,6 +161,52 @@ class LogbackConfigTest {
 
         assertTrue(appender.isImmediateFlush)
         assertEquals(UTF_8, (appender.encoder as PatternLayoutEncoder).charset)
+    }
+
+    @Test
+    fun theFileAppenderComesBeforeTheConsoleOnTheRootLogger() {
+        val context = configure("xgs.logDir" to dir.toString())
+
+        // A console that blocks (a full pipe, a paused terminal) must not hold up the write to the file.
+        val appenders = context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).iteratorForAppenders().asSequence().map { it.name }.toList()
+        assertEquals(listOf("FILE", "CONSOLE"), appenders)
+    }
+
+    private fun consoleAppender(context: LoggerContext): ConsoleAppender<*> =
+        context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).getAppender("CONSOLE") as ConsoleAppender<*>
+
+    @Test
+    fun theConsoleWritesInTheEncodingOfStdoutSoKoreanTextSurvivesACp949Console() {
+        val context = configure("xgs.logDir" to dir.toString(), "stdout.encoding" to "MS949")
+        val ms949 = Charset.forName("MS949")
+        assertEquals(ms949, (consoleAppender(context).encoder as PatternLayoutEncoder).charset)
+
+        val bytes = captureConsoleBytes { context.getLogger("com.xgetsongs.Demo").info("UI 응답 회복 (총 8초)") }
+
+        assertTrue("UI 응답 회복 (총 8초)" in String(bytes, ms949), "the bytes are in the console's code page")
+        assertFalse("UI 응답 회복 (총 8초)" in String(bytes, UTF_8), "and are not UTF-8")
+        assertTrue("UI 응답 회복 (총 8초)" in Files.readString(dir.resolve("xgetsongs.log"), UTF_8), "the file is UTF-8 whatever the console is")
+    }
+
+    @Test
+    fun theConsoleTakesTheEncodingOfTheJvmsStdoutWhenNothingIsSet() {
+        val context = configure("xgs.logDir" to dir.toString())
+
+        val expected = System.getProperty("stdout.encoding")?.let { Charset.forName(it) } ?: UTF_8
+        assertEquals(expected, (consoleAppender(context).encoder as PatternLayoutEncoder).charset)
+    }
+
+    @Test
+    fun theConsoleFallsBackToUtf8WhenTheJvmHasNoStdoutEncoding() {
+        val saved = System.getProperty("stdout.encoding")
+        System.clearProperty("stdout.encoding")
+        try {
+            val context = configure("xgs.logDir" to dir.toString())
+
+            assertEquals(UTF_8, (consoleAppender(context).encoder as PatternLayoutEncoder).charset)
+        } finally {
+            if (saved != null) System.setProperty("stdout.encoding", saved)
+        }
     }
 
     @Test

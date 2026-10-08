@@ -1,10 +1,14 @@
 package com.xgetsongs.app.diagnostics
 
+import com.xgetsongs.shared.log.LogRedaction
 import org.slf4j.LoggerFactory
 import java.awt.EventQueue
 import java.awt.GraphicsEnvironment
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
+import java.util.Collections
+import java.util.IdentityHashMap
 import kotlin.time.Duration.Companion.nanoseconds
 
 /**
@@ -13,26 +17,53 @@ import kotlin.time.Duration.Companion.nanoseconds
  */
 internal const val LOG_DIR_PROPERTY = "xgs.logDir"
 
+/** What this process and the others on the machine look like: the marker of the last run is judged with it. */
+internal interface Processes {
+    val ownPid: Long
+    val ownStart: Instant
+
+    /** The start time of the live process with number [pid], or null when there is none (or it will not say). */
+    fun startOf(pid: Long): Instant?
+}
+
+internal object SystemProcesses : Processes {
+    override val ownPid: Long get() = ProcessHandle.current().pid()
+    override val ownStart: Instant by lazy { ProcessHandle.current().info().startInstant().orElseGet { Instant.now() } }
+    override fun startOf(pid: Long): Instant? =
+        ProcessHandle.of(pid).filter { it.isAlive }.flatMap { it.info().startInstant() }.orElse(null)
+}
+
 /**
  * Everything that helps to find out afterwards why the app vanished or froze: unhandled exceptions in the log, a record of
- * how the JVM was asked to exit, and a thread dump when the UI thread stops answering. [start] is called once, first thing
- * in `main` (after [LOG_DIR_PROPERTY] is set).
+ * how the JVM was asked to exit, a marker file that tells the next run whether this one ended properly, and a thread dump
+ * when the UI thread stops answering. [start] is called once, first thing in `main` (after [LOG_DIR_PROPERTY] is set).
  */
 internal object Diagnostics {
+    /** The marker of the last run, next to the log. */
+    const val MARKER_FILE_NAME = "last-run.txt"
+
     private val log = LoggerFactory.getLogger(Diagnostics::class.java)
+
+    /** Set by the uncaught-exception handler; the exit record mentions it. */
+    @Volatile
+    private var uncaughtSeen = false
 
     /**
      * Prepares [logDir] (a failure is only reported on stderr), hooks the uncaught-exception handler, writes the startup
-     * record, registers the exit logger through [registerHook] and starts the watchdog, which posts its heartbeats with
-     * [postToUi].
+     * record, tells what the marker of the previous run says and writes the marker of this one, registers the exit logger
+     * through [registerHook] and starts the watchdog, which posts its heartbeats with [postToUi].
      */
     fun start(
         logDir: Path,
         postToUi: (Runnable) -> Unit = EventQueue::invokeLater,
         registerHook: (Thread) -> Unit = Runtime.getRuntime()::addShutdownHook,
+        processes: Processes = SystemProcesses,
     ): DiagnosticsHandle {
         ensureLogDirectory(logDir)
-        Thread.setDefaultUncaughtExceptionHandler(UncaughtLogger(Thread.getDefaultUncaughtExceptionHandler()))
+        uncaughtSeen = false
+        Thread.setDefaultUncaughtExceptionHandler(
+            UncaughtLogger(Thread.getDefaultUncaughtExceptionHandler(), onUncaught = { uncaughtSeen = true }),
+        )
         log.info(
             startupRecord(
                 appVersion = Diagnostics::class.java.`package`?.implementationVersion ?: System.getProperty("jpackage.app-version"),
@@ -45,8 +76,19 @@ internal object Diagnostics {
             ),
         )
 
+        val marker = RunMarkerFile(logDir.resolve(MARKER_FILE_NAME), processes.ownPid, processes.ownStart)
+        describePreviousRun(judgePreviousRun(marker.read(), processes::startOf))?.let { note ->
+            if (note.warn) log.warn(note.text) else log.info(note.text)
+        }
+        marker.markRunning()
+
         val startedAt = System.nanoTime()
-        val exitLogger = ExitLogger(runningJobs = { -1 }, uptime = { (System.nanoTime() - startedAt).nanoseconds })
+        val exitLogger = ExitLogger(
+            runningJobs = { -1 },
+            uptime = { (System.nanoTime() - startedAt).nanoseconds },
+            uncaughtSeen = { uncaughtSeen },
+            onExit = { userRequested -> marker.markExited(userRequested) },
+        )
         exitLogger.register(registerHook)
         val watchdog = UiWatchdog(logDir, postToUi)
         watchdog.start()
@@ -58,7 +100,7 @@ internal object Diagnostics {
 internal class DiagnosticsHandle(private val exitLogger: ExitLogger, private val watchdog: UiWatchdog) {
     private val log = LoggerFactory.getLogger(DiagnosticsHandle::class.java)
 
-    /** The number of running downloads, for the exit record: -1 (unknown) until the server is up and `main` says how to ask it. */
+    /** The number of jobs the server has registered, for the exit record: -1 (unknown) until the server is up and `main` says how to ask it. */
     var runningJobs: () -> Int
         get() = exitLogger.runningJobs
         set(value) {
@@ -105,13 +147,37 @@ internal fun ensureLogDirectory(logDir: Path, report: (String) -> Unit = System.
     false
 }
 
-/** Writes what no thread caught to the log, with the thread's name, and then lets the handler that was there before see it. */
-internal class UncaughtLogger(private val previous: Thread.UncaughtExceptionHandler?) : Thread.UncaughtExceptionHandler {
+/**
+ * The folder for the log files: [preferred] when it can be created, else [fallback] (in the temp folder). `main` calls this
+ * before it sets [LOG_DIR_PROPERTY], so logback is never told about a folder that does not exist. It never throws; when
+ * even the fallback cannot be created it is still the answer, and logback then writes to the console only.
+ */
+internal fun chooseLogDirectory(preferred: Path, fallback: Path, report: (String) -> Unit = System.err::println): Path {
+    if (ensureLogDirectory(preferred, report)) return preferred
+    report("로그를 임시 폴더에 씀: $fallback")
+    ensureLogDirectory(fallback, report)
+    return fallback
+}
+
+/**
+ * Writes what no thread caught to the log, with the thread's name, and then lets the handler that was there before see it.
+ * [onUncaught] is told first. The exception is written out here, not handed to logback, so that paths in its message (and
+ * in those of its causes) can be removed.
+ */
+internal class UncaughtLogger(
+    private val previous: Thread.UncaughtExceptionHandler?,
+    private val onUncaught: () -> Unit = {},
+) : Thread.UncaughtExceptionHandler {
     private val log = LoggerFactory.getLogger(UncaughtLogger::class.java)
 
     override fun uncaughtException(thread: Thread, error: Throwable) {
         try {
-            log.error("처리되지 않은 예외: 스레드 \"{}\"", thread.name, error)
+            onUncaught()
+        } catch (e: Exception) {
+            // Only a flag for the exit record.
+        }
+        try {
+            log.error("처리되지 않은 예외: 스레드 \"{}\"\n{}", thread.name, describeThrowable(error))
         } catch (e: Exception) {
             // Logging is the thing that failed; the previous handler still gets its turn.
         }
@@ -121,4 +187,28 @@ internal class UncaughtLogger(private val previous: Thread.UncaughtExceptionHand
             // The JVM ignores what a handler throws, and so does this one.
         }
     }
+}
+
+private const val MAX_FRAMES_PER_THROWABLE = 100
+private const val MAX_CAUSES = 10
+
+/**
+ * [error] as a stack trace in text: the class and the message (without paths) of the exception and of each cause, with at
+ * most [MAX_FRAMES_PER_THROWABLE] frames each. A cause that was seen already ends the chain (there are cycles).
+ */
+internal fun describeThrowable(error: Throwable): String {
+    val seen = Collections.newSetFromMap(IdentityHashMap<Throwable, Boolean>())
+    val text = StringBuilder()
+    var current: Throwable? = error
+    while (current != null && seen.size < MAX_CAUSES && seen.add(current)) {
+        if (seen.size > 1) text.append("Caused by: ")
+        text.append(current.javaClass.name)
+        current.message?.let { text.append(": ").append(LogRedaction.redactPaths(it)) }
+        text.append('\n')
+        val frames = current.stackTrace
+        for (frame in frames.take(MAX_FRAMES_PER_THROWABLE)) text.append("\tat ").append(frame).append('\n')
+        if (frames.size > MAX_FRAMES_PER_THROWABLE) text.append("\t... ${frames.size - MAX_FRAMES_PER_THROWABLE}개 프레임 생략\n")
+        current = current.cause
+    }
+    return text.toString().trimEnd()
 }
