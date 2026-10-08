@@ -35,8 +35,8 @@ internal object JobLog {
             "searchLyricsOnline=${options.searchLyricsOnline}, outputDir=${options.outputDir ?: "없음"}"
     }
 
-    /** The line for the event stream of a job that was dropped by the reader while the job goes on. */
-    fun eventsDisconnected(jobId: String): String = "이벤트 연결이 끊어짐 (작업 ${shortId(jobId)}, 작업은 계속 진행)"
+    /** The line for the event stream of a job that ended without the job being done: the reader went away or the server is going down. */
+    fun eventsDisconnected(jobId: String): String = "이벤트 연결이 끊어짐 (작업 ${shortId(jobId)})"
 
     /**
      * [text] without Windows paths and without the [knownNames] (the file name an item was started with, say): see

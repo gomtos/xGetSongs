@@ -69,20 +69,20 @@ internal class ExitLogger(
     fun logExit() {
         try {
             val user = userRequested
-            val jobs = try { runningJobs() } catch (e: Exception) { -1 }
-            val up = try { uptime() } catch (e: Exception) { Duration.ZERO }
-            val uncaught = try { uncaughtSeen() } catch (e: Exception) { false }
+            val jobs = try { runningJobs() } catch (e: Throwable) { -1 }
+            val up = try { uptime() } catch (e: Throwable) { Duration.ZERO }
+            val uncaught = try { uncaughtSeen() } catch (e: Throwable) { false }
             val heap = try {
                 val (used, max) = heapMb()
                 " | 힙 사용 ${used}MB (최대 ${max}MB)"
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 ""
             }
             val exit = describeExit(user, jobs, up, uncaught)
             if (exit.warn) log.warn("{}{}", exit.text, heap) else log.info("{}{}", exit.text, heap)
             try {
                 onExit(user)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 // The marker is a convenience: the record above is what matters.
             }
         } catch (e: Throwable) {

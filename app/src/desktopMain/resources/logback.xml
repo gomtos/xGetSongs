@@ -7,16 +7,15 @@
     <property name="LOG_DIR" value="${xgs.logDir:-${java.io.tmpdir}/xgetsongs-logs}"/>
 
     <!--
-      The console shows INFO and above only; DEBUG lines go to the file alone. It writes in the encoding of System.out (the
-      stdout.encoding property of the JVM, which follows the code page of the console), or in UTF-8 when the JVM has none, so
-      that Korean text is not garbled on a cp949 console. The file is always UTF-8.
+      The console shows INFO and above only; DEBUG lines go to the file alone. Both are UTF-8: Gradle forwards the console
+      output of `run.bat` and decodes it as UTF-8, whatever the code page of the console window is.
     -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>INFO</level>
         </filter>
         <encoder>
-            <charset>${stdout.encoding:-UTF-8}</charset>
+            <charset>UTF-8</charset>
             <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n</pattern>
         </encoder>
     </appender>

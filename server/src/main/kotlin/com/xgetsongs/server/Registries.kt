@@ -31,6 +31,16 @@ class JobRegistry {
 
     private val jobs = ConcurrentHashMap<String, Entry>()
 
+    @Volatile
+    private var closing = false
+
+    /** True once the server is being stopped: the streams that end from then on were not dropped by their readers. */
+    val isClosing: Boolean get() = closing
+
+    fun markClosing() {
+        closing = true
+    }
+
     fun register(handle: JobHandle): String {
         val id = UUID.randomUUID().toString()
         jobs[id] = Entry(handle)

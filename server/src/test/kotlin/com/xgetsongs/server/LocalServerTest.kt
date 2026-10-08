@@ -31,9 +31,13 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -272,7 +276,7 @@ class LocalServerTest {
     }
 
     @Test
-    fun aDroppedEventConnectionIsLoggedAsAWarningWhileTheJobGoesOn() = runBlocking {
+    fun aDroppedEventConnectionIsLoggedAsAWarning() = runBlocking {
         fakes.downloads.queued = listOf(JobEvent.ItemStarted(1, "vid00000001", "001 A - One.mp3"))
         fakes.downloads.closeAfterQueued = false
         LogCapture(JobLog.LOGGER_NAME).use { capture ->
@@ -294,11 +298,64 @@ class LocalServerTest {
                         }
                     }
                     val warnings = capture.at(Level.WARN).map { it.formattedMessage }
-                    assertEquals(listOf("이벤트 연결이 끊어짐 (작업 ${jobId.take(8)}, 작업은 계속 진행)"), warnings)
+                    assertEquals(listOf("이벤트 연결이 끊어짐 (작업 ${jobId.take(8)})"), warnings)
                     assertFalse(fakes.downloads.jobs.single().isCancelled, "the job itself goes on")
                     assertEquals(1, server.runningJobs(), "and is still registered")
                 }
             }
+        }
+    }
+
+    @Test
+    fun stoppingTheServerWhileEventsAreReadIsNotLoggedAsADroppedConnection() = runBlocking {
+        fakes.downloads.queued = listOf(JobEvent.ItemStarted(1, "vid00000001", "001 A - One.mp3"))
+        fakes.downloads.closeAfterQueued = false
+        LogCapture(JobLog.LOGGER_NAME).use { capture ->
+            client().use { client ->
+                withTimeout(60_000) {
+                    val jobId = client.startJob()
+                    val firstSeen = CompletableDeferred<Unit>()
+                    coroutineScope {
+                        val reader = launch {
+                            try {
+                                client.sse("/jobs/$jobId/events") { incoming.collect { firstSeen.complete(Unit) } }
+                            } catch (e: Exception) {
+                                // the connection is closed under the reader: that is the point of the test
+                            }
+                        }
+                        firstSeen.await()
+
+                        server.stop() // the app is closing: the handler of the open stream is cancelled
+                        reader.join()
+                        delay(500) // the handler's own end comes a moment after the connection's
+                    }
+                    assertEquals(emptyList(), capture.at(Level.WARN).map { it.formattedMessage })
+                }
+            }
+        }
+        server = LocalServer.start(fakes.services) // so @AfterTest has something to stop
+    }
+
+    @Test
+    fun theStartLineIsNeverLoggedAfterTheStopLine() {
+        val release = CountDownLatch(1)
+        val lookedUp = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val tools = ToolPathProvider {
+            lookedUp.countDown()
+            release.await(30, TimeUnit.SECONDS)
+            ToolPaths(ytDlp = Path.of("C:/t/yt-dlp.exe"), ffmpeg = null, jsRuntime = null)
+        }
+
+        LogCapture(LocalServer::class.java.name).use { capture ->
+            val started = LocalServer.start(fakes.services, scope, tools)
+            assertTrue(lookedUp.await(30, TimeUnit.SECONDS), "the lookup is under way")
+
+            started.stop() // while the lookup is still running
+            release.countDown()
+            runBlocking { scope.coroutineContext.job.children.toList().forEach { it.join() } } // the lookup coroutine has ended
+
+            assertEquals(listOf("내장 서버 정지"), capture.at(Level.INFO).map { it.formattedMessage })
         }
     }
 

@@ -192,8 +192,8 @@ class JobLogTest {
     }
 
     @Test
-    fun theLineForADroppedEventConnectionNamesTheJobAndSaysItGoesOn() {
-        assertEquals("이벤트 연결이 끊어짐 (작업 01234567, 작업은 계속 진행)", JobLog.eventsDisconnected("0123456789abcdef"))
+    fun theLineForADroppedEventConnectionNamesTheJob() {
+        assertEquals("이벤트 연결이 끊어짐 (작업 01234567)", JobLog.eventsDisconnected("0123456789abcdef"))
     }
 
     @Test

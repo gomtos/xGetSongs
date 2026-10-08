@@ -128,8 +128,9 @@ fun Application.module(services: Services, config: ServerConfig, jobs: JobRegist
                 }
                 ended = true
             } finally {
-                // Not a catch: the cancellation of a closed connection has to go on its way. The job is not cancelled by it.
-                if (!ended) jobLog.warn(JobLog.eventsDisconnected(id))
+                // Not a catch: the cancellation of a closed connection has to go on its way. A stream that ends because the
+                // server is stopping is not a dropped connection.
+                if (!ended && !jobs.isClosing) jobLog.warn(JobLog.eventsDisconnected(id))
             }
             // Only reached when the job ended; a dropped connection leaves the job cancellable.
             jobs.remove(id)

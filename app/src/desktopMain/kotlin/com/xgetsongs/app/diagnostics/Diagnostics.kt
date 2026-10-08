@@ -76,23 +76,43 @@ internal object Diagnostics {
             ),
         )
 
-        val marker = RunMarkerFile(logDir.resolve(MARKER_FILE_NAME), processes.ownPid, processes.ownStart)
-        describePreviousRun(judgePreviousRun(marker.read(), processes::startOf))?.let { note ->
-            if (note.warn) log.warn(note.text) else log.info(note.text)
-        }
-        marker.markRunning()
+        val marker = startMarker(logDir, processes)
 
         val startedAt = System.nanoTime()
         val exitLogger = ExitLogger(
             runningJobs = { -1 },
             uptime = { (System.nanoTime() - startedAt).nanoseconds },
             uncaughtSeen = { uncaughtSeen },
-            onExit = { userRequested -> marker.markExited(userRequested) },
+            onExit = { userRequested -> marker?.markExited(userRequested) },
         )
         exitLogger.register(registerHook)
         val watchdog = UiWatchdog(logDir, postToUi)
         watchdog.start()
         return DiagnosticsHandle(exitLogger, watchdog)
+    }
+
+    /**
+     * Tells what the marker of the previous run says and writes the marker of this one. A marker that was edited by hand, a
+     * process table that fails, a start time that cannot be read: none of that may keep the app from starting, so each step
+     * is guarded and a failure is a WARN line. Null when the marker of this run cannot be set up at all (nothing is
+     * rewritten at exit then).
+     */
+    private fun startMarker(logDir: Path, processes: Processes): RunMarkerFile? {
+        val marker = try {
+            RunMarkerFile(logDir.resolve(MARKER_FILE_NAME), processes.ownPid, processes.ownStart)
+        } catch (e: Exception) {
+            log.warn("이번 실행 기록을 만들지 못함 ({})", e.javaClass.simpleName)
+            return null
+        }
+        try {
+            describePreviousRun(judgePreviousRun(marker.read(), processes::startOf))?.let { note ->
+                if (note.warn) log.warn(note.text) else log.info(note.text)
+            }
+        } catch (e: Exception) {
+            log.warn("이전 실행 기록을 확인하지 못함 ({})", e.javaClass.simpleName)
+        }
+        marker.markRunning()
+        return marker
     }
 }
 
@@ -161,29 +181,36 @@ internal fun chooseLogDirectory(preferred: Path, fallback: Path, report: (String
 
 /**
  * Writes what no thread caught to the log, with the thread's name, and then lets the handler that was there before see it.
- * [onUncaught] is told first. The exception is written out here, not handed to logback, so that paths in its message (and
- * in those of its causes) can be removed.
+ * [onUncaught] is told first. The exception is written out by [render] (by default [describeThrowable]), not handed to
+ * logback, so that paths in its message (and in those of its causes) can be removed. Every step is guarded against any
+ * [Throwable]: this runs when something has gone wrong already, an [Error] while writing the text out still leaves a line
+ * with the thread and the class, and the previous handler always gets its turn.
  */
 internal class UncaughtLogger(
     private val previous: Thread.UncaughtExceptionHandler?,
     private val onUncaught: () -> Unit = {},
+    private val render: (Throwable) -> String = ::describeThrowable,
 ) : Thread.UncaughtExceptionHandler {
     private val log = LoggerFactory.getLogger(UncaughtLogger::class.java)
 
     override fun uncaughtException(thread: Thread, error: Throwable) {
         try {
             onUncaught()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // Only a flag for the exit record.
         }
         try {
-            log.error("처리되지 않은 예외: 스레드 \"{}\"\n{}", thread.name, describeThrowable(error))
-        } catch (e: Exception) {
-            // Logging is the thing that failed; the previous handler still gets its turn.
+            log.error("처리되지 않은 예외: 스레드 \"{}\"\n{}", thread.name, render(error))
+        } catch (e: Throwable) {
+            try {
+                log.error("처리되지 않은 예외: 스레드 \"{}\" ({}, 내용을 기록하지 못함)", thread.name, error.javaClass.name)
+            } catch (inner: Throwable) {
+                // Logging is the thing that failed; the previous handler still gets its turn.
+            }
         }
         try {
             previous?.uncaughtException(thread, error)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // The JVM ignores what a handler throws, and so does this one.
         }
     }

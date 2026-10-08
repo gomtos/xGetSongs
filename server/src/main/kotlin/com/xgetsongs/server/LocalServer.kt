@@ -51,12 +51,14 @@ class LocalServer private constructor(
     private val server: io.ktor.server.engine.EmbeddedServer<*, *>,
     private val scope: CoroutineScope,
     private val jobs: JobRegistry,
+    private val lifecycle: Lifecycle,
 ) {
     /** How many download jobs are registered: running ones, plus any that ended but whose last events nobody has read yet. */
     fun runningJobs(): Int = jobs.size()
 
     fun stop() {
-        log.info("내장 서버 정지")
+        jobs.markClosing() // the event streams that end from now on were not dropped by their readers
+        lifecycle.markStopped { log.info("내장 서버 정지") }
         scope.cancel()
         server.stop(gracePeriodMillis = 200, timeoutMillis = 2_000)
     }
@@ -86,11 +88,16 @@ class LocalServer private constructor(
             }
             server.start(wait = false)
             val port = runBlocking { server.engine.resolvedConnectors().first().port }
-            if (tools == null) log.info("내장 서버 시작: 127.0.0.1:{}", port) else scope.launch(Dispatchers.IO) { logStart(port, tools) }
-            return LocalServer(port, token, server, scope, jobs)
+            val lifecycle = Lifecycle()
+            if (tools == null) {
+                lifecycle.ifRunning { log.info("내장 서버 시작: 127.0.0.1:{}", port) }
+            } else {
+                scope.launch(Dispatchers.IO) { logStart(port, tools, lifecycle) }
+            }
+            return LocalServer(port, token, server, scope, jobs, lifecycle)
         }
 
-        private fun logStart(port: Int, tools: ToolPathProvider) {
+        private fun logStart(port: Int, tools: ToolPathProvider, lifecycle: Lifecycle) {
             val paths = try {
                 describe(tools.current())
             } catch (e: CancellationException) {
@@ -98,7 +105,7 @@ class LocalServer private constructor(
             } catch (e: Exception) {
                 "도구 경로를 확인하지 못함 (${e.javaClass.simpleName})"
             }
-            log.info("내장 서버 시작: 127.0.0.1:{}, {}", port, paths)
+            lifecycle.ifRunning { log.info("내장 서버 시작: 127.0.0.1:{}, {}", port, paths) }
         }
 
         private fun describe(paths: ToolPaths): String =
@@ -108,5 +115,22 @@ class LocalServer private constructor(
             val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
             return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
         }
+    }
+}
+
+/**
+ * Orders the two lines of a server's life in the log. The start line comes from another thread, after the tool paths are
+ * looked up; it is dropped when the stop line is out already, so the log never says the server started after it stopped.
+ */
+internal class Lifecycle {
+    private var stopped = false
+
+    /** Runs [action] unless the server was stopped. */
+    fun ifRunning(action: () -> Unit) = synchronized(this) { if (!stopped) action() }
+
+    /** Marks the server stopped and runs [action] (the stop line) in the same step. */
+    fun markStopped(action: () -> Unit) = synchronized(this) {
+        stopped = true
+        action()
     }
 }

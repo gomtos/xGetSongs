@@ -13,7 +13,6 @@ import ch.qos.logback.core.status.Status
 import ch.qos.logback.core.util.FileSize
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
-import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
 import java.nio.file.Path
@@ -176,37 +175,22 @@ class LogbackConfigTest {
         context.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).getAppender("CONSOLE") as ConsoleAppender<*>
 
     @Test
-    fun theConsoleWritesInTheEncodingOfStdoutSoKoreanTextSurvivesACp949Console() {
+    fun theConsoleAlwaysWritesUtf8WhateverTheCodePageOfStdoutIs() {
+        // The code page of a console is not what reads the bytes of `run.bat`: Gradle forwards them and decodes UTF-8.
+        for (stdoutEncoding in listOf("MS949", "ISO-8859-1", "UTF-8")) {
+            val context = configure("xgs.logDir" to dir.toString(), "stdout.encoding" to stdoutEncoding)
+            assertEquals(UTF_8, (consoleAppender(context).encoder as PatternLayoutEncoder).charset, stdoutEncoding)
+        }
+    }
+
+    @Test
+    fun theConsoleBytesAreUtf8AndSoIsTheFile() {
         val context = configure("xgs.logDir" to dir.toString(), "stdout.encoding" to "MS949")
-        val ms949 = Charset.forName("MS949")
-        assertEquals(ms949, (consoleAppender(context).encoder as PatternLayoutEncoder).charset)
 
         val bytes = captureConsoleBytes { context.getLogger("com.xgetsongs.Demo").info("UI 응답 회복 (총 8초)") }
 
-        assertTrue("UI 응답 회복 (총 8초)" in String(bytes, ms949), "the bytes are in the console's code page")
-        assertFalse("UI 응답 회복 (총 8초)" in String(bytes, UTF_8), "and are not UTF-8")
-        assertTrue("UI 응답 회복 (총 8초)" in Files.readString(dir.resolve("xgetsongs.log"), UTF_8), "the file is UTF-8 whatever the console is")
-    }
-
-    @Test
-    fun theConsoleTakesTheEncodingOfTheJvmsStdoutWhenNothingIsSet() {
-        val context = configure("xgs.logDir" to dir.toString())
-
-        val expected = System.getProperty("stdout.encoding")?.let { Charset.forName(it) } ?: UTF_8
-        assertEquals(expected, (consoleAppender(context).encoder as PatternLayoutEncoder).charset)
-    }
-
-    @Test
-    fun theConsoleFallsBackToUtf8WhenTheJvmHasNoStdoutEncoding() {
-        val saved = System.getProperty("stdout.encoding")
-        System.clearProperty("stdout.encoding")
-        try {
-            val context = configure("xgs.logDir" to dir.toString())
-
-            assertEquals(UTF_8, (consoleAppender(context).encoder as PatternLayoutEncoder).charset)
-        } finally {
-            if (saved != null) System.setProperty("stdout.encoding", saved)
-        }
+        assertTrue("UI 응답 회복 (총 8초)" in String(bytes, UTF_8), "the console bytes decode as UTF-8")
+        assertTrue("UI 응답 회복 (총 8초)" in Files.readString(dir.resolve("xgetsongs.log"), UTF_8), "and the file is UTF-8 too")
     }
 
     @Test

@@ -188,6 +188,22 @@ class ExitLoggerTest {
     }
 
     @Test
+    fun anErrorFromAnyOfTheFiguresStillLeavesTheRecord() {
+        val exitLogger = ExitLogger(
+            runningJobs = { throw OutOfMemoryError("jobs") },
+            uptime = { throw StackOverflowError("clock") },
+            heapMb = { throw NoClassDefFoundError("heap") },
+            uncaughtSeen = { throw LinkageError("flag") },
+            onExit = { throw OutOfMemoryError("callback") },
+        )
+
+        exitLogger.logExit() // must not throw
+
+        val message = capture.events.single().formattedMessage
+        assertTrue("JVM 종료 시작" in message && "등록된 작업 수를 알 수 없음" in message, message)
+    }
+
+    @Test
     fun theUserFlagIsNotUndoneByLoggingTwice() {
         val exitLogger = logger()
         exitLogger.markUserExit()

@@ -124,4 +124,148 @@ class LogRedactionTest {
     fun noKnownNamesJustRedactsThePaths() {
         assertEquals("<경로>: reason", LogRedaction.redact("C:\\a\\b.mp3: reason", emptyList()))
     }
+
+    // ---- two paths in a row, forward slashes, long prefixes, URIs -----------------------------
+
+    @Test
+    fun twoPathsSeparatedByACommaAreBothRedactedCompletely() {
+        assertEquals("<경로>, <경로>", paths("C:\\a\\b.mp3, D:\\Music\\My Playlist\\x.mp3"))
+        assertEquals("<경로>,<경로>", paths("C:\\a\\b.mp3,D:\\Music\\My Playlist\\x.mp3"))
+        assertEquals("<경로>; <경로>: Access is denied", paths("C:\\a\\b.mp3; D:\\x\\y z.mp3: Access is denied"))
+    }
+
+    @Test
+    fun aPathThatStartsRightAfterTheEndOfAnotherIsStillAPath() {
+        assertEquals("<경로><경로>", paths("C:\\a\\fooD:\\Music\\x.mp3"))
+    }
+
+    @Test
+    fun forwardSlashesRightAfterTheDriveAreAccepted() {
+        assertEquals("<경로>", paths("C:/Users/me/Song Title.mp3"))
+        assertEquals("failed: <경로>: Access is denied", paths("failed: c:/Users/me/Song Title.mp3: Access is denied"))
+    }
+
+    @Test
+    fun mixedSeparatorsAreOnePath() {
+        assertEquals("<경로>", paths("D:\\Music/My Playlist/001 A - B.mp3"))
+        assertEquals("<경로>", paths("D:/Music\\My Playlist\\001 A - B.mp3"))
+    }
+
+    @Test
+    fun theVerbatimPrefixesAreHandled() {
+        assertEquals("error: <경로>", paths("error: \\\\?\\C:\\x\\y z\\a.mp3"))
+        assertEquals("error: <경로>: Access is denied", paths("error: \\\\?\\UNC\\server\\share\\dir\\a.mp3: Access is denied"))
+        assertEquals("<경로>", paths("\\\\?\\unc\\SERVER\\Music Share\\a.mp3"))
+        assertEquals("<경로>", paths("\\\\.\\C:\\x\\a.mp3"))
+    }
+
+    @Test
+    fun aFileUriIsRedactedAsAWhole() {
+        assertEquals("cannot read <경로>", paths("cannot read file:///C:/Users/me/Music/My%20Song.mp3"))
+        assertEquals("cannot read <경로>", paths("cannot read FILE:///c:/Users/me/a.mp3"))
+        assertEquals("<경로>: reason", paths("file:///D:/Music/My Playlist/a.mp3: reason"))
+    }
+
+    @Test
+    fun aHttpUrlIsNotAPath() {
+        for (text in listOf(
+            "https://www.youtube.com/watch?v=abc&list=PL1",
+            "see http://example.com/a/b and https://example.com:8080/x",
+            "ftp://host/dir",
+        )) {
+            assertEquals(text, paths(text), text)
+        }
+    }
+
+    @Test
+    fun relativePathsAreNotRecognisedOnPurpose() {
+        // Without a drive or a UNC host there is nothing to tell a path from a sentence: these stay as they are.
+        for (text in listOf("Music\\a.mp3", ".\\a\\b.mp3", "..\\x\\y.mp3", "a/b/c.mp3", "/usr/lib/x", "\\just\\absolute\\on\\this\\drive.mp3")) {
+            assertEquals(text, paths(text), text)
+        }
+    }
+
+    // ---- hostile input -----------------------------------------------------------------------
+
+    @Test
+    fun aPathOfFiveThousandPartsIsRedactedWithoutAnError() {
+        val text = "C:" + "\\a".repeat(5_000)
+
+        val redacted = paths(text)
+
+        assertEquals("<경로>", redacted)
+    }
+
+    @Test
+    fun aHugeHostileInputIsCutAndRedactedQuickly() {
+        val shapes = listOf(
+            "C:" + "\\a".repeat(100_000),
+            "C:\\".repeat(66_000),
+            "\\\\".repeat(100_000),
+            "a:\\ ".repeat(50_000),
+            "C:\\a -> ".repeat(25_000),
+            "x".repeat(200_000),
+            "file:///".repeat(25_000),
+            "\\\\?\\UNC\\".repeat(25_000),
+        )
+        val mark = kotlin.time.TimeSource.Monotonic.markNow()
+
+        for (text in shapes) {
+            val redacted = paths(text)
+            // The input is cut; the output can be a little longer (a one-character path becomes a placeholder and its space stays).
+            assertTrue(redacted.length <= 2 * LogRedaction.MAX_TEXT_LENGTH, "cut to the limit: ${redacted.length}")
+        }
+
+        assertTrue(mark.elapsedNow().inWholeSeconds < 10, "took ${mark.elapsedNow()}")
+    }
+
+    @Test
+    fun aTextOverTheLimitIsCutAndEndsWithAnEllipsis() {
+        val text = "x".repeat(10_000)
+
+        val redacted = paths(text)
+
+        assertEquals("x".repeat(LogRedaction.MAX_TEXT_LENGTH) + "…", redacted)
+        assertEquals("x".repeat(LogRedaction.MAX_TEXT_LENGTH), paths("x".repeat(LogRedaction.MAX_TEXT_LENGTH)), "exactly the limit is not cut")
+    }
+
+    @Test
+    fun theCutNeverSplitsASurrogatePair() {
+        val text = "x".repeat(LogRedaction.MAX_TEXT_LENGTH - 1) + "\uD83C\uDFB5" + "tail" // the pair starts at the last kept index
+
+        val redacted = paths(text)
+
+        assertEquals("x".repeat(LogRedaction.MAX_TEXT_LENGTH - 1) + "…", redacted)
+    }
+
+    @Test
+    fun whatIsCutOffIsNotKeptEvenWhenItWasAPath() {
+        val text = "x".repeat(LogRedaction.MAX_TEXT_LENGTH) + " C:\\Users\\secret\\a.mp3"
+
+        assertFalse("secret" in paths(text))
+    }
+
+    // ---- known names with regular expression characters -------------------------------------
+
+    @Test
+    fun aKnownNameWithRegexCharactersIsReplacedLiterally() {
+        val name = "A (feat. B) [x]$1.mp3"
+
+        val redacted = LogRedaction.redact("could not write A (feat. B) [x]$1.mp3 and a (FEAT. b) [X]$1", listOf(name))
+
+        assertEquals("could not write <파일명> and <파일명>", redacted)
+    }
+
+    @Test
+    fun aNameThatLooksLikeAPatternDoesNotMatchOtherText() {
+        val redacted = LogRedaction.redact("Axxx and A.*", listOf("A.*"))
+
+        assertEquals("Axxx and <파일명>", redacted)
+    }
+
+    @Test
+    fun aReplacementPlaceholderIsNotExpandedAsAReference() {
+        assertEquals("<경로>", paths("C:\\a\\b\$1\\c.mp3"))
+        assertEquals("<파일명>", LogRedaction.redact("\$0\$1", listOf("\$0\$1")))
+    }
 }

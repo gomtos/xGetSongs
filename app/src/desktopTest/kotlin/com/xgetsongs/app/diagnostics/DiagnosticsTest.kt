@@ -243,6 +243,53 @@ class DiagnosticsTest {
         }
     }
 
+    @Test
+    fun anErrorWhileWritingOutTheExceptionStillLogsAMinimalLineAndPassesItOn() {
+        LogCapture(UncaughtLogger::class.java).use { capture ->
+            var passedOn = 0
+            val handler = UncaughtLogger(
+                Thread.UncaughtExceptionHandler { _, _ -> passedOn++ },
+                render = { throw StackOverflowError("while rendering") },
+            )
+
+            handler.uncaughtException(Thread(Runnable { }, "worker-9"), IllegalStateException("boom"))
+
+            val record = capture.events.single()
+            assertEquals(Level.ERROR, record.level)
+            assertTrue("worker-9" in record.formattedMessage && "java.lang.IllegalStateException" in record.formattedMessage, record.formattedMessage)
+            assertEquals(1, passedOn)
+        }
+    }
+
+    @Test
+    fun anExceptionWhoseMessageThrowsAnErrorIsStillLoggedAndPassedOn() {
+        LogCapture(UncaughtLogger::class.java).use { capture ->
+            var passedOn = 0
+            val hostile = object : RuntimeException() {
+                override val message: String get() = throw StackOverflowError("getMessage")
+            }
+
+            UncaughtLogger(Thread.UncaughtExceptionHandler { _, _ -> passedOn++ }).uncaughtException(Thread(Runnable { }, "t"), hostile)
+
+            assertEquals(1, capture.at(Level.ERROR).size)
+            assertEquals(1, passedOn)
+        }
+    }
+
+    @Test
+    fun errorsFromTheCallbackAndFromThePreviousHandlerStayInsideTheHandler() {
+        LogCapture(UncaughtLogger::class.java).use { capture ->
+            val handler = UncaughtLogger(
+                Thread.UncaughtExceptionHandler { _, _ -> throw OutOfMemoryError("previous") },
+                onUncaught = { throw NoClassDefFoundError("callback") },
+            )
+
+            handler.uncaughtException(Thread(Runnable { }, "t"), RuntimeException("x")) // must not throw
+
+            assertEquals(1, capture.at(Level.ERROR).size)
+        }
+    }
+
     // ---- start -----------------------------------------------------------------------------
 
     private class FakeProcesses(
@@ -426,6 +473,62 @@ class DiagnosticsTest {
 
             assertEquals(2, capture.events.size, "two startup records and nothing else")
             assertEquals(emptyList(), capture.at(Level.WARN))
+        }
+    }
+
+    @Test
+    fun aHandEditedMarkerWithAnAbsurdTimeDoesNotStopTheApp() {
+        writeMarker("state=running\npid=1234\nstarted=+1000000000-12-31T23:59:59Z\n")
+
+        LogCapture(Diagnostics::class.java).use { capture ->
+            start().stop() // must not throw
+
+            assertEquals(1, capture.events.size, "only the startup record: ${capture.events.map { it.formattedMessage }}")
+        }
+        assertEquals(RunState.RUNNING, parseRunMarker(Files.readString(dir.resolve("logs").resolve("last-run.txt")))?.state, "and the marker is this run's now")
+    }
+
+    @Test
+    fun otherAbsurdMarkerValuesDoNotStopTheAppEither() {
+        for (text in listOf(
+            "state=running\npid=99999999999999999999\nstarted=2026-10-07T12:15:40.123Z",
+            "state=running\npid=-5\nstarted=2026-10-07T12:15:40.123Z",
+            "state=running\npid=${Long.MAX_VALUE}\nstarted=2026-10-07T12:15:40.123Z",
+            "state=running\npid=1234\nstarted=-1000000000-01-01T00:00:00Z",
+            "state=exited\npid=1234\nstarted=+1000000000-12-31T23:59:59Z",
+        )) {
+            writeMarker(text)
+
+            start().stop() // must not throw
+        }
+    }
+
+    private class ThrowingProcesses(private val startOfFails: Boolean = false, private val ownStartFails: Boolean = false) : Processes {
+        override val ownPid: Long = 4242
+        override val ownStart: Instant get() = if (ownStartFails) throw IllegalStateException("no start time") else Instant.parse("2026-10-07T13:00:00Z")
+        override fun startOf(pid: Long): Instant? = if (startOfFails) throw IllegalStateException("no process table") else null
+    }
+
+    @Test
+    fun aProcessTableThatFailsDoesNotStopTheAppAndTheMarkerIsStillWritten() {
+        writeMarker(renderRunning(77, earlier))
+
+        LogCapture(Diagnostics::class.java).use { capture ->
+            start(processes = ThrowingProcesses(startOfFails = true)).stop() // must not throw
+
+            val warning = capture.at(Level.WARN).single().formattedMessage
+            assertTrue("이전 실행 기록을 확인하지 못함 (IllegalStateException)" in warning, warning)
+        }
+        assertEquals(4242L, parseRunMarker(Files.readString(dir.resolve("logs").resolve("last-run.txt")))?.pid)
+    }
+
+    @Test
+    fun aProcessThatCannotSayWhenItStartedDoesNotStopTheApp() {
+        LogCapture(Diagnostics::class.java).use { capture ->
+            start(processes = ThrowingProcesses(ownStartFails = true)).stop() // must not throw
+
+            assertEquals(1, capture.at(Level.INFO).size, "the startup record")
+            assertEquals(1, capture.at(Level.WARN).size, "and a note that the marker is not kept")
         }
     }
 }

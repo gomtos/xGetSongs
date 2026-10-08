@@ -42,7 +42,7 @@ class RunMarkerTest {
 
     @Test
     fun windowsLineEndsSpacesUnknownKeysBlankLinesAndABomAreAllRight() {
-        val text = "﻿\r\n state = running \r\n\r\npid= 1234\r\nstarted=2026-10-07T12:15:40.123Z\r\nfuture-key=whatever\r\n# not a pair\r\n"
+        val text = "\uFEFF\r\n state = running \r\n\r\npid= 1234\r\nstarted=2026-10-07T12:15:40.123Z\r\nfuture-key=whatever\r\n# not a pair\r\n"
 
         assertEquals(running, parseRunMarker(text))
     }
@@ -70,6 +70,34 @@ class RunMarkerTest {
         )) {
             assertNull(parseRunMarker(text), text)
         }
+    }
+
+    @Test
+    fun absurdValuesMakeTheMarkerUnusableInsteadOfBreakingAnything() {
+        for (text in listOf(
+            "state=running\npid=1234\nstarted=+1000000000-12-31T23:59:59Z", // does not fit a date
+            "state=running\npid=1234\nstarted=-1000000000-01-01T00:00:00Z",
+            "state=running\npid=1234\nstarted=1970-01-01T00:00:00Z", // long before any run of this app
+            "state=running\npid=1234\nstarted=3000-01-01T00:00:00Z",
+            "state=running\npid=99999999999999999999\nstarted=2026-10-07T12:15:40.123Z", // not a Long
+            "state=running\npid=0\nstarted=2026-10-07T12:15:40.123Z",
+            "state=running\npid=-1234\nstarted=2026-10-07T12:15:40.123Z",
+            "state=running\npid=1e3\nstarted=2026-10-07T12:15:40.123Z",
+        )) {
+            assertNull(parseRunMarker(text), text)
+        }
+    }
+
+    @Test
+    fun aHugeButValidPidIsKept() {
+        val marker = parseRunMarker("state=running\npid=${Long.MAX_VALUE}\nstarted=2026-10-07T12:15:40.123Z")
+
+        assertEquals(RunMarker(RunState.RUNNING, Long.MAX_VALUE, started), marker)
+    }
+
+    @Test
+    fun anExitedMarkerWithAnAbsurdStartTimeJustLacksIt() {
+        assertEquals(RunMarker(RunState.EXITED, 1234, null), parseRunMarker("state=exited\npid=1234\nstarted=+1000000000-12-31T23:59:59Z"))
     }
 
     @Test
@@ -160,6 +188,15 @@ class RunMarkerTest {
     }
 
     @Test
+    fun anUncleanRunWhoseStartTimeCannotBeShownStillGetsItsWarning() {
+        for (extreme in listOf(Instant.MAX, Instant.MIN)) {
+            val note = describePreviousRun(PreviousRun.Unclean(7, extreme), ZoneOffset.UTC)
+
+            assertTrue(note != null && note.warn && "이전 실행(PID 7, 시작 " in note.text && "정상 종료 기록 없이 끝났음" in note.text, note.toString())
+        }
+    }
+
+    @Test
     fun theStartTimeIsShownInTheZoneOfTheMachine() {
         val seoul = describePreviousRun(PreviousRun.Unclean(1, started), java.time.ZoneId.of("Asia/Seoul"))
 
@@ -214,6 +251,60 @@ class RunMarkerTest {
 
         file.markExited(userRequested = false)
         assertTrue("reason=other" in Files.readString(dir.resolve("last-run.txt")))
+    }
+
+    @Test
+    fun whenTheMoveOverTheMarkerFailsTheFileIsOverwrittenInPlace() {
+        val file = RunMarkerFile(dir.resolve("last-run.txt"), 1234, started, replace = { _, _ -> throw java.io.IOException("locked by another process") })
+
+        file.markRunning()
+        assertEquals(running, file.read())
+
+        file.markExited(userRequested = true, time = Instant.parse("2026-10-07T12:20:00Z"))
+        val text = Files.readString(dir.resolve("last-run.txt"))
+        assertTrue("state=exited" in text && "reason=user" in text, text)
+    }
+
+    @Test
+    fun theInPlaceOverwriteIsOnlyTheSecondStrategy() {
+        val overwrites = mutableListOf<String>()
+        val file = RunMarkerFile(
+            dir.resolve("last-run.txt"),
+            1234,
+            started,
+            replace = { target, bytes -> Files.write(target, bytes) },
+            overwrite = { _, _ -> overwrites += "called" },
+        )
+
+        file.markRunning()
+
+        assertEquals(emptyList(), overwrites)
+        assertEquals(running, file.read())
+    }
+
+    @Test
+    fun whenBothWaysOfWritingFailNothingIsThrown() {
+        val file = RunMarkerFile(
+            dir.resolve("last-run.txt"),
+            1234,
+            started,
+            replace = { _, _ -> throw java.io.IOException("first") },
+            overwrite = { _, _ -> throw java.io.IOException("second") },
+        )
+
+        file.markRunning() // must not throw
+        file.markExited(userRequested = false) // nor this
+
+        assertNull(file.read())
+    }
+
+    @Test
+    fun anErrorFromAWritingStrategyIsNotThrownEither() {
+        val file = RunMarkerFile(dir.resolve("last-run.txt"), 1234, started, replace = { _, _ -> throw OutOfMemoryError("simulated") })
+
+        file.markRunning() // must not throw
+
+        assertEquals(running, file.read(), "the second strategy still wrote it")
     }
 
     @Test
