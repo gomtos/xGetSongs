@@ -11,10 +11,12 @@ import com.xgetsongs.engine.tools.ToolPaths
 import com.xgetsongs.engine.ytdlp.YtDlpResolver
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
@@ -67,7 +69,11 @@ class LocalServer private constructor(
             return start(createServices(appDataDir, scope), scope, ToolLocator(appBinDir = binDirOf(appDataDir)))
         }
 
-        /** [tools] only serves the startup record: where the tools are (it is not asked again). */
+        /**
+         * [tools] only serves the start line: where the tools are (it is not asked again). Walking PATH can stall on a
+         * share that does not answer, so it is done off the thread that starts the app, and the start line follows
+         * when it is done. Without [tools] the line is written at once.
+         */
         fun start(
             services: Services,
             scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
@@ -80,8 +86,19 @@ class LocalServer private constructor(
             }
             server.start(wait = false)
             val port = runBlocking { server.engine.resolvedConnectors().first().port }
-            log.info("내장 서버 시작: 127.0.0.1:{}{}", port, tools?.let { ", ${describe(it.current())}" }.orEmpty())
+            if (tools == null) log.info("내장 서버 시작: 127.0.0.1:{}", port) else scope.launch(Dispatchers.IO) { logStart(port, tools) }
             return LocalServer(port, token, server, scope, jobs)
+        }
+
+        private fun logStart(port: Int, tools: ToolPathProvider) {
+            val paths = try {
+                describe(tools.current())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "도구 경로를 확인하지 못함 (${e.javaClass.simpleName})"
+            }
+            log.info("내장 서버 시작: 127.0.0.1:{}, {}", port, paths)
         }
 
         private fun describe(paths: ToolPaths): String =

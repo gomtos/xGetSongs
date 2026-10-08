@@ -117,9 +117,19 @@ fun Application.module(services: Services, config: ServerConfig, jobs: JobRegist
                 return@sse
             }
             val tag = JobLog.shortId(id)
-            for (event in handle.events) {
-                JobLog.describe(event)?.let { jobLog.write(tag, it) }
-                send(ServerSentEvent(data = json.encodeToString(JobEvent.serializer(), event), event = event.sseName))
+            // The file name each rank was started with: the reasons of its later events are stripped of it.
+            val fileNames = HashMap<Int, String>()
+            var ended = false
+            try {
+                for (event in handle.events) {
+                    if (event is JobEvent.ItemStarted) fileNames[event.rank] = event.fileName
+                    JobLog.describe(event, fileNames)?.let { jobLog.write(tag, it) }
+                    send(ServerSentEvent(data = json.encodeToString(JobEvent.serializer(), event), event = event.sseName))
+                }
+                ended = true
+            } finally {
+                // Not a catch: the cancellation of a closed connection has to go on its way. The job is not cancelled by it.
+                if (!ended) jobLog.warn(JobLog.eventsDisconnected(id))
             }
             // Only reached when the job ended; a dropped connection leaves the job cancellable.
             jobs.remove(id)

@@ -1,6 +1,7 @@
 package com.xgetsongs.server
 
 import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.spi.ILoggingEvent
 import com.xgetsongs.engine.tools.ToolPathProvider
 import com.xgetsongs.engine.tools.ToolPaths
 import com.xgetsongs.shared.api.ApiHeaders
@@ -30,7 +31,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -38,6 +41,10 @@ import java.net.ConnectException
 import java.net.Socket
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -62,11 +69,11 @@ class LocalServerTest {
         server.stop()
     }
 
-    private fun client(token: String? = server.token) = HttpClient(CIO) {
+    private fun client(token: String? = server.token, port: Int = server.port) = HttpClient(CIO) {
         install(ContentNegotiation) { json(ApiJson.instance) }
         install(SSE)
         defaultRequest {
-            url("http://127.0.0.1:${server.port}")
+            url("http://127.0.0.1:$port")
             if (token != null) header(ApiHeaders.TOKEN, token)
         }
     }
@@ -189,6 +196,13 @@ class LocalServerTest {
         }
     }
 
+    /** The start line comes from a coroutine of its own, so it may be a moment late: wait for it (generously). */
+    private fun LogCapture.awaitInfo(count: Int = 1): List<ILoggingEvent> {
+        val deadline = System.nanoTime() + 30_000_000_000L
+        while (at(Level.INFO).size < count && System.nanoTime() < deadline) Thread.sleep(10)
+        return at(Level.INFO)
+    }
+
     @Test
     fun startingLogsThePortAndTheToolPathsButNotTheToken() {
         val tools = ToolPathProvider {
@@ -198,7 +212,7 @@ class LocalServerTest {
         LogCapture(LocalServer::class.java.name).use { capture ->
             val started = LocalServer.start(fakes.services, tools = tools)
             try {
-                val record = capture.at(Level.INFO).single()
+                val record = capture.awaitInfo().single()
                 assertTrue("127.0.0.1:${started.port}" in record.formattedMessage, record.formattedMessage)
                 assertTrue("yt-dlp=${Path.of("C:/t/yt-dlp.exe")}" in record.formattedMessage, record.formattedMessage)
                 assertTrue("ffmpeg=없음" in record.formattedMessage, record.formattedMessage)
@@ -207,6 +221,102 @@ class LocalServerTest {
             } finally {
                 started.stop()
             }
+        }
+    }
+
+    @Test
+    fun theToolLookupForTheStartLineDoesNotHoldUpStartingTheServer() {
+        val release = CountDownLatch(1)
+        val finished = AtomicBoolean(false)
+        val lookupThread = AtomicReference<Thread>()
+        val tools = ToolPathProvider {
+            lookupThread.set(Thread.currentThread())
+            release.await(30, TimeUnit.SECONDS)
+            finished.set(true)
+            ToolPaths(ytDlp = Path.of("C:/t/yt-dlp.exe"), ffmpeg = null, jsRuntime = null)
+        }
+
+        LogCapture(LocalServer::class.java.name).use { capture ->
+            val started = LocalServer.start(fakes.services, tools = tools) // returns while the lookup is still stuck
+            try {
+                assertFalse(finished.get(), "the lookup has not finished: start did not wait for it")
+                assertEquals(emptyList(), capture.at(Level.INFO), "no start line yet")
+                runBlocking { client(started.token, started.port).use { assertEquals(HttpStatusCode.OK, it.get("/tools").status) } }
+
+                release.countDown()
+                val record = capture.awaitInfo().single()
+                assertTrue("127.0.0.1:${started.port}" in record.formattedMessage && "yt-dlp=" in record.formattedMessage, record.formattedMessage)
+                assertTrue(lookupThread.get() !== Thread.currentThread(), "it ran on another thread")
+            } finally {
+                release.countDown()
+                started.stop()
+            }
+        }
+    }
+
+    @Test
+    fun aToolLookupThatFailsStillLogsThePortAndNeverThrows() {
+        val tools = ToolPathProvider { throw IllegalStateException("PATH is broken") }
+
+        LogCapture(LocalServer::class.java.name).use { capture ->
+            val started = LocalServer.start(fakes.services, tools = tools)
+            try {
+                val record = capture.awaitInfo().single()
+                assertTrue("127.0.0.1:${started.port}" in record.formattedMessage, record.formattedMessage)
+                assertTrue("도구 경로를 확인하지 못함 (IllegalStateException)" in record.formattedMessage, record.formattedMessage)
+                assertEquals(emptyList(), capture.at(Level.ERROR))
+            } finally {
+                started.stop()
+            }
+        }
+    }
+
+    @Test
+    fun aDroppedEventConnectionIsLoggedAsAWarningWhileTheJobGoesOn() = runBlocking {
+        fakes.downloads.queued = listOf(JobEvent.ItemStarted(1, "vid00000001", "001 A - One.mp3"))
+        fakes.downloads.closeAfterQueued = false
+        LogCapture(JobLog.LOGGER_NAME).use { capture ->
+            client().use { client ->
+                withTimeout(60_000) {
+                    val jobId = client.startJob()
+                    val firstSeen = CompletableDeferred<Unit>()
+                    coroutineScope {
+                        val reader = launch {
+                            client.sse("/jobs/$jobId/events") { incoming.collect { firstSeen.complete(Unit) } }
+                        }
+                        firstSeen.await()
+                        reader.cancelAndJoin() // the client goes away
+
+                        // The server learns about it when it next writes: keep the job producing events until it does.
+                        while (capture.at(Level.WARN).isEmpty()) {
+                            fakes.downloads.channel!!.trySend(JobEvent.ItemDone(1, "001 A - One.mp3"))
+                            delay(50)
+                        }
+                    }
+                    val warnings = capture.at(Level.WARN).map { it.formattedMessage }
+                    assertEquals(listOf("이벤트 연결이 끊어짐 (작업 ${jobId.take(8)}, 작업은 계속 진행)"), warnings)
+                    assertFalse(fakes.downloads.jobs.single().isCancelled, "the job itself goes on")
+                    assertEquals(1, server.runningJobs(), "and is still registered")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun aJobThatEndsNormallyLogsNoWarningAboutTheConnection() = runBlocking {
+        fakes.downloads.queued = listOf(
+            JobEvent.ItemStarted(1, "vid00000001", "001 A - One.mp3"),
+            JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)),
+        )
+        LogCapture(JobLog.LOGGER_NAME).use { capture ->
+            client().use { client ->
+                withTimeout(30_000) {
+                    val jobId = client.startJob()
+                    client.sse("/jobs/$jobId/events") { incoming.collect { } }
+                }
+            }
+
+            assertEquals(emptyList(), capture.at(Level.WARN))
         }
     }
 

@@ -94,6 +94,87 @@ class JobLogTest {
         assertTrue(reason.endsWith("…"))
     }
 
+    // ---- paths and file names --------------------------------------------------------------
+
+    @Test
+    fun aNoSuchFileExceptionShapedReasonLosesBothPathsWhatEverTheSpacesInThem() {
+        val reason = "NoSuchFileException: C:\\Users\\Some User\\AppData\\Roaming\\xGetSongs\\work\\job-1\\001 A - B.f251.webm -> " +
+            "D:\\Music\\My Playlist\\001 A - B.mp3"
+
+        assertEquals("NoSuchFileException: <경로> -> <경로>", JobLog.redact(reason, emptyList()))
+    }
+
+    @Test
+    fun aFileSystemExceptionKeepsItsSystemReason() {
+        val reason = "FileSystemException: C:\\w\\job 1\\001 A - B.mp3 -> D:\\Music\\My Playlist\\001 A - B.mp3: " +
+            "The process cannot access the file because it is being used by another process"
+
+        assertEquals(
+            "FileSystemException: <경로> -> <경로>: The process cannot access the file because it is being used by another process",
+            JobLog.redact(reason, emptyList()),
+        )
+    }
+
+    @Test
+    fun aUncPathIsRedactedToo() {
+        assertEquals("AccessDeniedException: <경로>: Access is denied", JobLog.redact("AccessDeniedException: \\\\NAS\\Music Share\\Lists\\a.mp3: Access is denied", emptyList()))
+    }
+
+    @Test
+    fun theKnownFileNameIsReplacedWhereverItAppearsIgnoringCase() {
+        val redacted = JobLog.redact("yt-dlp could not write 001 A - B.MP3 (while merging)", listOf("001 A - B.mp3"))
+
+        assertEquals("yt-dlp could not write <파일명> (while merging)", redacted)
+    }
+
+    @Test
+    fun textWithoutPathsOrKnownNamesIsUnchanged() {
+        for (text in listOf("연결이 끊어졌습니다", "HTTP 429: Too Many Requests", "ERROR: [youtube] abc: Video unavailable", "")) {
+            assertEquals(text, JobLog.redact(text, listOf("001 A - B.mp3")), text)
+        }
+    }
+
+    @Test
+    fun aFailedItemLosesPathsAndTheFileNameOfItsRank() {
+        val event = JobEvent.ItemFailed(
+            3,
+            "FileSystemException: C:\\Users\\me\\Music\\MARKER-SONG.mp3 -> D:\\Out\\MARKER-SONG.mp3: Access is denied (MARKER-SONG.mp3)",
+        )
+
+        val line = assertNotNull(JobLog.describe(event, mapOf(3 to "MARKER-SONG.mp3")))
+
+        assertEquals(JobLogLevel.WARN, line.level)
+        assertEquals("항목 실패: 순위 3, 사유: FileSystemException: <경로> -> <경로>: Access is denied (<파일명>)", line.text)
+    }
+
+    @Test
+    fun aSkippedItemLosesThemToo() {
+        val line = assertNotNull(JobLog.describe(JobEvent.ItemSkipped(2, "이미 있음: D:\\Out\\MARKER-SONG.mp3"), mapOf(2 to "MARKER-SONG.mp3")))
+
+        assertEquals("항목 건너뜀: 순위 2, 사유: 이미 있음: <경로>", line.text)
+    }
+
+    @Test
+    fun theFileNameOfAnotherRankIsNotTouched() {
+        val line = assertNotNull(JobLog.describe(JobEvent.ItemFailed(3, "failed: other-name.mp3"), mapOf(4 to "other-name.mp3")))
+
+        assertEquals("항목 실패: 순위 3, 사유: failed: other-name.mp3", line.text)
+    }
+
+    @Test
+    fun aPathIsRedactedBeforeTheReasonIsCutSoNoPartOfItSurvives() {
+        val longPath = "C:\\" + "very long folder name\\".repeat(40) + "file.mp3"
+
+        val line = assertNotNull(JobLog.describe(JobEvent.ItemFailed(1, "failed: $longPath"), emptyMap()))
+
+        assertEquals("항목 실패: 순위 1, 사유: failed: <경로>", line.text)
+    }
+
+    @Test
+    fun theLineForADroppedEventConnectionNamesTheJobAndSaysItGoesOn() {
+        assertEquals("이벤트 연결이 끊어짐 (작업 01234567, 작업은 계속 진행)", JobLog.eventsDisconnected("0123456789abcdef"))
+    }
+
     @Test
     fun theStartLineHasKindCountAndOptionsAndNoTitles() {
         val options = JobOptions(outputDir = "C:\\Music\\out", overwrite = true, includeRank = false, concurrency = 3, searchLyricsOnline = false)
@@ -188,7 +269,13 @@ class JobLogTest {
         fakes.downloads.queued = listOf(
             JobEvent.ItemStarted(1, "vid00000001", "TITLE-MARKER-ONE.mp3"),
             JobEvent.ItemDone(1, "TITLE-MARKER-ONE.mp3"),
-            JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)),
+            JobEvent.ItemStarted(3, "vid00000003", "TITLE-MARKER-THREE.mp3"),
+            JobEvent.ItemFailed(
+                3,
+                "FileSystemException: C:\\Users\\Some User\\Music\\TITLE-MARKER-THREE.mp3 -> D:\\Out\\TITLE-MARKER-THREE.mp3: " +
+                    "Access is denied while writing title-marker-three.mp3",
+            ),
+            JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)),
         )
         installServer(fakes.services)
         val client = apiClient() // sends the token header with every request
@@ -203,7 +290,11 @@ class JobLogTest {
             assertFalse(TEST_TOKEN in everything, everything)
             assertFalse("X-XGS-Token" in everything, everything)
             assertFalse("TITLE-MARKER" in everything, everything)
+            assertFalse("title-marker" in everything, everything)
+            assertFalse("Some User" in everything, "no path: $everything")
             assertFalse("A - One" in everything, "no title of the sample playlist: $everything")
+            val failure = capture.events.jobs().single { it.level == Level.WARN }.formattedMessage
+            assertTrue(failure.endsWith("항목 실패: 순위 3, 사유: FileSystemException: <경로> -> <경로>: Access is denied while writing <파일명>"), failure)
         }
     }
 
