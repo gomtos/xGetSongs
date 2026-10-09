@@ -84,7 +84,7 @@ class Id3TaggerTest {
         assertNull(result)
         val tag = Id3v2Tag.read(file)
         assertEquals(listOf("TIT2", "COMM"), tag.ids, "ffmpeg's frame stays, the comment frame is added")
-        assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments())
+        assertEquals(listOf(Id3v2Tag.Comment(3, "eng", "", tags.comment!!)), tag.comments())
     }
 
     @Test
@@ -119,8 +119,8 @@ class Id3TaggerTest {
         assertNull(result)
         val tag = Id3v2Tag.read(file)
         assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids, "ffmpeg's frame stays, COMM and USLT are added in that order")
-        assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments())
-        assertEquals(listOf(Id3v2Tag.Lyrics(1, "kor", "", lyricsInTheFile)), tag.lyrics())
+        assertEquals(listOf(Id3v2Tag.Comment(3, "eng", "", tags.comment!!)), tag.comments())
+        assertEquals(listOf(Id3v2Tag.Lyrics(3, "kor", "", lyricsInTheFile)), tag.lyrics())
         assertTrue(endsWithFakeAudio(file), "the audio of ffmpeg's output must reach the final file")
         assertEquals(listOf("vid00000001.mp3"), filesInDir())
     }
@@ -137,7 +137,7 @@ class Id3TaggerTest {
         assertNull(result)
         val tag = Id3v2Tag.read(file)
         assertEquals(listOf("TIT2", "USLT"), tag.ids)
-        assertEquals(listOf(Id3v2Tag.Lyrics(1, "eng", "", "Line one\r\nLine two")), tag.lyrics())
+        assertEquals(listOf(Id3v2Tag.Lyrics(3, "eng", "", "Line one\r\nLine two")), tag.lyrics())
     }
 
     @Test
@@ -201,7 +201,7 @@ class Id3TaggerTest {
     @Test
     fun aTagLayoutTheFrameStepCannotRewriteFailsTheItemWhenOnlyLyricsAreGiven() = runTest {
         val runner = FakeProcessRunner { command, _, _ ->
-            Files.write(Path.of(command.last()), "ID3".toByteArray() + byteArrayOf(4, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
+            Files.write(Path.of(command.last()), "ID3".toByteArray() + byteArrayOf(3, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
             0
         }
 
@@ -215,8 +215,8 @@ class Id3TaggerTest {
     @Test
     fun aTagLayoutTheCommentStepCannotRewriteFailsTheItemAndKeepsTheOriginal() = runTest {
         val runner = FakeProcessRunner { command, _, _ ->
-            // An ID3v2.4 header: the engine only knows how to extend v2.3 tags.
-            Files.write(Path.of(command.last()), "ID3".toByteArray() + byteArrayOf(4, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
+            // An ID3v2.3 header: the engine only knows how to extend v2.4 tags.
+            Files.write(Path.of(command.last()), "ID3".toByteArray() + byteArrayOf(3, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
             0
         }
 

@@ -70,15 +70,15 @@ fun writeFakeInfo(command: List<String>, json: String) {
 const val FAKE_AUDIO = "tagged-mp3-data"
 
 /**
- * What the fake ffmpeg writes: a minimal ID3v2.3 file (a header, one `TIT2` frame and 4 bytes of padding) followed by
+ * What the fake ffmpeg writes: a minimal ID3v2.4 file (a header, one `TIT2` frame and 4 bytes of padding) followed by
  * [FAKE_AUDIO]. It has to be a real tag because the engine adds the comment frame to ffmpeg's output.
  */
 fun fakeTaggedMp3(): ByteArray {
-    // Frame: id, 4-byte big-endian size (1 encoding byte + 5 text bytes), 2 flag bytes, body.
+    // Frame: id, 4-byte syncsafe size (1 encoding byte + 5 text bytes = 6, which is the same bytes as a plain integer), 2 flag bytes, body.
     val frame = "TIT2".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(0, 0, 0, 6, 0, 0) + byteArrayOf(0) + "Title".toByteArray(Charsets.ISO_8859_1)
     val padding = ByteArray(4)
     val tagSize = frame.size + padding.size // 20: fits in the last syncsafe byte
-    val header = "ID3".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(3, 0, 0, 0, 0, 0, tagSize.toByte())
+    val header = "ID3".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(4, 0, 0, 0, 0, 0, tagSize.toByte())
     return header + frame + padding + FAKE_AUDIO.toByteArray(Charsets.ISO_8859_1)
 }
 

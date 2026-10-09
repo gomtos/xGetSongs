@@ -14,9 +14,9 @@ object FfmpegCommands {
     )
 
     /**
-     * Copies the audio of [input] into [output] without re-encoding and writes ID3v2.3 tags read from the ffmetadata
-     * file [metadataFile]. With a [cover] the picture is cropped to a centered square, re-encoded as JPEG and attached
-     * as the front cover. [output] must end in `.mp3`: ffmpeg picks the muxer from the extension.
+     * Copies the audio of [input] into [output] without re-encoding and writes ID3v2.4 tags (text in UTF-8) read from the
+     * ffmetadata file [metadataFile]. With a [cover] the picture is cropped to a centered square, re-encoded as JPEG and
+     * attached as the front cover. [output] must end in `.mp3`: ffmpeg picks the muxer from the extension.
      */
     fun tag(ffmpeg: Path, input: Path, cover: Path?, metadataFile: Path, output: Path): List<String> {
         require(output.fileName.toString().endsWith(".mp3", ignoreCase = true)) { "output must be an .mp3 file: $output" }
@@ -30,6 +30,6 @@ object FfmpegCommands {
             listOf("-map", "0:a") + coverMap +
             listOf("-map_chapters", "-1", "-map_metadata", metadataIndex.toString()) +
             listOf("-c:a", "copy") + coverOutput +
-            listOf("-id3v2_version", "3", output.toString())
+            listOf("-id3v2_version", "4", output.toString())
     }
 }

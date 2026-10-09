@@ -816,7 +816,7 @@ class DefaultDownloadServiceTest {
         val tag = deliveredTag(infoWithDescription(describedLyrics), texts)
 
         assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids)
-        assertEquals(listOf(Id3v2Tag.Lyrics(1, "kor", "", "첫 번째 줄\r\n두 번째 줄\r\n\r\nLa la la")), tag.lyrics())
+        assertEquals(listOf(Id3v2Tag.Lyrics(3, "kor", "", "첫 번째 줄\r\n두 번째 줄\r\n\r\nLa la la")), tag.lyrics())
         assertTrue("첫 번째" !in texts.single() && "lyrics" !in texts.single(), "ffmpeg would store the lyrics as a TXXX frame: ${texts.single()}")
         assertEquals("https://www.youtube.com/watch?v=vid00000001", tag.comments().single().text, "the comment is unchanged")
     }
@@ -828,7 +828,7 @@ class DefaultDownloadServiceTest {
         val tag = deliveredTag(infoWithDescription("Heading\nLyrics:\nLine one\nLine two\nLine three", album = "Palette"), texts)
 
         assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
-        assertEquals(listOf(Id3v2Tag.Lyrics(1, "eng", "", "Line one\r\nLine two\r\nLine three")), tag.lyrics())
+        assertEquals(listOf(Id3v2Tag.Lyrics(3, "eng", "", "Line one\r\nLine two\r\nLine three")), tag.lyrics())
     }
 
     @Test
@@ -908,7 +908,7 @@ class DefaultDownloadServiceTest {
 
         assertEquals(1, provider.queries.size)
         assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids)
-        assertEquals(listOf(Id3v2Tag.Lyrics(1, "kor", "", onlineLyricsInTheFile)), tag.lyrics())
+        assertEquals(listOf(Id3v2Tag.Lyrics(3, "kor", "", onlineLyricsInTheFile)), tag.lyrics())
         assertTrue("온라인" !in texts.single() && "lyrics" !in texts.single(), "ffmpeg would store the lyrics as a TXXX frame: ${texts.single()}")
     }
 
@@ -985,7 +985,7 @@ class DefaultDownloadServiceTest {
         val tag = deliveredWith(provider, infoWithDescription(describedLyrics))
 
         assertEquals(emptyList(), provider.queries.toList(), "the description has lyrics, so nobody is asked")
-        assertEquals(listOf(Id3v2Tag.Lyrics(1, "kor", "", "첫 번째 줄\r\n두 번째 줄\r\n\r\nLa la la")), tag.lyrics())
+        assertEquals(listOf(Id3v2Tag.Lyrics(3, "kor", "", "첫 번째 줄\r\n두 번째 줄\r\n\r\nLa la la")), tag.lyrics())
     }
 
     @Test
@@ -1326,7 +1326,7 @@ class DefaultDownloadServiceTest {
         // ffmpeg "succeeds" but leaves a tag of another version, which the engine does not extend with its USLT frame.
         val runner = FakeProcessRunner { command, _, _ ->
             if (isFfmpegCommand(command)) {
-                Files.write(Path.of(command.last()), "ID3".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(4, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
+                Files.write(Path.of(command.last()), "ID3".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(3, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
             } else {
                 writeFakeMp3(command)
                 writeFakeInfo(command, infoWithDescription(describedLyrics))

@@ -22,7 +22,7 @@ class FfmpegCommandsTest {
                 "-i", input.toString(), "-f", "ffmetadata", "-i", metadata.toString(),
                 "-map", "0:a", "-map_chapters", "-1", "-map_metadata", "1",
                 "-c:a", "copy",
-                "-id3v2_version", "3", output.toString(),
+                "-id3v2_version", "4", output.toString(),
             ),
             command,
         )
@@ -40,7 +40,7 @@ class FfmpegCommandsTest {
                 "-c:a", "copy",
                 "-c:v", "mjpeg", "-q:v", "2", "-vf", "crop=min(iw\\,ih):min(iw\\,ih)", "-disposition:v", "attached_pic",
                 "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)",
-                "-id3v2_version", "3", output.toString(),
+                "-id3v2_version", "4", output.toString(),
             ),
             command,
         )
