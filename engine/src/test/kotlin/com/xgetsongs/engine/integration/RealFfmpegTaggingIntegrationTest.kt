@@ -155,26 +155,26 @@ class RealFfmpegTaggingIntegrationTest {
     }
 
     @Test
-    fun theTagIsId3v2Point3WithUtf16TextAndAFrontCoverAndNoId3v1(): Unit = runBlocking {
+    fun theTagIsId3v2Point4WithUtf8TextAndAFrontCoverAndNoId3v1(): Unit = runBlocking {
         withTimeout(60_000) {
             val mp3 = silentMp3()
 
             assertNull(Id3Tagger(runner, locator).tag(mp3, redJpg(), tags))
 
             val tag = Id3v2Tag.read(mp3)
-            assertEquals(3, tag.version)
+            assertEquals(4, tag.version)
             for (id in listOf("TIT2", "TPE1", "TPE2", "TALB", "TRCK", "APIC")) {
                 assertTrue(id in tag.ids, "$id is missing from ${tag.ids}")
             }
-            // ID3 text encoding 1 is UTF-16 with a byte order mark; the title has Korean text.
-            assertEquals(1, tag.frame("TIT2").body[0].toInt())
+            // ID3 text encoding 3 is UTF-8; the title has Korean text.
+            assertEquals(3, tag.frame("TIT2").body[0].toInt())
             // APIC body: encoding byte, MIME type and a zero byte, then the picture type (3 = front cover).
             val apic = tag.frame("APIC").body
             val mimeEnd = 1 + apic.drop(1).indexOfFirst { it.toInt() == 0 }
             assertEquals("image/jpeg", String(apic, 1, mimeEnd - 1, Charsets.ISO_8859_1))
             assertEquals(3, apic[mimeEnd + 1].toInt())
             // ffmpeg itself can only write a comment as a user-defined TXXX frame; the engine adds a real COMM frame.
-            assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments(), tag.ids.toString())
+            assertEquals(listOf(Id3v2Tag.Comment(3, "eng", "", tags.comment!!)), tag.comments(), tag.ids.toString())
             assertEquals(1, tag.ids.count { it == "COMM" }, tag.ids.toString())
             assertTrue(
                 tag.frames.filter { it.id == "TXXX" }.none { "comment" in String(it.body, Charsets.ISO_8859_1) },
@@ -185,7 +185,7 @@ class RealFfmpegTaggingIntegrationTest {
     }
 
     @Test
-    fun aKoreanCommentIsStoredAsUtf16AndReadBackByFfprobe(): Unit = runBlocking {
+    fun aKoreanCommentIsStoredAsUtf8AndReadBackByFfprobe(): Unit = runBlocking {
         withTimeout(60_000) {
             val mp3 = silentMp3()
             val korean = tags.copy(comment = "메모: \"인용\" 'x' https://www.youtube.com/watch?v=jNQXAC9IVRw\n둘째 줄 \uD83C\uDFB5")
@@ -193,7 +193,7 @@ class RealFfmpegTaggingIntegrationTest {
             assertNull(Id3Tagger(runner, locator).tag(mp3, redJpg(), korean))
 
             val comment = Id3v2Tag.read(mp3).comments().single()
-            assertEquals(1, comment.encoding)
+            assertEquals(3, comment.encoding)
             assertEquals(korean.comment, comment.text)
             assertTags(korean, ffprobe.probe(mp3).tags)
         }
@@ -212,13 +212,13 @@ class RealFfmpegTaggingIntegrationTest {
             val tag = Id3v2Tag.read(mp3)
             assertEquals(1, tag.ids.count { it == "USLT" }, tag.ids.toString())
             val frame = tag.lyrics().single()
-            assertEquals(1, frame.encoding, "UTF-16 with a byte order mark")
+            assertEquals(3, frame.encoding, "UTF-8")
             assertEquals("kor", frame.language)
             assertEquals("", frame.descriptor)
             assertEquals(lyrics.replace("\n", "\r\n"), frame.text)
             assertTrue('\uFEFF' !in frame.text, "no byte order mark inside the text")
             // The comment is still a real COMM frame, next to the lyrics.
-            assertEquals(listOf(Id3v2Tag.Comment(0, "eng", "", tags.comment!!)), tag.comments(), tag.ids.toString())
+            assertEquals(listOf(Id3v2Tag.Comment(3, "eng", "", tags.comment!!)), tag.comments(), tag.ids.toString())
             for (id in listOf("TIT2", "TPE1", "TPE2", "TALB", "TRCK", "APIC", "COMM", "USLT")) {
                 assertTrue(id in tag.ids, "$id is missing from ${tag.ids}")
             }
@@ -243,6 +243,25 @@ class RealFfmpegTaggingIntegrationTest {
     }
 
     @Test
+    fun everyTextFrameIsUtf8EvenWhenTheValuesAreAsciiOnly(): Unit = runBlocking {
+        withTimeout(60_000) {
+            val mp3 = silentMp3()
+            val ascii = tags.copy(title = "Golden", artist = "BTS", albumArtist = "BTS", album = "Best List", lyrics = "La la la\nSecond line")
+
+            assertNull(Id3Tagger(runner, locator).tag(mp3, null, ascii))
+
+            val tag = Id3v2Tag.read(mp3)
+            val textFrames = tag.frames.filter { it.id.startsWith("T") }
+            assertTrue(textFrames.map { it.id }.containsAll(listOf("TIT2", "TPE1", "TPE2", "TALB", "TRCK")), tag.ids.toString())
+            // No ISO-8859-1 (encoding 0) is left, which is what ffmpeg wrote for ASCII-only values in an ID3v2.3 tag.
+            for (frame in textFrames) assertEquals(3, frame.body[0].toInt(), "${frame.id} must be UTF-8")
+            assertEquals(listOf(Id3v2Tag.Comment(3, "eng", "", ascii.comment!!)), tag.comments())
+            assertEquals(listOf(Id3v2Tag.Lyrics(3, "eng", "", "La la la\r\nSecond line")), tag.lyrics())
+            assertTags(ascii, ffprobe.probe(mp3).tags)
+        }
+    }
+
+    @Test
     fun withoutLyricsNoUsltFrameIsWritten(): Unit = runBlocking {
         withTimeout(60_000) {
             val mp3 = silentMp3()
@@ -254,15 +273,15 @@ class RealFfmpegTaggingIntegrationTest {
         }
     }
 
-    /** Like [silentMp3], but with an ID3v2.3 tag (or none), which is what the engine's own frame writer extends. */
-    private suspend fun silentMp3WithAV23Tag(): Path = root.resolve("track.mp3").also {
-        generate("-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1", "-c:a", "libmp3lame", "-id3v2_version", "3", it.toString())
+    /** Like [silentMp3], but with an ID3v2.4 tag (or none), which is what the engine's own frame writer extends. */
+    private suspend fun silentMp3WithAV24Tag(): Path = root.resolve("track.mp3").also {
+        generate("-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1", "-c:a", "libmp3lame", "-id3v2_version", "4", it.toString())
     }
 
     @Test
     fun noLyricsGivenMeansNoLyricsFrameAndNoLyricsTagEvenWhenTheInputFileCarriesLyrics(): Unit = runBlocking {
         withTimeout(60_000) {
-            val mp3 = silentMp3WithAV23Tag()
+            val mp3 = silentMp3WithAV24Tag()
             // The input already has a USLT frame, written the way the engine writes one.
             Id3Frames.add(mp3, null, "Old made-up line one\nOld line two\nOld line three")
             assertTrue("USLT" in Id3v2Tag.read(mp3).ids, "precondition: the input has a USLT frame")
