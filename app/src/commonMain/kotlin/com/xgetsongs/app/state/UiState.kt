@@ -35,12 +35,11 @@ enum class Phase { IDLE, RESOLVING, PREVIEW, RUNNING, FINISHED }
 data class UiState(
     val phase: Phase = Phase.IDLE,
     val input: String = "",
-    /** [outputDir], [overwrite], [includeRank], [concurrency] and [searchLyricsOnline] are the options the app remembers between runs. */
+    /** [outputDir], [overwrite], [includeRank] and [searchLyricsOnline] are the options the app remembers between runs. */
     val outputDir: String = "",
     val overwrite: Boolean = false,
     /** Whether file names start with the rank (`001 `). Sent with the job; the preview names follow it. */
     val includeRank: Boolean = true,
-    val concurrency: Int = 2,
     /** Whether a song whose description has no lyrics is looked up on the internet. Sent with the job; the preview does not change. */
     val searchLyricsOnline: Boolean = true,
     /** Not remembered: it belongs to the video that is on screen. */

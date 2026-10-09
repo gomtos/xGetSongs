@@ -28,15 +28,18 @@ internal object JobLog {
     /** The part of a job's ID that tags its lines: enough to tell the jobs of one run apart. */
     fun shortId(jobId: String): String = jobId.take(8)
 
-    /** The names the user typed are free text like the titles, so the line only says that there were some. */
-    fun started(jobId: String, kind: InputKind, itemCount: Int, options: JobOptions): String {
+    /**
+     * [concurrency] is the number of parallel downloads the server chose. The names the user typed are free text like
+     * the titles, so the line only says that there were some.
+     */
+    fun started(jobId: String, kind: InputKind, itemCount: Int, options: JobOptions, concurrency: Int): String {
         val kindText = if (kind == InputKind.PLAYLIST) "재생목록" else "영상"
         val typed = buildString {
             if (!options.albumName.isNullOrBlank()) append(", albumName=지정")
             if (!options.folderName.isNullOrBlank()) append(", folderName=지정")
         }
         return "작업 시작: id=$jobId, 종류=$kindText, 항목=${itemCount}개, overwrite=${options.overwrite}, " +
-            "includeRank=${options.includeRank}, concurrency=${options.concurrency}, " +
+            "includeRank=${options.includeRank}, concurrency=$concurrency, " +
             "searchLyricsOnline=${options.searchLyricsOnline}, outputDir=${options.outputDir ?: "없음"}$typed"
     }
 

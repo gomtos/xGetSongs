@@ -21,7 +21,9 @@ interface Resolver {
 }
 
 /**
- * [items] must already carry their final ranks. [concurrency] is clamped to 1..4 by the service. [album] is the
+ * [items] must already carry their final ranks. [concurrency] is how many items are downloaded at the same time; the
+ * service raises anything below 1 to 1 and sets no upper limit ([com.xgetsongs.engine.job.DownloadConcurrency] has the
+ * number for this machine). [album] is the
  * fallback for the ID3 album tag: a file gets the video's own album when yt-dlp knows one, else this playlist title.
  * It is null for a single video, which then gets no album tag unless it has an album of its own. [includeRank] says
  * whether the file names start with the rank; the ID3 track number is the rank either way. Without the rank two items

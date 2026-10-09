@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -145,14 +144,7 @@ fun OptionsPanel(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("동시 다운로드", modifier = Modifier.widthIn(min = 100.dp), maxLines = 1, softWrap = false)
-            (1..4).forEach { n ->
-                FilterChip(
-                    selected = state.concurrency == n,
-                    onClick = { holder.onConcurrency(n) },
-                    label = { Text("$n") },
-                    enabled = enabled,
-                )
-            }
+            Text("코어 수의 70% (자동)", style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false)
             if (state.resolved?.kind == InputKind.VIDEO) {
                 OutlinedTextField(
                     value = rankText,

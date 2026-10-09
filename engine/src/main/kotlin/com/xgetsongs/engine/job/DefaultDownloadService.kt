@@ -78,7 +78,7 @@ class DefaultDownloadService(
                 Files.createTempDirectory(tempRoot, "job-").also { workRoot = it }
             }
             coroutineScope {
-                val gate = Semaphore(request.concurrency.coerceIn(MIN_CONCURRENCY, MAX_CONCURRENCY))
+                val gate = Semaphore(request.concurrency.coerceAtLeast(1))
                 for (item in request.items) {
                     launch { gate.withPermit { processItem(item, request, root, events, counters) } }
                 }
@@ -191,8 +191,6 @@ class DefaultDownloadService(
     }
 
     private companion object {
-        const val MIN_CONCURRENCY = 1
-        const val MAX_CONCURRENCY = 4
         const val ALREADY_EXISTS = "이미 존재"
     }
 }

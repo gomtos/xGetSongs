@@ -3,6 +3,7 @@ package com.xgetsongs.server
 import com.xgetsongs.engine.DownloadRequest
 import com.xgetsongs.engine.ResolveException
 import com.xgetsongs.engine.ToolException
+import com.xgetsongs.engine.job.DownloadConcurrency
 import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.engine.output.OutputSink
 import com.xgetsongs.shared.api.ApiJson
@@ -102,13 +103,15 @@ fun Application.module(services: Services, config: ServerConfig, jobs: JobRegist
                 .map { if (isVideo) it.copy(rank = options.singleRank) else it }
             if (items.isEmpty()) throw ApiException(HttpStatusCode.BadRequest, "다운로드할 항목이 없습니다.")
 
+            // The server decides how many items run at once: it is the machine that does the work.
+            val concurrency = DownloadConcurrency.automatic()
             val handle = services.downloads.start(
                 DownloadRequest(
-                    items, sink, options.overwrite, options.concurrency, album, options.includeRank, options.searchLyricsOnline, albumOverride,
+                    items, sink, options.overwrite, concurrency, album, options.includeRank, options.searchLyricsOnline, albumOverride,
                 ),
             )
             val jobId = jobs.register(handle)
-            jobLog.info("[{}] {}", JobLog.shortId(jobId), JobLog.started(jobId, resolved.kind, items.size, options))
+            jobLog.info("[{}] {}", JobLog.shortId(jobId), JobLog.started(jobId, resolved.kind, items.size, options, concurrency))
             call.respond(HttpStatusCode.Created, JobCreated(jobId))
         }
 

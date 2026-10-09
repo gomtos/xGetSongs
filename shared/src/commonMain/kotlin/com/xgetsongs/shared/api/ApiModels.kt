@@ -60,8 +60,6 @@ data class JobOptions(
     val overwrite: Boolean = false,
     /** Rank for a single video (1..999). Ignored for playlists. */
     val singleRank: Int = 1,
-    /** Clamped to 1..4 by the engine. */
-    val concurrency: Int = 2,
     /** Whether the file name starts with the rank (`001 `). The ID3 track number is the rank either way. */
     val includeRank: Boolean = true,
     /**

@@ -3,6 +3,7 @@ package com.xgetsongs.server
 import com.xgetsongs.engine.DownloadRequest
 import com.xgetsongs.engine.ResolveException
 import com.xgetsongs.engine.ToolException
+import com.xgetsongs.engine.job.DownloadConcurrency
 import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.shared.api.ActionResult
 import com.xgetsongs.shared.api.ApiJson
@@ -131,11 +132,22 @@ class RoutesTest {
         val client = apiClient()
         val resolved = client.resolve()
 
-        client.startJob(JobRequest(resolved.resolveId, JobOptions(outputDir = outDir.toString(), overwrite = true, concurrency = 3)))
+        client.startJob(JobRequest(resolved.resolveId, JobOptions(outputDir = outDir.toString(), overwrite = true)))
 
         val request = fakes.downloads.requests.single()
         assertTrue(request.overwrite)
-        assertEquals(3, request.concurrency)
+    }
+
+    @Test
+    fun theServerDecidesHowManyItemsAreDownloadedAtOnce() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+
+        assertEquals(DownloadConcurrency.automatic(), fakes.downloads.requests.single().concurrency, "70% of the cores of this machine")
     }
 
     @Test

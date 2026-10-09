@@ -313,21 +313,29 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun concurrencyIsClampedToFour() = runTest {
+    fun theServiceSetsNoUpperLimitOfItsOwn() = runTest {
         val gate = CompletableDeferred<Unit>()
         val held = downloadRunner { command, _, _ ->
             gate.await()
             writeFakeMp3(command)
             0
         }
-        val handle = service(held).start(request(*(1..8).map { item(it) }.toTypedArray(), concurrency = 99))
+        val handle = service(held).start(request(*(1..10).map { item(it) }.toTypedArray(), concurrency = 8))
 
-        awaitStarted(held, 4)
-        assertEquals(4, held.commands.size, "99 is clamped to 4 parallel downloads")
+        awaitStarted(held, 8)
+        assertEquals(8, held.commands.size, "eight parallel downloads were asked for, and the other two wait")
         gate.complete(Unit)
         handle.collect()
 
-        assertEquals(4, held.maxActive.get())
+        assertEquals(8, held.maxActive.get())
+        assertEquals(10, held.ytDlpCommands.size)
+    }
+
+    @Test
+    fun aConcurrencyBelowOneRunsOneAtATime() = runTest {
+        val events = service(succeeding).start(request(item(1), item(2), item(3), concurrency = 0)).collect()
+
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(3, 0, 0)), done(events))
     }
 
     @Test

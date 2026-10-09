@@ -94,8 +94,15 @@ class ApiModelsTest {
     fun jobRequestDefaultsApplyWhenFieldsAreOmitted() {
         val request = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1"}""")
         assertEquals(JobRequest("r1", JobOptions(), null), request)
-        assertEquals(2, request.options.concurrency)
         assertEquals(1, request.options.singleRank)
+    }
+
+    @Test
+    fun aConcurrencyFromAnOlderClientIsIgnoredBecauseTheServerDecidesIt() {
+        val request = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"concurrency":3}}""")
+
+        assertEquals(JobRequest("r1", JobOptions(), null), request)
+        assertFalse(json.encodeToString(JobRequest.serializer(), request).contains("concurrency"))
     }
 
     @Test

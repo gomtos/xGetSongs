@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 /**
  * All screen logic. The composables only render [state] and call these functions.
  *
- * The five options (output folder, overwrite, rank in file names, concurrency, lyrics search on the internet) start from
+ * The four options (output folder, overwrite, rank in file names, lyrics search on the internet) start from
  * what [settings] holds and are saved again a moment after the user changes one of them; see [flushSettings].
  */
 class AppStateHolder(
@@ -46,7 +46,7 @@ class AppStateHolder(
 
     /**
      * The options as they are known to be stored: what the screen started with (what [settings] holds, with a blank
-     * folder replaced by the default and the concurrency brought into range), then whatever was saved last. Nothing is
+     * folder replaced by the default), then whatever was saved last. Nothing is
      * written while the screen still shows exactly these, so a file that could not be read is not replaced by defaults
      * and the default folder does not end up in the file unless the user changes something.
      */
@@ -58,7 +58,6 @@ class AppStateHolder(
             outputDir = stored.outputDir?.takeIf { it.isNotBlank() } ?: defaultOutputDir,
             overwrite = stored.overwrite,
             includeRank = stored.includeRank,
-            concurrency = stored.concurrency.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY),
             searchLyricsOnline = stored.searchLyricsOnline,
         )
     }
@@ -83,9 +82,6 @@ class AppStateHolder(
             state.copy(includeRank = value, rows = state.rows.map { it.withFileName(value) })
         }
     }
-
-    fun onConcurrency(value: Int) =
-        changeOptions { it.copy(concurrency = value.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY)) }
 
     /** Whether a song whose description has no lyrics is looked up on the internet. It only matters when a job starts. */
     fun onSearchLyricsOnline(value: Boolean) = changeOptions { it.copy(searchLyricsOnline = value) }
@@ -148,10 +144,9 @@ class AppStateHolder(
         lastKnown = current
     }
 
-    /** The five options that are remembered; nothing else on the screen is. */
+    /** The four options that are remembered; nothing else on the screen is. */
     private fun UiState.options() = UserSettings(
-        outputDir = outputDir, overwrite = overwrite, includeRank = includeRank, concurrency = concurrency,
-        searchLyricsOnline = searchLyricsOnline,
+        outputDir = outputDir, overwrite = overwrite, includeRank = includeRank, searchLyricsOnline = searchLyricsOnline,
     )
 
     fun reset() {
@@ -160,7 +155,7 @@ class AppStateHolder(
         _state.update {
             UiState(
                 outputDir = it.outputDir, overwrite = it.overwrite, includeRank = it.includeRank,
-                concurrency = it.concurrency, searchLyricsOnline = it.searchLyricsOnline, tools = it.tools,
+                searchLyricsOnline = it.searchLyricsOnline, tools = it.tools,
             )
         }
     }
@@ -321,7 +316,6 @@ class AppStateHolder(
         outputDir = state.outputDir,
         overwrite = state.overwrite,
         singleRank = state.singleRank,
-        concurrency = state.concurrency,
         includeRank = state.includeRank,
         searchLyricsOnline = state.searchLyricsOnline,
         albumName = state.albumName?.takeIf { it.isNotBlank() },

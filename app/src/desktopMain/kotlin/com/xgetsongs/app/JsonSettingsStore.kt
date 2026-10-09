@@ -25,8 +25,7 @@ class JsonSettingsStore(private val file: Path) : SettingsStore {
         // Strict: bytes that are not UTF-8 (a file saved in the ANSI code page) must give the defaults, not a folder name
         // full of U+FFFD. A byte order mark, which Notepad and PowerShell like to add, is not part of the JSON.
         val text = Files.readAllBytes(file).decodeToString(throwOnInvalidSequence = true).removePrefix("\uFEFF")
-        val stored = json.decodeFromString(UserSettings.serializer(), text)
-        stored.copy(concurrency = stored.concurrency.coerceIn(UserSettings.MIN_CONCURRENCY, UserSettings.MAX_CONCURRENCY))
+        json.decodeFromString(UserSettings.serializer(), text)
     } catch (e: Exception) {
         UserSettings()
     }

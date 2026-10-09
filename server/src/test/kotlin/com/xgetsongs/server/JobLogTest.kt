@@ -2,6 +2,7 @@ package com.xgetsongs.server
 
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.spi.ILoggingEvent
+import com.xgetsongs.engine.job.DownloadConcurrency
 import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobCreated
 import com.xgetsongs.shared.api.JobEvent
@@ -198,10 +199,10 @@ class JobLogTest {
 
     @Test
     fun theStartLineHasKindCountAndOptionsAndNoTitles() {
-        val options = JobOptions(outputDir = "C:\\Music\\out", overwrite = true, includeRank = false, concurrency = 3, searchLyricsOnline = false)
+        val options = JobOptions(outputDir = "C:\\Music\\out", overwrite = true, includeRank = false, searchLyricsOnline = false)
 
-        val playlist = JobLog.started("0123456789abcdef", InputKind.PLAYLIST, itemCount = 40, options)
-        val video = JobLog.started("0123456789abcdef", InputKind.VIDEO, itemCount = 1, options.copy(outputDir = null))
+        val playlist = JobLog.started("0123456789abcdef", InputKind.PLAYLIST, itemCount = 40, options, concurrency = 3)
+        val video = JobLog.started("0123456789abcdef", InputKind.VIDEO, itemCount = 1, options.copy(outputDir = null), concurrency = 3)
 
         assertEquals(
             "작업 시작: id=0123456789abcdef, 종류=재생목록, 항목=40개, overwrite=true, includeRank=false, concurrency=3, searchLyricsOnline=false, outputDir=C:\\Music\\out",
@@ -216,12 +217,12 @@ class JobLogTest {
         val typed = plain.copy(albumName = "비밀 앨범", folderName = "비밀 폴더")
         val blank = plain.copy(albumName = "  ", folderName = "")
 
-        val line = JobLog.started("0123456789abcdef", InputKind.PLAYLIST, itemCount = 2, typed)
+        val line = JobLog.started("0123456789abcdef", InputKind.PLAYLIST, itemCount = 2, typed, concurrency = 3)
 
         assertTrue(line.endsWith(", outputDir=C:\\Music\\out, albumName=지정, folderName=지정"), line)
         assertTrue("비밀" !in line, line)
-        assertEquals(JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain), JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, blank))
-        assertTrue("albumName" !in JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain))
+        assertEquals(JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain, 3), JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, blank, 3))
+        assertTrue("albumName" !in JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain, 3))
     }
 
     @Test
@@ -265,7 +266,7 @@ class JobLogTest {
         val resolved = client.resolve()
 
         LogCapture().use { capture ->
-            val jobId = client.startJob(resolved, JobOptions(outputDir = outDir.toString(), overwrite = true, concurrency = 3))
+            val jobId = client.startJob(resolved, JobOptions(outputDir = outDir.toString(), overwrite = true))
             client.readEventsToTheEnd(jobId)
 
             val tag = "[${jobId.take(8)}]"
@@ -273,7 +274,7 @@ class JobLogTest {
             val byText = records.associate { it.formattedMessage to it.level }
             val start = records.first()
             assertEquals(Level.INFO, start.level)
-            assertTrue(start.formattedMessage.startsWith("$tag 작업 시작: id=$jobId, 종류=재생목록, 항목=2개, overwrite=true, includeRank=true, concurrency=3, searchLyricsOnline=true, outputDir=$outDir"), start.formattedMessage)
+            assertTrue(start.formattedMessage.startsWith("$tag 작업 시작: id=$jobId, 종류=재생목록, 항목=2개, overwrite=true, includeRank=true, concurrency=${DownloadConcurrency.automatic()}, searchLyricsOnline=true, outputDir=$outDir"), start.formattedMessage)
             assertEquals(Level.DEBUG, byText["$tag 항목 시작: 순위 1, 영상 vid00000001"])
             assertEquals(Level.INFO, byText["$tag 항목 완료: 순위 1, 가사 ONLINE"])
             assertEquals(Level.WARN, byText["$tag 항목 실패: 순위 3, 사유: 연결이 끊어졌습니다"])

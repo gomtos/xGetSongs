@@ -34,7 +34,7 @@ class JsonSettingsStoreTest {
     @Test
     fun theDefaultsAreWhatTheSpecSays() {
         assertEquals(
-            UserSettings(outputDir = null, overwrite = false, includeRank = true, concurrency = 2, searchLyricsOnline = true),
+            UserSettings(outputDir = null, overwrite = false, includeRank = true, searchLyricsOnline = true),
             UserSettings(),
         )
         assertTrue(UserSettings().searchLyricsOnline, "the lyrics search is on until the user turns it off")
@@ -42,7 +42,7 @@ class JsonSettingsStoreTest {
 
     @Test
     fun savedSettingsComeBackUnchangedIncludingAKoreanPath() {
-        val settings = UserSettings(outputDir = "D:\\음악\\내 재생목록", overwrite = true, includeRank = false, concurrency = 3, searchLyricsOnline = false)
+        val settings = UserSettings(outputDir = "D:\\음악\\내 재생목록", overwrite = true, includeRank = false, searchLyricsOnline = false)
 
         store.save(settings)
 
@@ -56,9 +56,10 @@ class JsonSettingsStoreTest {
         store.save(UserSettings())
 
         val text = Files.readString(file, Charsets.UTF_8)
-        for (key in listOf("outputDir", "overwrite", "includeRank", "concurrency", "searchLyricsOnline")) {
+        for (key in listOf("outputDir", "overwrite", "includeRank", "searchLyricsOnline")) {
             assertTrue("\"$key\"" in text, "$key in $text")
         }
+        assertTrue("concurrency" !in text, "the server decides the concurrency, so it is not stored: $text")
         assertTrue("\"searchLyricsOnline\": true" in text, text)
     }
 
@@ -67,7 +68,7 @@ class JsonSettingsStoreTest {
         write("""{"outputDir":"D:/x","overwrite":true,"includeRank":false,"concurrency":3}""")
 
         assertEquals(
-            UserSettings(outputDir = "D:/x", overwrite = true, includeRank = false, concurrency = 3, searchLyricsOnline = true),
+            UserSettings(outputDir = "D:/x", overwrite = true, includeRank = false, searchLyricsOnline = true),
             store.load(),
         )
         assertTrue(store.load().searchLyricsOnline)
@@ -79,7 +80,7 @@ class JsonSettingsStoreTest {
         assertEquals(false, store.load().searchLyricsOnline)
 
         write("""{"overwrite":true,"searchLyricsOnline":true,"concurrency":4}""")
-        assertEquals(UserSettings(overwrite = true, concurrency = 4, searchLyricsOnline = true), store.load())
+        assertEquals(UserSettings(overwrite = true, searchLyricsOnline = true), store.load())
     }
 
     @Test
@@ -103,7 +104,6 @@ class JsonSettingsStoreTest {
             "a field of the wrong type" to """{"overwrite":"yes"}""",
             "a lyrics option of the wrong type" to """{"overwrite":true,"searchLyricsOnline":"no"}""",
             "a number where the folder should be" to """{"outputDir":5}""",
-            "a concurrency too big for an Int" to """{"concurrency":99999999999}""",
         )
         for ((name, content) in cases) {
             write(content)
@@ -137,7 +137,7 @@ class JsonSettingsStoreTest {
         val json = """{"outputDir":"D:\\음악","overwrite":true,"includeRank":false,"concurrency":3}"""
         Files.write(file, byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + json.toByteArray(Charsets.UTF_8))
 
-        assertEquals(UserSettings(outputDir = "D:\\음악", overwrite = true, includeRank = false, concurrency = 3), store.load())
+        assertEquals(UserSettings(outputDir = "D:\\음악", overwrite = true, includeRank = false), store.load())
     }
 
     @Test
@@ -151,7 +151,7 @@ class JsonSettingsStoreTest {
     fun unknownKeysAreIgnoredAndTheKnownOnesStillRead() {
         write("""{"outputDir":"D:/x","future":{"a":[1,2]},"overwrite":true,"theme":"dark","includeRank":false,"concurrency":3,"searchLyricsOnline":false}""")
 
-        assertEquals(UserSettings(outputDir = "D:/x", overwrite = true, includeRank = false, concurrency = 3, searchLyricsOnline = false), store.load())
+        assertEquals(UserSettings(outputDir = "D:/x", overwrite = true, includeRank = false, searchLyricsOnline = false), store.load())
     }
 
     @Test
@@ -162,12 +162,16 @@ class JsonSettingsStoreTest {
     }
 
     @Test
-    fun theConcurrencyIsBroughtIntoOneToFour() {
-        for ((stored, expected) in mapOf(9 to 4, 5 to 4, 4 to 4, 1 to 1, 0 to 1, -3 to 1)) {
-            write("""{"concurrency":$stored}""")
+    fun aConcurrencyFromAnOlderFileIsIgnoredAndLeftOutOfTheNextSave() {
+        for (stored in listOf("3", "99999999999", "\"many\"", "null")) {
+            write("""{"overwrite":true,"concurrency":$stored}""")
 
-            assertEquals(expected, store.load().concurrency, "stored $stored")
+            assertEquals(UserSettings(overwrite = true), store.load(), "stored $stored")
         }
+
+        store.save(store.load())
+
+        assertTrue("concurrency" !in Files.readString(file, Charsets.UTF_8))
     }
 
     @Test
@@ -206,7 +210,7 @@ class JsonSettingsStoreTest {
     @Test
     fun saveReplacesAnExistingFile() {
         write("""{"outputDir":"D:/old","overwrite":true,"includeRank":false,"concurrency":4,"searchLyricsOnline":false,"future":1}""")
-        val settings = UserSettings(outputDir = "D:/new", overwrite = false, includeRank = true, concurrency = 1, searchLyricsOnline = true)
+        val settings = UserSettings(outputDir = "D:/new", overwrite = false, includeRank = true, searchLyricsOnline = true)
 
         store.save(settings)
 

@@ -501,9 +501,8 @@ class AppStateHolderTest {
         outputDir: String = "C:/Music/xGetSongs",
         overwrite: Boolean = false,
         includeRank: Boolean = true,
-        concurrency: Int = 2,
         searchLyricsOnline: Boolean = true,
-    ) = UserSettings(outputDir, overwrite, includeRank, concurrency, searchLyricsOnline)
+    ) = UserSettings(outputDir, overwrite, includeRank, searchLyricsOnline)
 
     private fun TestScope.assertSavedOnlyAfterTheQuietPeriod(store: FakeSettingsStore, expected: UserSettings) {
         advanceTimeBy(399)
@@ -517,7 +516,7 @@ class AppStateHolderTest {
     @Test
     fun theOptionsStartFromTheStoredSettings() = runTest {
         val store = FakeSettingsStore(
-            UserSettings(outputDir = "D:/음악", overwrite = true, includeRank = false, concurrency = 4, searchLyricsOnline = false),
+            UserSettings(outputDir = "D:/음악", overwrite = true, includeRank = false, searchLyricsOnline = false),
         )
 
         val holder = holderWith(store)
@@ -526,7 +525,6 @@ class AppStateHolderTest {
         assertEquals("D:/음악", state.outputDir)
         assertTrue(state.overwrite)
         assertEquals(false, state.includeRank)
-        assertEquals(4, state.concurrency)
         assertEquals(false, state.searchLyricsOnline)
         assertEquals(Phase.IDLE, state.phase)
         assertEquals(1, store.loadCalls)
@@ -601,12 +599,6 @@ class AppStateHolderTest {
     }
 
     @Test
-    fun aStoredConcurrencyOutsideOneToFourIsClamped() = runTest {
-        assertEquals(4, holderWith(FakeSettingsStore(UserSettings(concurrency = 9))).state.value.concurrency)
-        assertEquals(1, holderWith(FakeSettingsStore(UserSettings(concurrency = 0))).state.value.concurrency)
-    }
-
-    @Test
     fun changingTheOutputFolderSavesTheValuesAfterAQuietPeriod() = runTest {
         val store = FakeSettingsStore()
         val holder = holderWith(store)
@@ -637,16 +629,6 @@ class AppStateHolderTest {
     }
 
     @Test
-    fun changingTheConcurrencySavesTheValuesAfterAQuietPeriod() = runTest {
-        val store = FakeSettingsStore()
-        val holder = holderWith(store)
-
-        holder.onConcurrency(3)
-
-        assertSavedOnlyAfterTheQuietPeriod(store, defaultsWith(concurrency = 3))
-    }
-
-    @Test
     fun theRankOptionIsSavedWhileAJobRunsToo() = runTest {
         val store = FakeSettingsStore()
         val (_, holder) = resolved(store = store)
@@ -668,14 +650,14 @@ class AppStateHolderTest {
         advanceTimeBy(300)
         holder.onOutputDir("D:/Songs")
         advanceTimeBy(300)
-        holder.onConcurrency(3)
+        holder.onIncludeRank(false)
         advanceTimeBy(399)
         runCurrent()
         assertEquals(emptyList(), store.saved, "every change starts the quiet period again")
         advanceTimeBy(1)
         runCurrent()
 
-        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", concurrency = 3)), store.saved)
+        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", includeRank = false)), store.saved)
         advanceTimeBy(5_000)
         runCurrent()
         assertEquals(1, store.saved.size, "no second save follows")
@@ -683,14 +665,12 @@ class AppStateHolderTest {
 
     @Test
     fun settingAValueThatIsAlreadySetSavesNothing() = runTest {
-        val store = FakeSettingsStore(UserSettings(concurrency = 4))
+        val store = FakeSettingsStore()
         val holder = holderWith(store)
 
         holder.onOverwrite(false)
         holder.onIncludeRank(true)
         holder.onSearchLyricsOnline(true)
-        holder.onConcurrency(4)
-        holder.onConcurrency(9) // clamped to 4, which is what it already is
         holder.onOutputDir("C:/Music/xGetSongs")
         advanceTimeBy(5_000)
         runCurrent()
@@ -744,9 +724,9 @@ class AppStateHolderTest {
 
     @Test
     fun flushSettingsLeavesAFileAloneThatWasLoadedAsTheDefaultsOrNormalised() = runTest {
-        // A missing, corrupt or hand-edited file loads as the defaults (a blank folder, an out-of-range concurrency): closing
+        // A missing, corrupt or hand-edited file loads as the defaults (a blank folder): closing
         // the app without touching an option must leave such a file alone.
-        for (stored in listOf(UserSettings(), UserSettings(outputDir = "  "), UserSettings(concurrency = 9))) {
+        for (stored in listOf(UserSettings(), UserSettings(outputDir = "  "))) {
             val store = FakeSettingsStore(stored)
             val holder = holderWith(store)
 
@@ -760,12 +740,12 @@ class AppStateHolderTest {
     fun flushSettingsAfterChangesSavesTheCurrentValues() = runTest {
         val store = FakeSettingsStore(UserSettings(outputDir = "D:/Songs"))
         val holder = holderWith(store)
-        holder.onConcurrency(4)
+        holder.onOverwrite(true)
         holder.onIncludeRank(false)
 
         holder.flushSettings()
 
-        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", includeRank = false, concurrency = 4)), store.saved)
+        assertEquals(listOf(defaultsWith(outputDir = "D:/Songs", overwrite = true, includeRank = false)), store.saved)
     }
 
     @Test
@@ -789,11 +769,11 @@ class AppStateHolderTest {
         holder.onOverwrite(true)
         advanceTimeBy(400)
         runCurrent()
-        holder.onConcurrency(3)
+        holder.onIncludeRank(false)
 
         holder.flushSettings()
 
-        assertEquals(listOf(defaultsWith(overwrite = true), defaultsWith(overwrite = true, concurrency = 3)), store.saved)
+        assertEquals(listOf(defaultsWith(overwrite = true), defaultsWith(overwrite = true, includeRank = false)), store.saved)
     }
 
     @Test
@@ -828,7 +808,7 @@ class AppStateHolderTest {
 
     @Test
     fun nothingIsSavedAtStartup() = runTest {
-        val store = FakeSettingsStore(UserSettings(outputDir = " ", concurrency = 9))
+        val store = FakeSettingsStore(UserSettings(outputDir = " "))
 
         holderWith(store)
         advanceTimeBy(5_000)
@@ -840,7 +820,7 @@ class AppStateHolderTest {
     @Test
     fun resetKeepsTheOptionsAndSavesNothing() = runTest {
         val store = FakeSettingsStore(
-            UserSettings(outputDir = "D:/Songs", overwrite = true, includeRank = false, concurrency = 3, searchLyricsOnline = false),
+            UserSettings(outputDir = "D:/Songs", overwrite = true, includeRank = false, searchLyricsOnline = false),
         )
         val holder = holderWith(store)
         holder.onInput(playlistId)
@@ -856,17 +836,16 @@ class AppStateHolderTest {
         assertEquals("D:/Songs", state.outputDir)
         assertTrue(state.overwrite)
         assertEquals(false, state.includeRank)
-        assertEquals(3, state.concurrency)
         assertEquals(false, state.searchLyricsOnline)
         assertEquals(emptyList(), store.saved)
     }
 
     @Test
     fun theTypedInputAndTheSingleVideoRankAreNeverRemembered() = runTest {
-        // The stored form has room for exactly the five options, so neither the address nor the rank can be written.
+        // The stored form has room for exactly the four options, so neither the address nor the rank can be written.
         val keys = Json { encodeDefaults = true }
             .encodeToJsonElement(UserSettings.serializer(), UserSettings()).jsonObject.keys
-        assertEquals(setOf("outputDir", "overwrite", "includeRank", "concurrency", "searchLyricsOnline"), keys)
+        assertEquals(setOf("outputDir", "overwrite", "includeRank", "searchLyricsOnline"), keys)
 
         // Typing or choosing a rank saves nothing by itself: one change of an option later, there is exactly one save.
         val store = FakeSettingsStore()
@@ -886,7 +865,6 @@ class AppStateHolderTest {
     fun startingSendsTheOptionsAndMarksItemsWaiting() = runTest {
         val (api, holder) = resolved()
         holder.onOverwrite(true)
-        holder.onConcurrency(3)
         holder.onOutputDir("D:/Songs")
 
         holder.startDownload()
@@ -896,7 +874,6 @@ class AppStateHolderTest {
         assertEquals("resolve-1", request.resolveId)
         assertEquals("D:/Songs", request.options.outputDir)
         assertTrue(request.options.overwrite)
-        assertEquals(3, request.options.concurrency)
         assertNull(request.ranks)
         assertEquals(Phase.RUNNING, holder.state.value.phase)
         assertEquals(ItemStatus.Waiting, holder.row(1).status)
