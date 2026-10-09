@@ -258,7 +258,7 @@ class RealYtDlpIntegrationTest {
                 assertTrue("USLT" !in Id3v2Tag.read(file).ids, "no lyrics frame may be written when nothing is found")
                 assertEquals("Me at the zoo", probed.tags["title"])
                 assertEquals("jawed", probed.tags["artist"])
-                assertEquals("jawed", probed.tags["album_artist"])
+                assertEquals("Various Artists", probed.tags["album_artist"])
                 assertEquals("Test Album", probed.tags["album"])
                 assertEquals("1", probed.tags["track"])
                 assertTrue(probed.tags["comment"].orEmpty().startsWith("https://www.youtube.com/watch?v="), probed.tags.toString())

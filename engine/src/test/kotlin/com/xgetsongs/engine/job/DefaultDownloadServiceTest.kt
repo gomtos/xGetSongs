@@ -539,7 +539,7 @@ class DefaultDownloadServiceTest {
                 ";FFMETADATA1",
                 "title=Song Five",
                 "artist=Artist Five",
-                "album_artist=Artist Five",
+                "album_artist=Various Artists",
                 "album=My List",
                 "track=5",
             ),
@@ -597,7 +597,7 @@ class DefaultDownloadServiceTest {
         val lines = texts.single().lines()
         assertTrue("title=Dynamite" in lines, texts.single())
         assertTrue("artist=BTS" in lines, texts.single())
-        assertTrue("album_artist=BTS" in lines, texts.single())
+        assertTrue("album_artist=Various Artists" in lines, texts.single())
     }
 
     @Test
@@ -697,7 +697,7 @@ class DefaultDownloadServiceTest {
         val events = service(runner).start(request(item(1), album = "My List")).collect()
 
         assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
-        assertTrue("album_artist=A1" in texts.single().lines(), "the album artist stays the per-track artist: ${texts.single()}")
+        assertTrue("album_artist=Various Artists" in texts.single().lines(), "the album artist is always Various Artists: ${texts.single()}")
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
         assertEquals(listOf("001 A1 - T1.mp3"), filesIn(outDir), "the info file stays in the work folder")
     }
@@ -755,7 +755,7 @@ class DefaultDownloadServiceTest {
         service(infoRunner(texts, """{"album":"Palette"}""")).start(request(item(1), album = "My List", albumOverride = "내 앨범")).collect()
 
         assertEquals(listOf("album=내 앨범"), albumLines(texts.single()), texts.single())
-        assertTrue("album_artist=A1" in texts.single().lines(), "the album artist stays the per-track artist: ${texts.single()}")
+        assertTrue("album_artist=Various Artists" in texts.single().lines(), "the album artist is always Various Artists: ${texts.single()}")
     }
 
     @Test

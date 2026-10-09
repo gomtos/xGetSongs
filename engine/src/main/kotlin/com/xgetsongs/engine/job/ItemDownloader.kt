@@ -44,6 +44,9 @@ data class PreparedItem(
     val albumOverride: String? = null,
 )
 
+/** The album artist (TPE2) of every file: one value for all tracks, so a player groups a playlist into one album. */
+private const val ALBUM_ARTIST = "Various Artists"
+
 sealed interface DownloadResult {
     /**
      * The finished mp3, still inside the job's work directory. [lyrics] says what the file got as lyrics, or why it got
@@ -148,7 +151,7 @@ class ItemDownloader(
             title = prepared.track,
             artist = prepared.artist,
             album = prepared.albumOverride ?: ownAlbum,
-            albumArtist = prepared.artist,
+            albumArtist = ALBUM_ARTIST,
             trackNumber = rank,
             comment = ParsedInput.Video(videoId).canonicalUrl,
             lyrics = fromDescription ?: found,
