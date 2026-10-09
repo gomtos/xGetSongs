@@ -176,20 +176,24 @@ internal fun logDirectoryCandidates(applicationDir: Path?, appDataDir: Path, tem
 
 /**
  * The folder the application runs from: where the native launcher is when there is one (jpackage sets
- * `jpackage.app-path`), else the folder of the jar, or the classes folder itself when the classes are not in a jar. Null
- * when neither tells ([property] and [codeSource] are what a test replaces).
+ * `jpackage.app-path`); else the folder of the jar, or the classes folder itself when the classes are not in a jar; and
+ * when that sits inside a source checkout, the root of the checkout (the first folder above that holds a Gradle settings
+ * file, [isProjectRoot]), so that a run from Gradle does not put its `log` folder inside `build`. Null when nothing tells
+ * ([property] and [codeSource] are what a test replaces).
  */
 internal fun applicationDirectory(
     property: (String) -> String? = { System.getProperty(it) },
     codeSource: () -> Path? = {
         Diagnostics::class.java.protectionDomain?.codeSource?.location?.toURI()?.let { Path.of(it) }
     },
+    isProjectRoot: (Path) -> Boolean = { Files.exists(it.resolve("settings.gradle.kts")) || Files.exists(it.resolve("settings.gradle")) },
 ): Path? {
     val launcher = property("jpackage.app-path")?.takeIf { it.isNotBlank() }
         ?.let { runCatching { Path.of(it).toAbsolutePath().parent }.getOrNull() }
     if (launcher != null) return launcher
     val source = runCatching(codeSource).getOrNull() ?: return null
-    return if (Files.isDirectory(source)) source else source.toAbsolutePath().parent
+    val folder = if (Files.isDirectory(source)) source else source.toAbsolutePath().parent
+    return generateSequence(folder) { it.parent }.firstOrNull { runCatching { isProjectRoot(it) }.getOrDefault(false) } ?: folder
 }
 
 /**

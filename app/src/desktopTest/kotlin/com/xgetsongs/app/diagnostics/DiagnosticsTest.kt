@@ -180,7 +180,11 @@ class DiagnosticsTest {
     fun theApplicationFolderIsWhereTheNativeLauncherIs() {
         val properties = mapOf("jpackage.app-path" to "C:\\Apps\\xGetSongs\\xGetSongs.exe")
 
-        val folder = applicationDirectory(property = properties::get, codeSource = { Path.of("C:\\Apps\\xGetSongs\\app\\xgetsongs.jar") })
+        val folder = applicationDirectory(
+            property = properties::get,
+            codeSource = { Path.of("C:\\Apps\\xGetSongs\\app\\xgetsongs.jar") },
+            isProjectRoot = { false },
+        )
 
         assertEquals(Path.of("C:\\Apps\\xGetSongs"), folder)
     }
@@ -189,21 +193,43 @@ class DiagnosticsTest {
     fun theApplicationFolderIsTheFolderOfTheJarWhenThereIsNoNativeLauncher() {
         val jar = Files.writeString(dir.resolve("app.jar"), "not really a jar")
 
-        assertEquals(dir, applicationDirectory(property = { null }, codeSource = { jar }))
-        assertEquals(dir, applicationDirectory(property = { " " }, codeSource = { jar }), "a blank launcher property says nothing")
+        assertEquals(dir, applicationDirectory(property = { null }, codeSource = { jar }, isProjectRoot = { false }))
+        assertEquals(dir, applicationDirectory(property = { " " }, codeSource = { jar }, isProjectRoot = { false }), "a blank launcher property says nothing")
     }
 
     @Test
     fun theApplicationFolderIsTheClassesFolderItselfWhenRunFromClasses() {
         val classes = Files.createDirectories(dir.resolve("classes"))
 
-        assertEquals(classes, applicationDirectory(property = { null }, codeSource = { classes }))
+        assertEquals(classes, applicationDirectory(property = { null }, codeSource = { classes }, isProjectRoot = { false }))
+    }
+
+    @Test
+    fun runFromASourceCheckoutTheApplicationFolderIsTheProjectRoot() {
+        val root = Files.createDirectories(dir.resolve("checkout"))
+        Files.writeString(root.resolve("settings.gradle.kts"), "rootProject.name = \"x\"")
+        val libs = Files.createDirectories(root.resolve("app").resolve("build").resolve("libs"))
+        val jar = Files.writeString(libs.resolve("app-desktop.jar"), "not really a jar")
+        val classes = Files.createDirectories(root.resolve("app").resolve("build").resolve("classes").resolve("main"))
+
+        assertEquals(root, applicationDirectory(property = { null }, codeSource = { jar }), "the jar of a build folder")
+        assertEquals(root, applicationDirectory(property = { null }, codeSource = { classes }), "the classes of a build folder")
+    }
+
+    @Test
+    fun theNativeLauncherWinsOverAProjectRootAbove() {
+        val root = Files.createDirectories(dir.resolve("checkout2"))
+        Files.writeString(root.resolve("settings.gradle.kts"), "")
+        val jar = Files.writeString(Files.createDirectories(root.resolve("app")).resolve("app.jar"), "not really a jar")
+        val properties = mapOf("jpackage.app-path" to root.resolve("launcher").resolve("xGetSongs.exe").toString())
+
+        assertEquals(root.resolve("launcher"), applicationDirectory(property = properties::get, codeSource = { jar }))
     }
 
     @Test
     fun theApplicationFolderIsUnknownWhenNothingTellsIt() {
-        assertEquals(null, applicationDirectory(property = { null }, codeSource = { null }))
-        assertEquals(null, applicationDirectory(property = { null }, codeSource = { error("no code source") }))
+        assertEquals(null, applicationDirectory(property = { null }, codeSource = { null }, isProjectRoot = { false }))
+        assertEquals(null, applicationDirectory(property = { null }, codeSource = { error("no code source") }, isProjectRoot = { false }))
     }
 
     // ---- the uncaught exception handler ----------------------------------------------------
