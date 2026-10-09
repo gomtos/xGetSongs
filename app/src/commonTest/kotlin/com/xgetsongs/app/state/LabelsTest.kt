@@ -73,10 +73,36 @@ class LabelsTest {
         kind: InputKind,
         playlistTitle: String? = null,
         outputDir: String = "D:\\Music",
+        folderName: String = "",
     ) = UiState(
         outputDir = outputDir,
+        folderName = folderName,
         resolved = ResolveResponse(resolveId = "r1", kind = kind, playlistTitle = playlistTitle, items = emptyList()),
     )
+
+    @Test
+    fun aTypedFolderNameReplacesThePlaylistFolderInTheDestination() {
+        val state = resolvedState(InputKind.PLAYLIST, "Sample", folderName = "내 폴더")
+
+        assertEquals("D:\\Music\\내 폴더", destinationPath(state))
+        assertEquals("저장 위치: D:\\Music\\내 폴더", destinationLabel(state))
+    }
+
+    @Test
+    fun aTypedFolderNameGivesASingleVideoAFolderInTheDestination() {
+        assertEquals("D:\\Music\\내 폴더", destinationPath(resolvedState(InputKind.VIDEO, folderName = "내 폴더")))
+    }
+
+    @Test
+    fun aTypedFolderNameIsShownAsTheServerWillUseIt() {
+        assertEquals("D:\\Music\\a＼b／c", destinationPath(resolvedState(InputKind.VIDEO, folderName = " a\\b/c ")))
+    }
+
+    @Test
+    fun aBlankTypedFolderNameLeavesTheDestinationAsItWas() {
+        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", folderName = "  ")))
+        assertEquals("D:\\Music", destinationPath(resolvedState(InputKind.VIDEO, folderName = "  ")))
+    }
 
     @Test
     fun destinationIsNullBeforeAnythingIsResolved() {

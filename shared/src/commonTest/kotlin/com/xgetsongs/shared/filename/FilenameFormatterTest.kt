@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FilenameFormatterTest {
@@ -307,5 +308,28 @@ class FilenameFormatterTest {
         assertEquals("COM0", FilenameFormatter.folderName("COM0"))
         assertEquals("COM10", FilenameFormatter.folderName("COM10"))
         assertEquals("my.con", FilenameFormatter.folderName("my.con"))
+    }
+
+    @Test
+    fun aPlaylistWithoutATypedFolderNameIsSavedInAFolderNamedAfterIt() {
+        assertEquals("Best： Of？", FilenameFormatter.destinationFolder(isPlaylist = true, playlistTitle = "Best: Of?", typed = null))
+        assertEquals("Mix", FilenameFormatter.destinationFolder(isPlaylist = true, playlistTitle = "Mix", typed = ""))
+        assertEquals("Mix", FilenameFormatter.destinationFolder(isPlaylist = true, playlistTitle = "Mix", typed = "  \t"))
+        assertEquals("재생목록", FilenameFormatter.destinationFolder(isPlaylist = true, playlistTitle = null, typed = null))
+    }
+
+    @Test
+    fun aSingleVideoWithoutATypedFolderNameHasNoFolder() {
+        assertNull(FilenameFormatter.destinationFolder(isPlaylist = false, playlistTitle = "Mix", typed = null))
+        assertNull(FilenameFormatter.destinationFolder(isPlaylist = false, playlistTitle = null, typed = "   "))
+    }
+
+    @Test
+    fun aTypedFolderNameWinsForAPlaylistAndAVideoAndIsMadeSafeLikeAnyFolderName() {
+        assertEquals("My Songs", FilenameFormatter.destinationFolder(isPlaylist = true, playlistTitle = "Mix", typed = "My Songs"))
+        assertEquals("My Songs", FilenameFormatter.destinationFolder(isPlaylist = false, playlistTitle = "Mix", typed = "  My Songs "))
+        assertEquals("a＼b／c： d", FilenameFormatter.destinationFolder(isPlaylist = false, playlistTitle = null, typed = "a\\b/c: d"))
+        assertEquals("재생목록", FilenameFormatter.destinationFolder(isPlaylist = false, playlistTitle = null, typed = ".."))
+        assertEquals("CON_", FilenameFormatter.destinationFolder(isPlaylist = true, playlistTitle = "Mix", typed = "CON"))
     }
 }

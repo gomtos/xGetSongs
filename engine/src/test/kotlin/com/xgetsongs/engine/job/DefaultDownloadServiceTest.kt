@@ -97,7 +97,8 @@ class DefaultDownloadServiceTest {
         album: String? = null,
         includeRank: Boolean = true,
         searchLyricsOnline: Boolean = false,
-    ) = DownloadRequest(items.toList(), sink, overwrite, concurrency, album, includeRank, searchLyricsOnline)
+        albumOverride: String? = null,
+    ) = DownloadRequest(items.toList(), sink, overwrite, concurrency, album, includeRank, searchLyricsOnline, albumOverride)
 
     private suspend fun JobHandle.collect(): List<JobEvent> = events.receiveAsFlow().toList()
 
@@ -740,6 +741,34 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
+    fun anAlbumNameTheUserTypedBeatsTheVideosOwnAlbumAndThePlaylistTitle() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"album":"Palette"}""")).start(request(item(1), album = "My List", albumOverride = "내 앨범")).collect()
+
+        assertEquals(listOf("album=내 앨범"), albumLines(texts.single()), texts.single())
+        assertTrue("album_artist=A1" in texts.single().lines(), "the album artist stays the per-track artist: ${texts.single()}")
+    }
+
+    @Test
+    fun anAlbumNameTheUserTypedGivesASingleVideoWithoutAnyAlbumAnAlbumLine() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"id":"vid00000001"}""")).start(request(item(1), album = null, albumOverride = "내 앨범")).collect()
+
+        assertEquals(listOf("album=내 앨범"), albumLines(texts.single()), texts.single())
+    }
+
+    @Test
+    fun aBlankAlbumNameTheUserTypedChangesNothing() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"album":"Palette"}""")).start(request(item(1), album = "My List", albumOverride = "   ")).collect()
+
+        assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
+    }
+
+    @Test
     fun aCorruptInfoFileFallsBackAndTheItemStillSucceeds() = runTest {
         val texts = mutableListOf<String>()
 
@@ -893,6 +922,21 @@ class DefaultDownloadServiceTest {
         deliveredWith(provider, """{"album":"  ","duration":200}""", album = "My List", item = item(2))
 
         assertEquals(listOf("My List", "My List"), provider.queries.map { it.album })
+    }
+
+    @Test
+    fun anAlbumNameTheUserTypedIsInTheTagButTheQueryKeepsTheAlbumTheTagWouldHaveHadWithoutIt() = runTest {
+        val provider = FakeLyricsProvider { onlineLyrics }
+        val texts = mutableListOf<String>()
+        val json = """{"id":"vid00000001","album":"Palette","duration":200,"description":${JsonPrimitive(descriptionWithoutLyrics)}}"""
+
+        val events = service(infoRunner(texts, json), lyrics = provider)
+            .start(request(item(1), album = "My List", searchLyricsOnline = true, albumOverride = "내 앨범"))
+            .collect()
+
+        assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events), events.toString())
+        assertEquals(listOf("album=내 앨범"), albumLines(texts.single()), texts.single())
+        assertEquals(listOf("Palette"), provider.queries.map { it.album }, "a name made up by the user would only hurt the match")
     }
 
     @Test

@@ -351,6 +351,84 @@ class AppStateHolderTest {
         assertEquals(false, api.jobRequests.last().options.searchLyricsOnline)
     }
 
+    // ---- the album name and the folder name typed by the user ------------------------------
+
+    @Test
+    fun startingWithoutTypedNamesSendsNoAlbumOrFolderName() = runTest {
+        val (api, holder) = resolved()
+        holder.onAlbumName("   ")
+        holder.onFolderName("")
+
+        holder.startDownload()
+        runCurrent()
+
+        assertNull(api.jobRequests.single().options.albumName, "blank is the same as nothing typed")
+        assertNull(api.jobRequests.single().options.folderName)
+    }
+
+    @Test
+    fun startingSendsTheTypedAlbumAndFolderNames() = runTest {
+        val (api, holder) = resolved()
+        holder.onAlbumName("내 앨범")
+        holder.onFolderName("내 폴더")
+
+        holder.startDownload()
+        runCurrent()
+
+        assertEquals("내 앨범", api.jobRequests.single().options.albumName)
+        assertEquals("내 폴더", api.jobRequests.single().options.folderName)
+    }
+
+    @Test
+    fun aRetrySendsTheTypedNamesToo() = runTest {
+        val (api, holder) = finishedWithOneFailure()
+        holder.onAlbumName("내 앨범")
+        holder.onFolderName("내 폴더")
+
+        holder.retryFailed()
+        runCurrent()
+
+        assertEquals("내 앨범", api.jobRequests.last().options.albumName)
+        assertEquals("내 폴더", api.jobRequests.last().options.folderName)
+    }
+
+    @Test
+    fun theTypedNamesLeaveThePreviewAndTheFileNamesAlone() = runTest {
+        val (_, holder) = resolved()
+        val before = holder.state.value.rows
+
+        holder.onAlbumName("내 앨범")
+        holder.onFolderName("내 폴더")
+
+        assertEquals(before, holder.state.value.rows)
+    }
+
+    @Test
+    fun resetClearsTheTypedNames() = runTest {
+        val (_, holder) = resolved()
+        holder.onAlbumName("내 앨범")
+        holder.onFolderName("내 폴더")
+
+        holder.reset()
+
+        assertEquals("", holder.state.value.albumName)
+        assertEquals("", holder.state.value.folderName)
+    }
+
+    @Test
+    fun theTypedNamesAreNeverRemembered() = runTest {
+        val store = FakeSettingsStore()
+        val holder = holderWith(store)
+
+        holder.onAlbumName("내 앨범")
+        holder.onFolderName("내 폴더")
+        advanceTimeBy(5_000)
+        runCurrent()
+        holder.flushSettings()
+
+        assertEquals(emptyList(), store.saved)
+    }
+
     @Test
     fun theLyricsOptionLeavesThePreviewAndTheFileNamesAlone() = runTest {
         val (_, holder) = resolved()

@@ -90,6 +90,12 @@ class AppStateHolder(
     /** Whether a song whose description has no lyrics is looked up on the internet. It only matters when a job starts. */
     fun onSearchLyricsOnline(value: Boolean) = changeOptions { it.copy(searchLyricsOnline = value) }
 
+    /** The album name for the tags of the next job; blank keeps the default. Not remembered (see [UiState.albumName]). */
+    fun onAlbumName(text: String) = _state.update { it.copy(albumName = text) }
+
+    /** The name of the folder the next job saves into; blank keeps the default. Not remembered (see [UiState.folderName]). */
+    fun onFolderName(text: String) = _state.update { it.copy(folderName = text) }
+
     /** Changing the rank of a single video rewrites its file name in the preview. */
     fun onSingleRank(value: Int) = _state.update { state ->
         val rank = value.coerceIn(FilenameFormatter.MIN_RANK, FilenameFormatter.MAX_RANK)
@@ -318,6 +324,8 @@ class AppStateHolder(
         concurrency = state.concurrency,
         includeRank = state.includeRank,
         searchLyricsOnline = state.searchLyricsOnline,
+        albumName = state.albumName.takeIf { it.isNotBlank() },
+        folderName = state.folderName.takeIf { it.isNotBlank() },
     )
 
     /**

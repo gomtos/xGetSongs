@@ -109,6 +109,27 @@ fun OptionsPanel(
                 }
             }
         }
+        // Both are blank by default, which keeps the old behaviour; the placeholder says what that is.
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = state.folderName,
+                onValueChange = holder::onFolderName,
+                label = { Text("폴더명") },
+                placeholder = { Text("비우면 재생목록 제목", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                singleLine = true,
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = state.albumName,
+                onValueChange = holder::onAlbumName,
+                label = { Text("앨범명") },
+                placeholder = { Text("비우면 영상의 앨범, 없으면 재생목록 제목", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                singleLine = true,
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+            )
+        }
         // A checkbox moves to the next line together with its label when the window is too narrow for all three.
         FlowRow(
             modifier = Modifier.fillMaxWidth(),

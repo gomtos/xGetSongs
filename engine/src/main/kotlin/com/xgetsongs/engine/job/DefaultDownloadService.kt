@@ -109,7 +109,7 @@ class DefaultDownloadService(
         counters: Counters,
     ) {
         try {
-            val prepared = downloader.prepare(item, request.album, request.includeRank, request.searchLyricsOnline)
+            val prepared = downloader.prepare(item, request.album, request.includeRank, request.searchLyricsOnline, request.albumOverride)
             events.trySend(JobEvent.ItemStarted(item.rank, item.videoId, prepared.fileName))
             if (!request.overwrite && request.sink.exists(prepared.fileName)) {
                 skip(item, ALREADY_EXISTS, events, counters)

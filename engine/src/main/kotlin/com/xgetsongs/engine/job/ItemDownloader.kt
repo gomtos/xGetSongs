@@ -31,7 +31,8 @@ import java.nio.file.Path
  * An item whose final file name is settled. [artist] and [track] are the parsed originals the file name was made from
  * (the ID3 tags use them as they are); [album] is only the fallback for the album tag, used when the video has no
  * album of its own: the playlist title, or null for a single video. [searchLyricsOnline] says whether the lyrics may be
- * looked up on the internet when the video description has none.
+ * looked up on the internet when the video description has none. [albumOverride] is the album name the user chose, if
+ * any: the album tag gets it instead of either album above.
  */
 data class PreparedItem(
     val item: ResolvedItem,
@@ -40,6 +41,7 @@ data class PreparedItem(
     val track: String,
     val album: String?,
     val searchLyricsOnline: Boolean = false,
+    val albumOverride: String? = null,
 )
 
 sealed interface DownloadResult {
@@ -71,13 +73,14 @@ class ItemDownloader(
      * for the album tag (the playlist title, or null for a single video), used when the video has no album of its own.
      * [includeRank] puts the rank in front of the file name; the tags keep the rank as the track number either way.
      * [searchLyricsOnline] is carried to [download], which may then ask the lyrics provider for a song whose description
-     * has no lyrics.
+     * has no lyrics. [albumOverride] is carried to [download] as well, where it replaces the album of the tag.
      */
     suspend fun prepare(
         item: ResolvedItem,
         album: String? = null,
         includeRank: Boolean = true,
         searchLyricsOnline: Boolean = false,
+        albumOverride: String? = null,
     ): PreparedItem {
         var artist = item.artist
         var track = item.track
@@ -88,7 +91,8 @@ class ItemDownloader(
                 track = parsed.title
             }
         }
-        return PreparedItem(item, FilenameFormatter.format(item.rank, artist, track, includeRank), artist, track, album, searchLyricsOnline)
+        val fileName = FilenameFormatter.format(item.rank, artist, track, includeRank)
+        return PreparedItem(item, fileName, artist, track, album, searchLyricsOnline, albumOverride?.takeIf { it.isNotBlank() })
     }
 
     /**
@@ -136,13 +140,14 @@ class ItemDownloader(
         }
         val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
         val info = VideoInfoFile.read(workDir.resolve("$videoId.info.json"))
-        val album = info.album ?: prepared.album
+        // The lookup goes by the album the file would have had anyway: a name the user made up would only hurt the match.
+        val ownAlbum = info.album ?: prepared.album
         val fromDescription = LyricsExtractor.extract(info.description)
-        val found = if (fromDescription == null) lookUpLyrics(prepared, album, info.duration) else null
+        val found = if (fromDescription == null) lookUpLyrics(prepared, ownAlbum, info.duration) else null
         val tags = TrackTags(
             title = prepared.track,
             artist = prepared.artist,
-            album = album,
+            album = prepared.albumOverride ?: ownAlbum,
             albumArtist = prepared.artist,
             trackNumber = rank,
             comment = ParsedInput.Video(videoId).canonicalUrl,

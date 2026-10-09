@@ -63,6 +63,17 @@ object FilenameFormatter {
     }
 
     /**
+     * The folder inside the output folder that a job saves into, or null for the output folder itself. A [typed] name
+     * that is not blank wins, for a playlist and for a single video alike; otherwise a playlist gets a folder named
+     * after [playlistTitle] and a single video gets none. The name is made safe by [folderName] either way.
+     */
+    fun destinationFolder(isPlaylist: Boolean, playlistTitle: String?, typed: String?): String? = when {
+        !typed.isNullOrBlank() -> folderName(typed)
+        isPlaylist -> folderName(playlistTitle)
+        else -> null
+    }
+
+    /**
      * Windows treats the text before the first `.` of a name (trailing spaces ignored) as a device when it is one of
      * the [RESERVED_DEVICE_NAMES], whatever the case. Puts a `_` right after that stem then; other names are returned as is.
      */

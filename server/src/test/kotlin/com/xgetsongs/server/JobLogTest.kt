@@ -211,6 +211,20 @@ class JobLogTest {
     }
 
     @Test
+    fun theStartLineSaysThatAnAlbumOrFolderNameWasTypedButNeverWhatItIs() {
+        val plain = JobOptions(outputDir = "C:\\Music\\out")
+        val typed = plain.copy(albumName = "비밀 앨범", folderName = "비밀 폴더")
+        val blank = plain.copy(albumName = "  ", folderName = "")
+
+        val line = JobLog.started("0123456789abcdef", InputKind.PLAYLIST, itemCount = 2, typed)
+
+        assertTrue(line.endsWith(", outputDir=C:\\Music\\out, albumName=지정, folderName=지정"), line)
+        assertTrue("비밀" !in line, line)
+        assertEquals(JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain), JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, blank))
+        assertTrue("albumName" !in JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain))
+    }
+
+    @Test
     fun theShortIdIsTheFirstEightCharacters() {
         assertEquals("01234567", JobLog.shortId("0123456789abcdef"))
         assertEquals("abc", JobLog.shortId("abc"))

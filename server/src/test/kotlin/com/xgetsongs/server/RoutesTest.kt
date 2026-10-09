@@ -59,7 +59,12 @@ class RoutesTest {
         singleRank: Int = 1,
         includeRank: Boolean = true,
         searchLyricsOnline: Boolean = true,
-    ) = JobOptions(outputDir = dir?.toString(), singleRank = singleRank, includeRank = includeRank, searchLyricsOnline = searchLyricsOnline)
+        albumName: String? = null,
+        folderName: String? = null,
+    ) = JobOptions(
+        outputDir = dir?.toString(), singleRank = singleRank, includeRank = includeRank, searchLyricsOnline = searchLyricsOnline,
+        albumName = albumName, folderName = folderName,
+    )
 
     // ---- /resolve --------------------------------------------------------------------------
 
@@ -329,6 +334,106 @@ class RoutesTest {
         assertEquals(first.directory(), retry.directory())
         assertEquals(outDir.resolve("Sample"), retry.directory())
         assertEquals(first.album, retry.album)
+    }
+
+    // ---- the names the user typed ----------------------------------------------------------
+
+    @Test
+    fun noAlbumNameIsNoOverride() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options()))
+        client.startJob(JobRequest(resolved.resolveId, options(albumName = "")))
+        client.startJob(JobRequest(resolved.resolveId, options(albumName = "  \t")))
+
+        assertEquals(listOf(null, null, null), fakes.downloads.requests.map { it.albumOverride })
+    }
+
+    @Test
+    fun aTypedAlbumNameIsTheOverrideForAPlaylistAndAVideoAndKeepsTheFallbackAlbum() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val playlist = client.resolve()
+
+        client.startJob(JobRequest(playlist.resolveId, options(albumName = "  내 앨범 ")))
+
+        val request = fakes.downloads.requests.single()
+        assertEquals("내 앨범", request.albumOverride, "trimmed")
+        assertEquals("Sample", request.album, "the playlist title stays the fallback")
+    }
+
+    @Test
+    fun aTypedAlbumNameReachesASingleVideoToo() = testApplication {
+        val fakes = TestServices(resolver = FakeResolver(response = sampleVideo()))
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(albumName = "내 앨범")))
+
+        val request = fakes.downloads.requests.single()
+        assertEquals("내 앨범", request.albumOverride)
+        assertNull(request.album)
+    }
+
+    @Test
+    fun aTypedFolderNameReplacesThePlaylistTitleAsTheFolderButNotAsTheFallbackAlbum() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(folderName = " 내 폴더 ")))
+
+        val request = fakes.downloads.requests.single()
+        assertEquals(outDir.resolve("내 폴더"), request.directory())
+        assertTrue(Files.isDirectory(outDir.resolve("내 폴더")))
+        assertFalse(Files.exists(outDir.resolve("Sample")), "no folder named after the playlist")
+        assertEquals("Sample", request.album)
+    }
+
+    @Test
+    fun aTypedFolderNameGivesASingleVideoAFolder() = testApplication {
+        val fakes = TestServices(resolver = FakeResolver(response = sampleVideo()))
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(folderName = "내 폴더")))
+
+        assertEquals(outDir.resolve("내 폴더"), fakes.downloads.requests.single().directory())
+        assertTrue(Files.isDirectory(outDir.resolve("내 폴더")))
+    }
+
+    @Test
+    fun aBlankFolderNameKeepsTheOldFolders() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(folderName = "   ")))
+
+        assertEquals(outDir.resolve("Sample"), fakes.downloads.requests.single().directory())
+    }
+
+    @Test
+    fun aTypedFolderNameCannotLeaveTheOutputFolder() = testApplication {
+        val fakes = TestServices()
+        installServer(fakes.services)
+        val client = apiClient()
+        val resolved = client.resolve()
+
+        client.startJob(JobRequest(resolved.resolveId, options(folderName = "..\\..\\evil/x")))
+        client.startJob(JobRequest(resolved.resolveId, options(folderName = "..")))
+
+        val (first, second) = fakes.downloads.requests.toList().map { it.directory() }
+        assertEquals(outDir.resolve("..＼..＼evil／x"), first)
+        assertEquals(outDir.resolve("재생목록"), second)
     }
 
     @Test

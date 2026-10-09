@@ -41,17 +41,16 @@ fun summaryText(state: UiState): String? {
 }
 
 /**
- * Where the files will be saved: the output folder for a video, a folder named after the playlist inside it for a
- * playlist (the same name the server uses). Null until something is resolved and an output folder is typed.
+ * Where the files will be saved: the folder name the user typed inside the output folder, else a folder named after the
+ * playlist for a playlist, else the output folder itself for a video (the same names the server uses). Null until
+ * something is resolved and an output folder is typed.
  */
 fun destinationPath(state: UiState): String? {
     val resolved = state.resolved ?: return null
     if (state.outputDir.isBlank()) return null
-    return when (resolved.kind) {
-        InputKind.VIDEO -> state.outputDir
-        InputKind.PLAYLIST ->
-            state.outputDir.trimEnd('\\', '/') + "\\" + FilenameFormatter.folderName(resolved.playlistTitle)
-    }
+    val folder = FilenameFormatter.destinationFolder(resolved.kind == InputKind.PLAYLIST, resolved.playlistTitle, state.folderName)
+        ?: return state.outputDir
+    return state.outputDir.trimEnd('\\', '/') + "\\" + folder
 }
 
 /** The line shown above the options: [destinationPath] with its caption; null when there is no destination yet. */

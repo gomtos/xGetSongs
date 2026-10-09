@@ -28,6 +28,8 @@ interface Resolver {
  * can end up with the same file name: the first one to finish wins, the other is skipped (or, with [overwrite],
  * replaces it). [searchLyricsOnline] allows a lookup on the internet (through the downloader's lyrics provider) for a
  * song whose description has no lyrics; it is off by default, so the engine sends nothing anywhere unless asked to.
+ * [albumOverride] is an album name the user chose: when it is not blank every file gets it as its album tag, whatever its
+ * own album or [album] is. The lyrics lookup still goes by the album the file would have had without it.
  */
 data class DownloadRequest(
     val items: List<ResolvedItem>,
@@ -37,6 +39,7 @@ data class DownloadRequest(
     val album: String? = null,
     val includeRank: Boolean = true,
     val searchLyricsOnline: Boolean = false,
+    val albumOverride: String? = null,
 )
 
 /**

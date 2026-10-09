@@ -45,6 +45,13 @@ data class UiState(
     val searchLyricsOnline: Boolean = true,
     /** Not remembered: it belongs to the video that is on screen. */
     val singleRank: Int = 1,
+    /**
+     * The album name and the folder name the user typed, as typed. Blank means the default (the video's own album or the
+     * playlist title; a folder named after the playlist, none for a single video). Not remembered, like [singleRank]:
+     * the next playlist should not inherit the name of this one. [AppStateHolder.reset] clears them.
+     */
+    val albumName: String = "",
+    val folderName: String = "",
     val resolved: ResolveResponse? = null,
     val rows: List<ItemRow> = emptyList(),
     val error: String? = null,

@@ -69,6 +69,16 @@ data class JobOptions(
      * length). Off keeps those four values on the machine; the song then gets no lyrics.
      */
     val searchLyricsOnline: Boolean = true,
+    /**
+     * An album name the user typed. Every file gets it as its album tag, in place of the video's own album or the
+     * playlist title. Null or blank keeps the old behaviour.
+     */
+    val albumName: String? = null,
+    /**
+     * A folder name the user typed, for the folder inside [outputDir] that the files are saved in (made safe like any
+     * folder name). Null or blank keeps the old behaviour: a folder named after the playlist, none for a single video.
+     */
+    val folderName: String? = null,
 )
 
 @Serializable
