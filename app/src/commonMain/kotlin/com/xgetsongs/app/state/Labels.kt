@@ -70,9 +70,9 @@ fun destinationPath(state: UiState): String? {
 }
 
 /**
- * What the album name field shows: the text the user typed, else the title of the playlist, which the files get when
- * the field is left alone (a video with an album of its own keeps it), else nothing. The folder is named after the same
- * text (see [destinationPath]).
+ * What the album name field shows: the text the user typed, else the title of the playlist, which the files get as
+ * their album when the field is left alone (a single video keeps the album of its own then), else nothing. The folder
+ * is named after the same text (see [destinationPath]).
  */
 fun albumNameText(state: UiState): String = state.albumName ?: state.resolved
     ?.takeIf { it.kind == InputKind.PLAYLIST }

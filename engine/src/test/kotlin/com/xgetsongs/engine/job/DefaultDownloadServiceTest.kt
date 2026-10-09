@@ -672,7 +672,7 @@ class DefaultDownloadServiceTest {
         assertEquals(JobSummary(0, 0, 1), done(events).summary)
     }
 
-    // ---- the album tag: the video's own album, else the request's album ----
+    // ---- the album tag: the request's album (the playlist title), else the video's own album ----
 
     /** Like [taggingRunner], and yt-dlp also writes the video's info file holding [infoJson] (no file when null). */
     private fun infoRunner(metadataTexts: MutableList<String>, infoJson: String?) =
@@ -690,13 +690,13 @@ class DefaultDownloadServiceTest {
     private fun albumLines(metadataText: String) = metadataText.lines().filter { it.startsWith("album=") }
 
     @Test
-    fun theVideosOwnAlbumBeatsThePlaylistTitle() = runTest {
+    fun thePlaylistTitleBeatsTheVideosOwnAlbum() = runTest {
         val texts = mutableListOf<String>()
         val runner = infoRunner(texts, """{"id":"vid00000001","album":"Palette"}""")
 
         val events = service(runner).start(request(item(1), album = "My List")).collect()
 
-        assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
+        assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
         assertTrue("album_artist=Various Artists" in texts.single().lines(), "the album artist is always Various Artists: ${texts.single()}")
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
         assertEquals(listOf("001 A1 - T1.mp3"), filesIn(outDir), "the info file stays in the work folder")
@@ -712,7 +712,7 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun anInfoFileWithoutAnAlbumFallsBackToThePlaylistTitle() = runTest {
+    fun anInfoFileWithoutAnAlbumStillGetsThePlaylistTitle() = runTest {
         val texts = mutableListOf<String>()
 
         service(infoRunner(texts, """{"id":"vid00000001","title":"x","artist":"A1"}""")).start(request(item(1), album = "My List")).collect()
@@ -721,12 +721,21 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun aBlankInfoAlbumFallsBackToThePlaylistTitle() = runTest {
+    fun aBlankInfoAlbumStillGetsThePlaylistTitle() = runTest {
         val texts = mutableListOf<String>()
 
         service(infoRunner(texts, """{"album":"   "}""")).start(request(item(1), album = "My List")).collect()
 
         assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
+    }
+
+    @Test
+    fun aBlankPlaylistTitleLeavesTheVideosOwnAlbum() = runTest {
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, """{"album":"Palette"}""")).start(request(item(1), album = "  ")).collect()
+
+        assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
     }
 
     @Test
@@ -773,7 +782,7 @@ class DefaultDownloadServiceTest {
 
         service(infoRunner(texts, """{"album":"Palette"}""")).start(request(item(1), album = "My List", albumOverride = "   ")).collect()
 
-        assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
+        assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
     }
 
     @Test
@@ -801,8 +810,12 @@ class DefaultDownloadServiceTest {
         "Instagram: https://example.invalid/artist\n© 2024 Example Label\n#example"
 
     /** Downloads item 1 with the info file [infoJson] and returns the tag of the file that reached the sink. */
-    private suspend fun TestScope.deliveredTag(infoJson: String?, texts: MutableList<String> = mutableListOf()): Id3v2Tag {
-        val events = service(infoRunner(texts, infoJson)).start(request(item(1), album = "My List")).collect()
+    private suspend fun TestScope.deliveredTag(
+        infoJson: String?,
+        texts: MutableList<String> = mutableListOf(),
+        album: String? = "My List",
+    ): Id3v2Tag {
+        val events = service(infoRunner(texts, infoJson)).start(request(item(1), album = album)).collect()
 
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events), events.toString())
         assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
@@ -822,10 +835,10 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun theAlbumAndTheLyricsComeFromTheSameInfoFile() = runTest {
+    fun aSingleVideosAlbumAndLyricsComeFromTheSameInfoFile() = runTest {
         val texts = mutableListOf<String>()
 
-        val tag = deliveredTag(infoWithDescription("Heading\nLyrics:\nLine one\nLine two\nLine three", album = "Palette"), texts)
+        val tag = deliveredTag(infoWithDescription("Heading\nLyrics:\nLine one\nLine two\nLine three", album = "Palette"), texts, album = null)
 
         assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
         assertEquals(listOf(Id3v2Tag.Lyrics(3, "eng", "", "Line one\r\nLine two\r\nLine three")), tag.lyrics())

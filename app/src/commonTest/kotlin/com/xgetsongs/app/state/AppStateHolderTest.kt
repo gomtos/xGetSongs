@@ -501,7 +501,7 @@ class AppStateHolderTest {
         holder.startDownload()
         runCurrent()
 
-        assertNull(api.jobRequests.single().options.albumName, "so a video's own album still wins")
+        assertNull(api.jobRequests.single().options.albumName, "the server uses the playlist title itself")
     }
 
     @Test

@@ -115,7 +115,7 @@ fun OptionsPanel(
             value = albumNameText(state),
             onValueChange = holder::onAlbumName,
             label = { Text("앨범명 (폴더명)") },
-            supportingText = { Text("저장 폴더 이름도 이 이름입니다. 비우면 폴더는 재생목록 제목(영상 1개는 없음), 앨범은 영상 자체의 앨범") },
+            supportingText = { Text("저장 폴더 이름과 앨범 태그가 모두 이 이름입니다. 비우면 재생목록 제목(영상 1개는 폴더 없이 영상 자체의 앨범)") },
             singleLine = true,
             enabled = enabled,
             modifier = Modifier.fillMaxWidth(),

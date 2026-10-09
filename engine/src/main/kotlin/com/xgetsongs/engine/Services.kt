@@ -24,14 +24,14 @@ interface Resolver {
  * [items] must already carry their final ranks. [concurrency] is how many items are downloaded at the same time; the
  * service raises anything below 1 to 1 and sets no upper limit ([com.xgetsongs.engine.job.DownloadConcurrency] has the
  * number for this machine). [album] is the
- * fallback for the ID3 album tag: a file gets the video's own album when yt-dlp knows one, else this playlist title.
+ * ID3 album tag of every file, the playlist title that its folder is named after: it wins over the video's own album.
  * It is null for a single video, which then gets no album tag unless it has an album of its own. [includeRank] says
  * whether the file names start with the rank; the ID3 track number is the rank either way. Without the rank two items
  * can end up with the same file name: the first one to finish wins, the other is skipped (or, with [overwrite],
  * replaces it). [searchLyricsOnline] allows a lookup on the internet (through the downloader's lyrics provider) for a
  * song whose description has no lyrics; it is off by default, so the engine sends nothing anywhere unless asked to.
- * [albumOverride] is an album name the user chose: when it is not blank every file gets it as its album tag, whatever its
- * own album or [album] is. The lyrics lookup still goes by the album the file would have had without it.
+ * [albumOverride] is an album name the user chose: when it is not blank every file gets it as its album tag, whatever
+ * [album] or its own album is. The lyrics lookup still goes by the video's own album (else [album]).
  */
 data class DownloadRequest(
     val items: List<ResolvedItem>,

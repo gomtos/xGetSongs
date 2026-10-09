@@ -29,10 +29,10 @@ import java.nio.file.Path
 
 /**
  * An item whose final file name is settled. [artist] and [track] are the parsed originals the file name was made from
- * (the ID3 tags use them as they are); [album] is only the fallback for the album tag, used when the video has no
- * album of its own: the playlist title, or null for a single video. [searchLyricsOnline] says whether the lyrics may be
- * looked up on the internet when the video description has none. [albumOverride] is the album name the user chose, if
- * any: the album tag gets it instead of either album above.
+ * (the ID3 tags use them as they are); [album] is the album tag the files get unless [albumOverride] is set: the playlist
+ * title, or null for a single video, which then gets the album of its own video if it has one. [searchLyricsOnline] says
+ * whether the lyrics may be looked up on the internet when the video description has none. [albumOverride] is the album
+ * name the user chose, if any: the album tag gets it instead of [album].
  */
 data class PreparedItem(
     val item: ResolvedItem,
@@ -100,10 +100,11 @@ class ItemDownloader(
 
     /**
      * Runs yt-dlp once, then writes the ID3 tags and the cover (the thumbnail yt-dlp left next to the mp3) into the
-     * mp3. The album tag is the video's own album from the info file yt-dlp left next to the mp3, else
-     * [PreparedItem.album]; the lyrics tag is the lyrics section of the video description in the same file, if it has
-     * one, else (when [PreparedItem.searchLyricsOnline] is set) what the lyrics provider finds for the artist, title, tag
-     * album and length of the video, else nothing: with no lyrics from either source no lyrics frame is written. A
+     * mp3. The album tag is [PreparedItem.albumOverride], else [PreparedItem.album], else the video's own album from the
+     * info file yt-dlp left next to the mp3; the lyrics tag is the lyrics section of the video description in the same
+     * file, if it has one, else (when [PreparedItem.searchLyricsOnline] is set) what the lyrics provider finds for the
+     * artist, title, the video's own album (else [PreparedItem.album]) and length of the video, else nothing: with no
+     * lyrics from either source no lyrics frame is written. A
      * missing or broken info file means no own album, no description lyrics and no length, and never fails the item; a
      * lookup that fails is no lyrics. The [DownloadResult.Downloaded.lyrics] of the result tells which of these happened;
      * it is reported only once the tags are written, so a tag failure is a failure with no outcome. [emit] receives
@@ -143,14 +144,18 @@ class ItemDownloader(
         }
         val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
         val info = VideoInfoFile.read(workDir.resolve("$videoId.info.json"))
-        // The lookup goes by the album the file would have had anyway: a name the user made up would only hurt the match.
+        // The lookup goes by the album the video really has: a name the user made up, or a playlist title, would only
+        // hurt the match.
         val ownAlbum = info.album ?: prepared.album
         val fromDescription = LyricsExtractor.extract(info.description)
         val found = if (fromDescription == null) lookUpLyrics(prepared, ownAlbum, info.duration) else null
+        // The tag follows the folder: the album name the user chose, else the playlist title; the video's own album only
+        // when there is neither (a single video).
+        val folderAlbum = prepared.albumOverride ?: prepared.album?.takeIf { it.isNotBlank() }
         val tags = TrackTags(
             title = prepared.track,
             artist = prepared.artist,
-            album = prepared.albumOverride ?: ownAlbum,
+            album = folderAlbum ?: info.album,
             albumArtist = ALBUM_ARTIST,
             trackNumber = rank,
             comment = ParsedInput.Video(videoId).canonicalUrl,
