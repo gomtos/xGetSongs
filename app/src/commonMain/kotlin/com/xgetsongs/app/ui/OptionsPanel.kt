@@ -34,7 +34,6 @@ import com.xgetsongs.app.state.UiState
 import com.xgetsongs.app.state.albumNameText
 import com.xgetsongs.app.state.destinationLabel
 import com.xgetsongs.app.state.destinationPath
-import com.xgetsongs.app.state.folderNameText
 import com.xgetsongs.app.state.rankFromInput
 import com.xgetsongs.app.state.rankInputText
 import com.xgetsongs.shared.api.InputKind
@@ -110,28 +109,17 @@ fun OptionsPanel(
                 }
             }
         }
-        // The fields show the defaults once something is resolved; leaving them alone (or clearing them) keeps the old
+        // The field shows the default once something is resolved; leaving it alone (or clearing it) keeps the old
         // behaviour. The explanation is a supporting text, not a placeholder: a placeholder only shows while focused.
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = folderNameText(state),
-                onValueChange = holder::onFolderName,
-                label = { Text("폴더명") },
-                supportingText = { Text("비우면 재생목록 제목, 영상 1개는 폴더 없음") },
-                singleLine = true,
-                enabled = enabled,
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedTextField(
-                value = albumNameText(state),
-                onValueChange = holder::onAlbumName,
-                label = { Text("앨범명") },
-                supportingText = { Text("그대로 두거나 비우면 영상 자체의 앨범, 없으면 재생목록 제목") },
-                singleLine = true,
-                enabled = enabled,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        OutlinedTextField(
+            value = albumNameText(state),
+            onValueChange = holder::onAlbumName,
+            label = { Text("앨범명 (폴더명)") },
+            supportingText = { Text("저장 폴더 이름도 이 이름입니다. 비우면 폴더는 재생목록 제목(영상 1개는 없음), 앨범은 영상 자체의 앨범") },
+            singleLine = true,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+        )
         // A checkbox moves to the next line together with its label when the window is too narrow for all three.
         FlowRow(
             modifier = Modifier.fillMaxWidth(),

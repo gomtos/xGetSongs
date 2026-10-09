@@ -438,118 +438,115 @@ class AppStateHolderTest {
         assertNull(holder.state.value.elapsed)
     }
 
-    // ---- the album name and the folder name typed by the user ------------------------------
+    // ---- the album name typed by the user, which is also the folder name ------------------------
 
     @Test
-    fun startingWithoutTypedNamesSendsNoAlbumOrFolderName() = runTest {
+    fun startingWithoutATypedAlbumNameSendsNone() = runTest {
         val (api, holder) = resolved()
         holder.onAlbumName("   ")
-        holder.onFolderName("")
 
         holder.startDownload()
         runCurrent()
 
         assertNull(api.jobRequests.single().options.albumName, "blank is the same as nothing typed")
-        assertNull(api.jobRequests.single().options.folderName)
     }
 
     @Test
-    fun startingSendsTheTypedAlbumAndFolderNames() = runTest {
+    fun startingSendsTheTypedAlbumName() = runTest {
         val (api, holder) = resolved()
         holder.onAlbumName("내 앨범")
-        holder.onFolderName("내 폴더")
 
         holder.startDownload()
         runCurrent()
 
         assertEquals("내 앨범", api.jobRequests.single().options.albumName)
-        assertEquals("내 폴더", api.jobRequests.single().options.folderName)
     }
 
     @Test
-    fun aRetrySendsTheTypedNamesToo() = runTest {
+    fun aRetrySendsTheTypedAlbumNameToo() = runTest {
         val (api, holder) = finishedWithOneFailure()
         holder.onAlbumName("내 앨범")
-        holder.onFolderName("내 폴더")
 
         holder.retryFailed()
         runCurrent()
 
         assertEquals("내 앨범", api.jobRequests.last().options.albumName)
-        assertEquals("내 폴더", api.jobRequests.last().options.folderName)
     }
 
     @Test
-    fun theTypedNamesLeaveThePreviewAndTheFileNamesAlone() = runTest {
+    fun theTypedAlbumNameLeavesThePreviewAndTheFileNamesAlone() = runTest {
         val (_, holder) = resolved()
         val before = holder.state.value.rows
 
         holder.onAlbumName("내 앨범")
-        holder.onFolderName("내 폴더")
 
         assertEquals(before, holder.state.value.rows)
     }
 
     @Test
-    fun resetClearsTheTypedNames() = runTest {
+    fun resetClearsTheTypedAlbumName() = runTest {
         val (_, holder) = resolved()
         holder.onAlbumName("내 앨범")
-        holder.onFolderName("내 폴더")
 
         holder.reset()
 
         assertNull(holder.state.value.albumName)
-        assertNull(holder.state.value.folderName)
     }
 
     @Test
-    fun namesTheUserDidNotTouchAreNotSentEvenThoughTheFieldsShowTheDefaults() = runTest {
+    fun anAlbumNameTheUserDidNotTouchIsNotSentEvenThoughTheFieldShowsTheDefault() = runTest {
         val (api, holder) = resolved()
         assertEquals("Sample", albumNameText(holder.state.value), "the field shows the playlist title")
-        assertEquals("Sample", folderNameText(holder.state.value))
 
         holder.startDownload()
         runCurrent()
 
         assertNull(api.jobRequests.single().options.albumName, "so a video's own album still wins")
-        assertNull(api.jobRequests.single().options.folderName)
     }
 
     @Test
     fun aTouchedFieldSendsItsTextEvenWhenItIsTheDefault() = runTest {
         val (api, holder) = resolved()
         holder.onAlbumName("Sample")
-        holder.onFolderName("Sample")
 
         holder.startDownload()
         runCurrent()
 
         assertEquals("Sample", api.jobRequests.single().options.albumName, "the user asked for the title on every file")
-        assertEquals("Sample", api.jobRequests.single().options.folderName)
     }
 
     @Test
     fun aTouchedFieldKeepsItsTextWhenSomethingIsResolvedAgain() = runTest {
         val api = FakeApi()
         val (_, holder) = resolved(api)
-        holder.onFolderName("내 폴더")
+        holder.onAlbumName("내 앨범")
+
+        api.resolveResponse = FakeApi.video()
+        holder.resolve()
+        runCurrent()
+
+        assertEquals("내 앨범", albumNameText(holder.state.value), "typed text stays")
+    }
+
+    @Test
+    fun anUntouchedFieldFollowsTheNewDefaultWhenSomethingIsResolvedAgain() = runTest {
+        val api = FakeApi()
+        val (_, holder) = resolved(api)
         assertEquals("Sample", albumNameText(holder.state.value))
 
         api.resolveResponse = FakeApi.video()
         holder.resolve()
         runCurrent()
 
-        assertEquals("내 폴더", folderNameText(holder.state.value), "typed text stays")
-        assertEquals("", albumNameText(holder.state.value), "an untouched field follows the new default: a video has no title to show")
+        assertEquals("", albumNameText(holder.state.value), "a video has no title to show")
     }
 
     @Test
-    fun theTypedNamesAreNeverRemembered() = runTest {
+    fun theTypedAlbumNameIsNeverRemembered() = runTest {
         val store = FakeSettingsStore()
         val holder = holderWith(store)
 
         holder.onAlbumName("내 앨범")
-        holder.onFolderName("내 폴더")
         advanceTimeBy(5_000)
         runCurrent()
         holder.flushSettings()

@@ -64,8 +64,9 @@ object FilenameFormatter {
 
     /**
      * The folder inside the output folder that a job saves into, or null for the output folder itself. A [typed] name
-     * that is not blank wins, for a playlist and for a single video alike; otherwise a playlist gets a folder named
-     * after [playlistTitle] and a single video gets none. The name is made safe by [folderName] either way.
+     * (the album name the user typed) that is not blank wins, for a playlist and for a single video alike; otherwise a
+     * playlist gets a folder named after [playlistTitle] and a single video gets none. The name is made safe by
+     * [folderName] either way.
      */
     fun destinationFolder(isPlaylist: Boolean, playlistTitle: String?, typed: String?): String? = when {
         !typed.isNullOrBlank() -> folderName(typed)

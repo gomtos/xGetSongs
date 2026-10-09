@@ -91,10 +91,10 @@ fun Application.module(services: Services, config: ServerConfig, jobs: JobRegist
             }
             // A playlist goes into a folder named after it and its title is the fallback album (a video's own album wins
             // in the engine); a single video goes straight into the output folder. The fallback is the original title,
-            // not the sanitized folder name. A folder name or album name the user typed wins over both of these, for a
-            // single video too.
+            // not the sanitized folder name. An album name the user typed wins over both of these, for a single video
+            // too: it is the album of every file and the name of their folder.
             val isPlaylist = resolved.kind == InputKind.PLAYLIST
-            val folder = FilenameFormatter.destinationFolder(isPlaylist, resolved.playlistTitle, options.folderName)
+            val folder = FilenameFormatter.destinationFolder(isPlaylist, resolved.playlistTitle, options.albumName)
             val album = if (isPlaylist) resolved.playlistTitle else null
             val albumOverride = options.albumName?.trim()?.takeIf { it.isNotEmpty() }
             val sink = sinkFor(config, options, folder)

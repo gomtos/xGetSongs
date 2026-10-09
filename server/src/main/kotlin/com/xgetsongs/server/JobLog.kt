@@ -29,15 +29,12 @@ internal object JobLog {
     fun shortId(jobId: String): String = jobId.take(8)
 
     /**
-     * [concurrency] is the number of parallel downloads the server chose. The names the user typed are free text like
-     * the titles, so the line only says that there were some.
+     * [concurrency] is the number of parallel downloads the server chose. The album name the user typed is free text like
+     * the titles, so the line only says that there was one.
      */
     fun started(jobId: String, kind: InputKind, itemCount: Int, options: JobOptions, concurrency: Int): String {
         val kindText = if (kind == InputKind.PLAYLIST) "재생목록" else "영상"
-        val typed = buildString {
-            if (!options.albumName.isNullOrBlank()) append(", albumName=지정")
-            if (!options.folderName.isNullOrBlank()) append(", folderName=지정")
-        }
+        val typed = if (options.albumName.isNullOrBlank()) "" else ", albumName=지정"
         return "작업 시작: id=$jobId, 종류=$kindText, 항목=${itemCount}개, overwrite=${options.overwrite}, " +
             "includeRank=${options.includeRank}, concurrency=$concurrency, " +
             "searchLyricsOnline=${options.searchLyricsOnline}, outputDir=${options.outputDir ?: "없음"}$typed"

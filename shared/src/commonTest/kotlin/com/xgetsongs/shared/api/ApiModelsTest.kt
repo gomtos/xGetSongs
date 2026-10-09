@@ -147,20 +147,23 @@ class ApiModelsTest {
     }
 
     @Test
-    fun theAlbumAndFolderNamesAreNotSetUnlessTheClientSendsThem() {
+    fun theAlbumNameIsNotSetUnlessTheClientSendsIt() {
         assertNull(JobOptions().albumName)
-        assertNull(JobOptions().folderName)
         val omitted = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"outputDir":"D:/Music"}}""")
         assertNull(omitted.options.albumName, "a client that does not know the option gets the old behaviour")
-        assertNull(omitted.options.folderName)
-        val set = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"albumName":"내 앨범","folderName":"내 폴더"}}""")
+        val set = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"albumName":"내 앨범"}}""")
         assertEquals("내 앨범", set.options.albumName)
-        assertEquals("내 폴더", set.options.folderName)
     }
 
     @Test
-    fun theAlbumAndFolderNamesSurviveARoundTrip() {
-        val request = JobRequest("r1", JobOptions(outputDir = "D:/Music", albumName = "내 앨범", folderName = "내 폴더"), listOf(3))
+    fun anOldClientsFolderNameIsIgnored() {
+        val old = json.decodeFromString(JobRequest.serializer(), """{"resolveId":"r1","options":{"albumName":"내 앨범","folderName":"내 폴더"}}""")
+        assertEquals("내 앨범", old.options.albumName)
+    }
+
+    @Test
+    fun theAlbumNameSurvivesARoundTrip() {
+        val request = JobRequest("r1", JobOptions(outputDir = "D:/Music", albumName = "내 앨범"), listOf(3))
         val encoded = json.encodeToString(JobRequest.serializer(), request)
 
         assertEquals(request, json.decodeFromString(JobRequest.serializer(), encoded))

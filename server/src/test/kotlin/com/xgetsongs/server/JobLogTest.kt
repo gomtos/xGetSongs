@@ -212,14 +212,14 @@ class JobLogTest {
     }
 
     @Test
-    fun theStartLineSaysThatAnAlbumOrFolderNameWasTypedButNeverWhatItIs() {
+    fun theStartLineSaysThatAnAlbumNameWasTypedButNeverWhatItIs() {
         val plain = JobOptions(outputDir = "C:\\Music\\out")
-        val typed = plain.copy(albumName = "비밀 앨범", folderName = "비밀 폴더")
-        val blank = plain.copy(albumName = "  ", folderName = "")
+        val typed = plain.copy(albumName = "비밀 앨범")
+        val blank = plain.copy(albumName = "  ")
 
         val line = JobLog.started("0123456789abcdef", InputKind.PLAYLIST, itemCount = 2, typed, concurrency = 3)
 
-        assertTrue(line.endsWith(", outputDir=C:\\Music\\out, albumName=지정, folderName=지정"), line)
+        assertTrue(line.endsWith(", outputDir=C:\\Music\\out, albumName=지정"), line)
         assertTrue("비밀" !in line, line)
         assertEquals(JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain, 3), JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, blank, 3))
         assertTrue("albumName" !in JobLog.started("0123456789abcdef", InputKind.PLAYLIST, 2, plain, 3))

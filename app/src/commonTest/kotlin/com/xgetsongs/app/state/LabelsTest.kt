@@ -106,73 +106,60 @@ class LabelsTest {
         kind: InputKind,
         playlistTitle: String? = null,
         outputDir: String = "D:\\Music",
-        folderName: String? = null,
         albumName: String? = null,
     ) = UiState(
         outputDir = outputDir,
-        folderName = folderName,
         albumName = albumName,
         resolved = ResolveResponse(resolveId = "r1", kind = kind, playlistTitle = playlistTitle, items = emptyList()),
     )
 
-    // ---- the text the name fields show ----
+    // ---- the text the album name field shows, which is also the name of the folder ----
 
     @Test
-    fun untouchedFieldsShowTheDefaultsOfAPlaylist() {
-        val state = resolvedState(InputKind.PLAYLIST, "Best: Of?")
-
-        assertEquals("Best： Of？", folderNameText(state), "the folder as it will be made, like the destination line")
-        assertEquals("Best: Of?", albumNameText(state), "the original title, which is what the files get")
-        assertEquals("재생목록", folderNameText(resolvedState(InputKind.PLAYLIST, null)))
+    fun anUntouchedFieldShowsTheOriginalPlaylistTitle() {
+        assertEquals("Best: Of?", albumNameText(resolvedState(InputKind.PLAYLIST, "Best: Of?")), "the original title, which is what the files get")
         assertEquals("", albumNameText(resolvedState(InputKind.PLAYLIST, null)))
     }
 
     @Test
-    fun untouchedFieldsOfAVideoAndBeforeAnythingIsResolvedAreEmpty() {
-        assertEquals("", folderNameText(resolvedState(InputKind.VIDEO, "Sample")))
+    fun anUntouchedFieldOfAVideoAndBeforeAnythingIsResolvedIsEmpty() {
         assertEquals("", albumNameText(resolvedState(InputKind.VIDEO, "Sample")))
-        assertEquals("", folderNameText(UiState()))
         assertEquals("", albumNameText(UiState()))
     }
 
     @Test
     fun aTouchedFieldShowsExactlyWhatWasTypedEvenWhenItIsBlank() {
-        val typed = resolvedState(InputKind.PLAYLIST, "Sample", folderName = " 내 폴더", albumName = "내 앨범 ")
-        val cleared = resolvedState(InputKind.PLAYLIST, "Sample", folderName = "", albumName = "")
-
-        assertEquals(" 내 폴더", folderNameText(typed))
-        assertEquals("내 앨범 ", albumNameText(typed))
-        assertEquals("", folderNameText(cleared), "cleared by the user: the field stays empty")
-        assertEquals("", albumNameText(cleared))
+        assertEquals("내 앨범 ", albumNameText(resolvedState(InputKind.PLAYLIST, "Sample", albumName = "내 앨범 ")))
+        assertEquals("", albumNameText(resolvedState(InputKind.PLAYLIST, "Sample", albumName = "")), "cleared by the user: the field stays empty")
     }
 
     @Test
-    fun aClearedFolderFieldMeansTheDefaultFolderInTheDestination() {
-        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", folderName = "")))
+    fun aClearedAlbumFieldMeansTheDefaultFolderInTheDestination() {
+        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", albumName = "")))
     }
 
     @Test
-    fun aTypedFolderNameReplacesThePlaylistFolderInTheDestination() {
-        val state = resolvedState(InputKind.PLAYLIST, "Sample", folderName = "내 폴더")
+    fun aTypedAlbumNameReplacesThePlaylistFolderInTheDestination() {
+        val state = resolvedState(InputKind.PLAYLIST, "Sample", albumName = "내 앨범")
 
-        assertEquals("D:\\Music\\내 폴더", destinationPath(state))
-        assertEquals("저장 위치: D:\\Music\\내 폴더", destinationLabel(state))
+        assertEquals("D:\\Music\\내 앨범", destinationPath(state))
+        assertEquals("저장 위치: D:\\Music\\내 앨범", destinationLabel(state))
     }
 
     @Test
-    fun aTypedFolderNameGivesASingleVideoAFolderInTheDestination() {
-        assertEquals("D:\\Music\\내 폴더", destinationPath(resolvedState(InputKind.VIDEO, folderName = "내 폴더")))
+    fun aTypedAlbumNameGivesASingleVideoAFolderInTheDestination() {
+        assertEquals("D:\\Music\\내 앨범", destinationPath(resolvedState(InputKind.VIDEO, albumName = "내 앨범")))
     }
 
     @Test
-    fun aTypedFolderNameIsShownAsTheServerWillUseIt() {
-        assertEquals("D:\\Music\\a＼b／c", destinationPath(resolvedState(InputKind.VIDEO, folderName = " a\\b/c ")))
+    fun aTypedAlbumNameIsShownAsAFolderTheWayTheServerWillMakeIt() {
+        assertEquals("D:\\Music\\a＼b／c", destinationPath(resolvedState(InputKind.VIDEO, albumName = " a\\b/c ")))
     }
 
     @Test
-    fun aBlankTypedFolderNameLeavesTheDestinationAsItWas() {
-        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", folderName = "  ")))
-        assertEquals("D:\\Music", destinationPath(resolvedState(InputKind.VIDEO, folderName = "  ")))
+    fun aBlankTypedAlbumNameLeavesTheDestinationAsItWas() {
+        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", albumName = "  ")))
+        assertEquals("D:\\Music", destinationPath(resolvedState(InputKind.VIDEO, albumName = "  ")))
     }
 
     @Test

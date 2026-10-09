@@ -57,30 +57,22 @@ fun elapsedLabel(elapsed: Duration): String {
 }
 
 /**
- * Where the files will be saved: the folder name the user typed inside the output folder, else a folder named after the
- * playlist for a playlist, else the output folder itself for a video (the same names the server uses). Null until
- * something is resolved and an output folder is typed.
+ * Where the files will be saved: a folder named after the album name the user typed inside the output folder, else a
+ * folder named after the playlist for a playlist, else the output folder itself for a video (the same names the server
+ * uses). Null until something is resolved and an output folder is typed.
  */
 fun destinationPath(state: UiState): String? {
     val resolved = state.resolved ?: return null
     if (state.outputDir.isBlank()) return null
-    val folder = FilenameFormatter.destinationFolder(resolved.kind == InputKind.PLAYLIST, resolved.playlistTitle, state.folderName)
+    val folder = FilenameFormatter.destinationFolder(resolved.kind == InputKind.PLAYLIST, resolved.playlistTitle, state.albumName)
         ?: return state.outputDir
     return state.outputDir.trimEnd('\\', '/') + "\\" + folder
 }
 
 /**
- * What the folder name field shows: the text the user typed, else the default folder of a playlist as it will be made
- * (the same name as in [destinationPath]), else nothing: a single video has no folder of its own.
- */
-fun folderNameText(state: UiState): String = state.folderName ?: state.resolved
-    ?.takeIf { it.kind == InputKind.PLAYLIST }
-    ?.let { FilenameFormatter.folderName(it.playlistTitle) }
-    .orEmpty()
-
-/**
  * What the album name field shows: the text the user typed, else the title of the playlist, which the files get when
- * the field is left alone (a video with an album of its own keeps it), else nothing.
+ * the field is left alone (a video with an album of its own keeps it), else nothing. The folder is named after the same
+ * text (see [destinationPath]).
  */
 fun albumNameText(state: UiState): String = state.albumName ?: state.resolved
     ?.takeIf { it.kind == InputKind.PLAYLIST }

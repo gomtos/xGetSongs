@@ -69,14 +69,11 @@ data class JobOptions(
     val searchLyricsOnline: Boolean = true,
     /**
      * An album name the user typed. Every file gets it as its album tag, in place of the video's own album or the
-     * playlist title. Null or blank keeps the old behaviour.
+     * playlist title, and it is also the name of the folder inside [outputDir] that the files are saved in (made safe
+     * like any folder name), for a single video too. Null or blank keeps the old behaviour: a folder named after the
+     * playlist, none for a single video, and the video's own album or else the playlist title as the album tag.
      */
     val albumName: String? = null,
-    /**
-     * A folder name the user typed, for the folder inside [outputDir] that the files are saved in (made safe like any
-     * folder name). Null or blank keeps the old behaviour: a folder named after the playlist, none for a single video.
-     */
-    val folderName: String? = null,
 )
 
 @Serializable
