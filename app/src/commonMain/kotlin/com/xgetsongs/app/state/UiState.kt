@@ -46,12 +46,14 @@ data class UiState(
     /** Not remembered: it belongs to the video that is on screen. */
     val singleRank: Int = 1,
     /**
-     * The album name and the folder name the user typed, as typed. Blank means the default (the video's own album or the
-     * playlist title; a folder named after the playlist, none for a single video). Not remembered, like [singleRank]:
-     * the next playlist should not inherit the name of this one. [AppStateHolder.reset] clears them.
+     * The album name and the folder name the user typed, as typed. Null means the user has not touched the field: it
+     * shows the default (see [albumNameText] and [folderNameText]) and sends nothing. Once touched, the text stays as it
+     * is, and blank means the default again (the video's own album or the playlist title; a folder named after the
+     * playlist, none for a single video). Not remembered, like [singleRank]: the next playlist should not inherit the
+     * name of this one. [AppStateHolder.reset] clears them.
      */
-    val albumName: String = "",
-    val folderName: String = "",
+    val albumName: String? = null,
+    val folderName: String? = null,
     val resolved: ResolveResponse? = null,
     val rows: List<ItemRow> = emptyList(),
     val error: String? = null,

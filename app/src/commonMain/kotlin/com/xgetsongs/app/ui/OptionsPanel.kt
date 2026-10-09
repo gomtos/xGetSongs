@@ -32,8 +32,10 @@ import androidx.compose.ui.unit.dp
 import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.state.Phase
 import com.xgetsongs.app.state.UiState
+import com.xgetsongs.app.state.albumNameText
 import com.xgetsongs.app.state.destinationLabel
 import com.xgetsongs.app.state.destinationPath
+import com.xgetsongs.app.state.folderNameText
 import com.xgetsongs.app.state.rankFromInput
 import com.xgetsongs.app.state.rankInputText
 import com.xgetsongs.shared.api.InputKind
@@ -109,22 +111,23 @@ fun OptionsPanel(
                 }
             }
         }
-        // Both are blank by default, which keeps the old behaviour; the placeholder says what that is.
+        // The fields show the defaults once something is resolved; leaving them alone (or clearing them) keeps the old
+        // behaviour. The explanation is a supporting text, not a placeholder: a placeholder only shows while focused.
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
-                value = state.folderName,
+                value = folderNameText(state),
                 onValueChange = holder::onFolderName,
                 label = { Text("폴더명") },
-                placeholder = { Text("비우면 재생목록 제목", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingText = { Text("비우면 재생목록 제목, 영상 1개는 폴더 없음") },
                 singleLine = true,
                 enabled = enabled,
                 modifier = Modifier.weight(1f),
             )
             OutlinedTextField(
-                value = state.albumName,
+                value = albumNameText(state),
                 onValueChange = holder::onAlbumName,
                 label = { Text("앨범명") },
-                placeholder = { Text("비우면 영상의 앨범, 없으면 재생목록 제목", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingText = { Text("그대로 두거나 비우면 영상 자체의 앨범, 없으면 재생목록 제목") },
                 singleLine = true,
                 enabled = enabled,
                 modifier = Modifier.weight(1f),

@@ -53,6 +53,24 @@ fun destinationPath(state: UiState): String? {
     return state.outputDir.trimEnd('\\', '/') + "\\" + folder
 }
 
+/**
+ * What the folder name field shows: the text the user typed, else the default folder of a playlist as it will be made
+ * (the same name as in [destinationPath]), else nothing: a single video has no folder of its own.
+ */
+fun folderNameText(state: UiState): String = state.folderName ?: state.resolved
+    ?.takeIf { it.kind == InputKind.PLAYLIST }
+    ?.let { FilenameFormatter.folderName(it.playlistTitle) }
+    .orEmpty()
+
+/**
+ * What the album name field shows: the text the user typed, else the title of the playlist, which the files get when
+ * the field is left alone (a video with an album of its own keeps it), else nothing.
+ */
+fun albumNameText(state: UiState): String = state.albumName ?: state.resolved
+    ?.takeIf { it.kind == InputKind.PLAYLIST }
+    ?.playlistTitle
+    .orEmpty()
+
 /** The line shown above the options: [destinationPath] with its caption; null when there is no destination yet. */
 fun destinationLabel(state: UiState): String? = destinationPath(state)?.let { "저장 위치: $it" }
 

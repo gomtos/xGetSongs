@@ -73,12 +73,50 @@ class LabelsTest {
         kind: InputKind,
         playlistTitle: String? = null,
         outputDir: String = "D:\\Music",
-        folderName: String = "",
+        folderName: String? = null,
+        albumName: String? = null,
     ) = UiState(
         outputDir = outputDir,
         folderName = folderName,
+        albumName = albumName,
         resolved = ResolveResponse(resolveId = "r1", kind = kind, playlistTitle = playlistTitle, items = emptyList()),
     )
+
+    // ---- the text the name fields show ----
+
+    @Test
+    fun untouchedFieldsShowTheDefaultsOfAPlaylist() {
+        val state = resolvedState(InputKind.PLAYLIST, "Best: Of?")
+
+        assertEquals("Best： Of？", folderNameText(state), "the folder as it will be made, like the destination line")
+        assertEquals("Best: Of?", albumNameText(state), "the original title, which is what the files get")
+        assertEquals("재생목록", folderNameText(resolvedState(InputKind.PLAYLIST, null)))
+        assertEquals("", albumNameText(resolvedState(InputKind.PLAYLIST, null)))
+    }
+
+    @Test
+    fun untouchedFieldsOfAVideoAndBeforeAnythingIsResolvedAreEmpty() {
+        assertEquals("", folderNameText(resolvedState(InputKind.VIDEO, "Sample")))
+        assertEquals("", albumNameText(resolvedState(InputKind.VIDEO, "Sample")))
+        assertEquals("", folderNameText(UiState()))
+        assertEquals("", albumNameText(UiState()))
+    }
+
+    @Test
+    fun aTouchedFieldShowsExactlyWhatWasTypedEvenWhenItIsBlank() {
+        val typed = resolvedState(InputKind.PLAYLIST, "Sample", folderName = " 내 폴더", albumName = "내 앨범 ")
+        val cleared = resolvedState(InputKind.PLAYLIST, "Sample", folderName = "", albumName = "")
+
+        assertEquals(" 내 폴더", folderNameText(typed))
+        assertEquals("내 앨범 ", albumNameText(typed))
+        assertEquals("", folderNameText(cleared), "cleared by the user: the field stays empty")
+        assertEquals("", albumNameText(cleared))
+    }
+
+    @Test
+    fun aClearedFolderFieldMeansTheDefaultFolderInTheDestination() {
+        assertEquals("D:\\Music\\Sample", destinationPath(resolvedState(InputKind.PLAYLIST, "Sample", folderName = "")))
+    }
 
     @Test
     fun aTypedFolderNameReplacesThePlaylistFolderInTheDestination() {

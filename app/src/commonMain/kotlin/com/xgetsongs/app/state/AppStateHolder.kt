@@ -324,8 +324,8 @@ class AppStateHolder(
         concurrency = state.concurrency,
         includeRank = state.includeRank,
         searchLyricsOnline = state.searchLyricsOnline,
-        albumName = state.albumName.takeIf { it.isNotBlank() },
-        folderName = state.folderName.takeIf { it.isNotBlank() },
+        albumName = state.albumName?.takeIf { it.isNotBlank() },
+        folderName = state.folderName?.takeIf { it.isNotBlank() },
     )
 
     /**

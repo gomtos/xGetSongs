@@ -411,8 +411,49 @@ class AppStateHolderTest {
 
         holder.reset()
 
-        assertEquals("", holder.state.value.albumName)
-        assertEquals("", holder.state.value.folderName)
+        assertNull(holder.state.value.albumName)
+        assertNull(holder.state.value.folderName)
+    }
+
+    @Test
+    fun namesTheUserDidNotTouchAreNotSentEvenThoughTheFieldsShowTheDefaults() = runTest {
+        val (api, holder) = resolved()
+        assertEquals("Sample", albumNameText(holder.state.value), "the field shows the playlist title")
+        assertEquals("Sample", folderNameText(holder.state.value))
+
+        holder.startDownload()
+        runCurrent()
+
+        assertNull(api.jobRequests.single().options.albumName, "so a video's own album still wins")
+        assertNull(api.jobRequests.single().options.folderName)
+    }
+
+    @Test
+    fun aTouchedFieldSendsItsTextEvenWhenItIsTheDefault() = runTest {
+        val (api, holder) = resolved()
+        holder.onAlbumName("Sample")
+        holder.onFolderName("Sample")
+
+        holder.startDownload()
+        runCurrent()
+
+        assertEquals("Sample", api.jobRequests.single().options.albumName, "the user asked for the title on every file")
+        assertEquals("Sample", api.jobRequests.single().options.folderName)
+    }
+
+    @Test
+    fun aTouchedFieldKeepsItsTextWhenSomethingIsResolvedAgain() = runTest {
+        val api = FakeApi()
+        val (_, holder) = resolved(api)
+        holder.onFolderName("내 폴더")
+        assertEquals("Sample", albumNameText(holder.state.value))
+
+        api.resolveResponse = FakeApi.video()
+        holder.resolve()
+        runCurrent()
+
+        assertEquals("내 폴더", folderNameText(holder.state.value), "typed text stays")
+        assertEquals("", albumNameText(holder.state.value), "an untouched field follows the new default: a video has no title to show")
     }
 
     @Test
