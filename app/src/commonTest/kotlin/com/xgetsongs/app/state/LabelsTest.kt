@@ -9,6 +9,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class LabelsTest {
     @Test
@@ -61,6 +64,36 @@ class LabelsTest {
         assertEquals("완료 — 성공 2 · 건너뜀 1 · 실패 3", summaryText(UiState(jobStatus = JobStatus.COMPLETED, summary = counts)))
         assertEquals("취소됨 — 성공 2 · 건너뜀 1 · 실패 3", summaryText(UiState(jobStatus = JobStatus.CANCELLED, summary = counts)))
         assertEquals("중단됨 — 성공 2 · 건너뜀 1 · 실패 3", summaryText(UiState(jobStatus = JobStatus.FAILED, summary = counts)))
+    }
+
+    @Test
+    fun summaryTextAddsHowLongTheJobTookWhenItIsKnown() {
+        val counts = JobSummary(2, 1, 3)
+
+        assertEquals(
+            "완료 — 성공 2 · 건너뜀 1 · 실패 3 · 소요 3분 05초",
+            summaryText(UiState(jobStatus = JobStatus.COMPLETED, summary = counts, elapsed = 185.seconds)),
+        )
+        assertEquals(
+            "취소됨 — 성공 2 · 건너뜀 1 · 실패 3 · 소요 42초",
+            summaryText(UiState(jobStatus = JobStatus.CANCELLED, summary = counts, elapsed = 42.seconds)),
+        )
+        assertEquals(
+            "중단됨 — 성공 2 · 건너뜀 1 · 실패 3 · 소요 0초",
+            summaryText(UiState(jobStatus = JobStatus.FAILED, summary = counts, elapsed = 400.milliseconds)),
+        )
+    }
+
+    @Test
+    fun elapsedLabelShowsWholeSecondsMinutesAndHours() {
+        assertEquals("0초", elapsedLabel(Duration.ZERO))
+        assertEquals("59초", elapsedLabel(59.9.seconds))
+        assertEquals("1분 00초", elapsedLabel(60.seconds))
+        assertEquals("3분 05초", elapsedLabel(185.seconds))
+        assertEquals("59분 59초", elapsedLabel(3599.seconds))
+        assertEquals("1시간 00분 00초", elapsedLabel(3600.seconds))
+        assertEquals("2시간 03분 04초", elapsedLabel(7384.seconds))
+        assertEquals("0초", elapsedLabel((-5).seconds), "a clock that went backwards says nothing negative")
     }
 
     @Test

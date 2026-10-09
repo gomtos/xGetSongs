@@ -25,20 +25,28 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
+import kotlin.time.TimeSource
 
 class AppStateHolderTest {
     private val playlistId = "PL2HEDIx6Li8jGsqCiXUq9fzCqpH99qqHV"
 
-    private fun TestScope.holder(api: FakeApi = FakeApi(), store: SettingsStore = NoSettingsStore) =
-        api to AppStateHolder(api, backgroundScope, defaultOutputDir = "C:/Music/xGetSongs", settings = store)
+    private fun TestScope.holder(
+        api: FakeApi = FakeApi(),
+        store: SettingsStore = NoSettingsStore,
+        timeSource: TimeSource = TimeSource.Monotonic,
+    ) = api to AppStateHolder(api, backgroundScope, defaultOutputDir = "C:/Music/xGetSongs", settings = store, timeSource = timeSource)
 
     private fun AppStateHolder.row(rank: Int) = state.value.rows.first { it.item.rank == rank }
 
     private suspend fun TestScope.resolved(
         api: FakeApi = FakeApi(),
         store: SettingsStore = NoSettingsStore,
+        timeSource: TimeSource = TimeSource.Monotonic,
     ): Pair<FakeApi, AppStateHolder> {
-        val (fake, holder) = holder(api, store)
+        val (fake, holder) = holder(api, store, timeSource)
         holder.onInput(playlistId)
         holder.resolve()
         runCurrent()
@@ -349,6 +357,85 @@ class AppStateHolderTest {
 
         assertEquals(listOf(3), api.jobRequests.last().ranks)
         assertEquals(false, api.jobRequests.last().options.searchLyricsOnline)
+    }
+
+    // ---- how long a job took ---------------------------------------------------------------
+
+    @Test
+    fun aFinishedJobKnowsHowLongItTookFromTheStartToTheEnd() = runTest {
+        val clock = TestTimeSource()
+        val (api, holder) = resolved(timeSource = clock)
+        assertNull(holder.state.value.elapsed)
+
+        clock += 5.seconds // thinking time before the button is pressed does not count
+        holder.startDownload()
+        runCurrent()
+        clock += 83.seconds
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        runCurrent()
+
+        assertEquals(83.seconds, holder.state.value.elapsed)
+        assertEquals("완료 — 성공 1 · 건너뜀 0 · 실패 0 · 소요 1분 23초", summaryText(holder.state.value))
+    }
+
+    @Test
+    fun aCancelledJobKnowsHowLongItRan() = runTest {
+        val clock = TestTimeSource()
+        val (api, holder) = resolved(timeSource = clock)
+        holder.startDownload()
+        runCurrent()
+
+        clock += 9.seconds
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.CANCELLED, JobSummary(0, 0, 0)))
+        runCurrent()
+
+        assertEquals(9.seconds, holder.state.value.elapsed)
+    }
+
+    @Test
+    fun aNewJobStartsTheClockAgainAndClearsTheOldTime() = runTest {
+        val clock = TestTimeSource()
+        val (api, holder) = finishedWithOneFailure(timeSource = clock)
+        assertEquals(Duration.ZERO, holder.state.value.elapsed, "the helper's job ended at once")
+
+        holder.retryFailed()
+        runCurrent()
+        assertNull(holder.state.value.elapsed, "no time is shown while the job runs")
+        clock += 12.seconds
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        runCurrent()
+
+        assertEquals(12.seconds, holder.state.value.elapsed, "only the retry is timed")
+    }
+
+    @Test
+    fun noTimeIsShownWhenTheConnectionBreaksBeforeTheJobEnds() = runTest {
+        val clock = TestTimeSource()
+        val (api, holder) = resolved(timeSource = clock)
+        holder.startDownload()
+        runCurrent()
+
+        clock += 30.seconds
+        api.eventChannel.close()
+        runCurrent()
+
+        assertEquals(Phase.FINISHED, holder.state.value.phase)
+        assertNull(holder.state.value.elapsed)
+    }
+
+    @Test
+    fun resetClearsTheTime() = runTest {
+        val clock = TestTimeSource()
+        val (api, holder) = resolved(timeSource = clock)
+        holder.startDownload()
+        runCurrent()
+        clock += 3.seconds
+        api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
+        runCurrent()
+
+        holder.reset()
+
+        assertNull(holder.state.value.elapsed)
     }
 
     // ---- the album name and the folder name typed by the user ------------------------------
@@ -1188,8 +1275,8 @@ class AppStateHolderTest {
 
     // ---- job endings and failures ---------------------------------------------------------
 
-    private suspend fun TestScope.finishedWithOneFailure(): Pair<FakeApi, AppStateHolder> {
-        val (api, holder) = resolved()
+    private suspend fun TestScope.finishedWithOneFailure(timeSource: TimeSource = TimeSource.Monotonic): Pair<FakeApi, AppStateHolder> {
+        val (api, holder) = resolved(timeSource = timeSource)
         holder.startDownload()
         runCurrent()
         api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))

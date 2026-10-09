@@ -9,7 +9,9 @@ import com.xgetsongs.app.api.HttpXgsApi
 import com.xgetsongs.app.api.configureXgs
 import com.xgetsongs.app.diagnostics.Diagnostics
 import com.xgetsongs.app.diagnostics.LOG_DIR_PROPERTY
+import com.xgetsongs.app.diagnostics.applicationDirectory
 import com.xgetsongs.app.diagnostics.chooseLogDirectory
+import com.xgetsongs.app.diagnostics.logDirectoryCandidates
 import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.ui.App
 import com.xgetsongs.server.LocalServer
@@ -24,10 +26,14 @@ import java.nio.file.Path
 fun main() {
     // First of all: logback reads the log folder from this property the first time anything asks for a logger, and the
     // server's classes do that as soon as they load. (This file declares no logger of its own, for the same reason.) The
-    // folder is created first, and the temp folder takes over when the app's own cannot be made.
+    // folder is created first: the `log` folder next to the application, then the app's data folder, then the temp folder
+    // when the ones before cannot be made (an install folder that is read-only, say).
     val logDir = chooseLogDirectory(
-        preferred = appDataDirectory().resolve("logs"),
-        fallback = Path.of(System.getProperty("java.io.tmpdir") ?: ".", "xgetsongs-logs"),
+        logDirectoryCandidates(
+            applicationDir = applicationDirectory(),
+            appDataDir = appDataDirectory(),
+            tempDir = Path.of(System.getProperty("java.io.tmpdir") ?: "."),
+        ),
     ).also { System.setProperty(LOG_DIR_PROPERTY, it.toString()) }
     val diagnostics = Diagnostics.start(logDir)
     val server = LocalServer.start(appDataDirectory())

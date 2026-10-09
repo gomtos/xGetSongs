@@ -168,15 +168,41 @@ internal fun ensureLogDirectory(logDir: Path, report: (String) -> Unit = System.
 }
 
 /**
- * The folder for the log files: [preferred] when it can be created, else [fallback] (in the temp folder). `main` calls this
- * before it sets [LOG_DIR_PROPERTY], so logback is never told about a folder that does not exist. It never throws; when
- * even the fallback cannot be created it is still the answer, and logback then writes to the console only.
+ * The folder for the log files, in the order they are tried: a `log` folder next to the application ([applicationDir]; not
+ * known when null), the app's data folder, the temp folder.
  */
-internal fun chooseLogDirectory(preferred: Path, fallback: Path, report: (String) -> Unit = System.err::println): Path {
-    if (ensureLogDirectory(preferred, report)) return preferred
-    report("로그를 임시 폴더에 씀: $fallback")
-    ensureLogDirectory(fallback, report)
-    return fallback
+internal fun logDirectoryCandidates(applicationDir: Path?, appDataDir: Path, tempDir: Path): List<Path> =
+    listOfNotNull(applicationDir?.resolve("log"), appDataDir.resolve("logs"), tempDir.resolve("xgetsongs-logs"))
+
+/**
+ * The folder the application runs from: where the native launcher is when there is one (jpackage sets
+ * `jpackage.app-path`), else the folder of the jar, or the classes folder itself when the classes are not in a jar. Null
+ * when neither tells ([property] and [codeSource] are what a test replaces).
+ */
+internal fun applicationDirectory(
+    property: (String) -> String? = { System.getProperty(it) },
+    codeSource: () -> Path? = {
+        Diagnostics::class.java.protectionDomain?.codeSource?.location?.toURI()?.let { Path.of(it) }
+    },
+): Path? {
+    val launcher = property("jpackage.app-path")?.takeIf { it.isNotBlank() }
+        ?.let { runCatching { Path.of(it).toAbsolutePath().parent }.getOrNull() }
+    if (launcher != null) return launcher
+    val source = runCatching(codeSource).getOrNull() ?: return null
+    return if (Files.isDirectory(source)) source else source.toAbsolutePath().parent
+}
+
+/**
+ * The first of [candidates] that can be created; the last one when none can. `main` calls this before it sets
+ * [LOG_DIR_PROPERTY], so logback is never told about a folder that does not exist. It never throws; when even the last
+ * candidate cannot be created it is still the answer, and logback then writes to the console only.
+ */
+internal fun chooseLogDirectory(candidates: List<Path>, report: (String) -> Unit = System.err::println): Path {
+    for ((index, candidate) in candidates.withIndex()) {
+        if (ensureLogDirectory(candidate, report)) return candidate
+        candidates.getOrNull(index + 1)?.let { report("로그를 대신 이 폴더에 씀: $it") }
+    }
+    return candidates.last()
 }
 
 /**

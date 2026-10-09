@@ -111,12 +111,12 @@ class DiagnosticsTest {
     }
 
     @Test
-    fun thePreferredLogFolderIsUsedWhenItCanBeCreated() {
-        val preferred = dir.resolve("appdata").resolve("logs")
+    fun theFirstLogFolderIsUsedWhenItCanBeCreated() {
+        val preferred = dir.resolve("app").resolve("log")
         val fallback = dir.resolve("temp").resolve("xgetsongs-logs")
         val reports = mutableListOf<String>()
 
-        val chosen = chooseLogDirectory(preferred, fallback, report = { reports += it })
+        val chosen = chooseLogDirectory(listOf(preferred, fallback), report = { reports += it })
 
         assertEquals(preferred, chosen)
         assertTrue(Files.isDirectory(preferred))
@@ -125,25 +125,85 @@ class DiagnosticsTest {
     }
 
     @Test
-    fun theTempFolderIsUsedWhenThePreferredLogFolderCannotBeCreated() {
-        val blocker = Files.writeString(dir.resolve("appdata"), "a file where the app folder should be")
+    fun theNextLogFolderIsUsedWhenTheFirstCannotBeCreated() {
+        val blocker = Files.writeString(dir.resolve("app"), "a file where the app folder should be")
         val fallback = dir.resolve("temp").resolve("xgetsongs-logs")
         val reports = mutableListOf<String>()
 
-        val chosen = chooseLogDirectory(blocker.resolve("logs"), fallback, report = { reports += it })
+        val chosen = chooseLogDirectory(listOf(blocker.resolve("log"), fallback), report = { reports += it })
 
         assertEquals(fallback, chosen)
         assertTrue(Files.isDirectory(fallback))
-        assertTrue(reports.any { "appdata" in it }, reports.toString())
+        assertTrue(reports.any { "app" in it }, reports.toString())
     }
 
     @Test
-    fun whenNeitherFolderCanBeCreatedTheFallbackIsStillTheAnswerAndNothingIsThrown() {
+    fun theLastCandidateIsTriedWhenTheOnesBeforeItFail() {
+        val blocker = Files.writeString(dir.resolve("a-file"), "not a folder")
+        val last = dir.resolve("temp").resolve("xgetsongs-logs")
+
+        val chosen = chooseLogDirectory(listOf(blocker.resolve("one"), blocker.resolve("two"), last), report = { })
+
+        assertEquals(last, chosen)
+        assertTrue(Files.isDirectory(last))
+    }
+
+    @Test
+    fun whenNoFolderCanBeCreatedTheLastOneIsStillTheAnswerAndNothingIsThrown() {
         val blocker = Files.writeString(dir.resolve("a-file"), "not a folder")
 
-        val chosen = chooseLogDirectory(blocker.resolve("one"), blocker.resolve("two"), report = { })
+        val chosen = chooseLogDirectory(listOf(blocker.resolve("one"), blocker.resolve("two")), report = { })
 
         assertEquals(blocker.resolve("two"), chosen)
+    }
+
+    // ---- where the log folder is looked for -------------------------------------------------
+
+    @Test
+    fun theLogsGoToALogFolderNextToTheApplicationThenTheAppDataFolderThenTemp() {
+        val candidates = logDirectoryCandidates(Path.of("C:\\Apps\\xGetSongs"), Path.of("C:\\Data\\xGetSongs"), Path.of("C:\\Temp"))
+
+        assertEquals(
+            listOf(Path.of("C:\\Apps\\xGetSongs\\log"), Path.of("C:\\Data\\xGetSongs\\logs"), Path.of("C:\\Temp\\xgetsongs-logs")),
+            candidates,
+        )
+    }
+
+    @Test
+    fun withoutAKnownApplicationFolderOnlyTheOtherLogFoldersAreCandidates() {
+        val candidates = logDirectoryCandidates(null, Path.of("C:\\Data\\xGetSongs"), Path.of("C:\\Temp"))
+
+        assertEquals(listOf(Path.of("C:\\Data\\xGetSongs\\logs"), Path.of("C:\\Temp\\xgetsongs-logs")), candidates)
+    }
+
+    @Test
+    fun theApplicationFolderIsWhereTheNativeLauncherIs() {
+        val properties = mapOf("jpackage.app-path" to "C:\\Apps\\xGetSongs\\xGetSongs.exe")
+
+        val folder = applicationDirectory(property = properties::get, codeSource = { Path.of("C:\\Apps\\xGetSongs\\app\\xgetsongs.jar") })
+
+        assertEquals(Path.of("C:\\Apps\\xGetSongs"), folder)
+    }
+
+    @Test
+    fun theApplicationFolderIsTheFolderOfTheJarWhenThereIsNoNativeLauncher() {
+        val jar = Files.writeString(dir.resolve("app.jar"), "not really a jar")
+
+        assertEquals(dir, applicationDirectory(property = { null }, codeSource = { jar }))
+        assertEquals(dir, applicationDirectory(property = { " " }, codeSource = { jar }), "a blank launcher property says nothing")
+    }
+
+    @Test
+    fun theApplicationFolderIsTheClassesFolderItselfWhenRunFromClasses() {
+        val classes = Files.createDirectories(dir.resolve("classes"))
+
+        assertEquals(classes, applicationDirectory(property = { null }, codeSource = { classes }))
+    }
+
+    @Test
+    fun theApplicationFolderIsUnknownWhenNothingTellsIt() {
+        assertEquals(null, applicationDirectory(property = { null }, codeSource = { null }))
+        assertEquals(null, applicationDirectory(property = { null }, codeSource = { error("no code source") }))
     }
 
     // ---- the uncaught exception handler ----------------------------------------------------

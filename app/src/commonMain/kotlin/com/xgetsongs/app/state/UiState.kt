@@ -6,6 +6,7 @@ import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.api.ResolveResponse
 import com.xgetsongs.shared.api.ResolvedItem
 import com.xgetsongs.shared.api.ToolsStatus
+import kotlin.time.Duration
 
 sealed interface ItemStatus {
     /** Shown in the preview before a download starts. */
@@ -58,6 +59,8 @@ data class UiState(
     val error: String? = null,
     val jobStatus: JobStatus? = null,
     val summary: JobSummary? = null,
+    /** How long the job that [summary] belongs to took, from the press of the button to the job-done event; null while there is none. */
+    val elapsed: Duration? = null,
     val tools: ToolsStatus? = null,
     val toolBusy: Boolean = false,
     val toolMessage: String? = null,

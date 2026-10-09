@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 /**
  * All screen logic. The composables only render [state] and call these functions.
@@ -36,11 +38,15 @@ class AppStateHolder(
     private val scope: CoroutineScope,
     defaultOutputDir: String,
     private val settings: SettingsStore = NoSettingsStore,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
 ) {
     private val _state = MutableStateFlow(initialState(defaultOutputDir))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var jobId: String? = null
+
+    /** When the job that runs now was started; the elapsed time shown at its end is measured from it. */
+    private var jobStart: TimeMark? = null
     private var jobTask: Job? = null
     private var saveJob: Job? = null
 
@@ -275,7 +281,7 @@ class AppStateHolder(
         }
         _state.update { s ->
             s.copy(
-                phase = Phase.RUNNING, error = null, summary = null, jobStatus = null,
+                phase = Phase.RUNNING, error = null, summary = null, jobStatus = null, elapsed = null,
                 rows = s.rows.map { if (it.item.available) it.copy(status = ItemStatus.Waiting) else it },
             )
         }
@@ -290,7 +296,7 @@ class AppStateHolder(
         if (ranks.isEmpty() || state.phase != Phase.FINISHED) return
         _state.update { s ->
             s.copy(
-                phase = Phase.RUNNING, error = null, summary = null, jobStatus = null,
+                phase = Phase.RUNNING, error = null, summary = null, jobStatus = null, elapsed = null,
                 rows = s.rows.map { if (it.item.rank in ranks) it.copy(status = ItemStatus.Waiting) else it },
             )
         }
@@ -327,6 +333,7 @@ class AppStateHolder(
      * started, so a failed retry does not wipe the results of the previous run.
      */
     private fun runJob(request: JobRequest, before: UiState) {
+        jobStart = timeSource.markNow()
         jobTask = scope.launch {
             var started = false
             try {
@@ -401,6 +408,7 @@ class AppStateHolder(
             phase = Phase.FINISHED,
             jobStatus = event.status,
             summary = event.summary,
+            elapsed = jobStart?.elapsedNow(),
             rows = state.rows.map(::resetTransient),
         )
     }

@@ -4,6 +4,7 @@ import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobStatus
 import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.filename.FilenameFormatter
+import kotlin.time.Duration
 
 /** The text shown in an item's status cell. */
 fun statusLabel(status: ItemStatus): String = when (status) {
@@ -28,15 +29,30 @@ private fun doneLabel(lyrics: LyricsOutcome?): String = when (lyrics) {
     LyricsOutcome.SEARCH_OFF -> "완료 · 가사 없음 (검색 끔)"
 }
 
-/** The one-line result shown after a job ends; null while there is nothing to report. */
+/** The one-line result shown after a job ends, with how long it took when that is known; null while there is nothing to report. */
 fun summaryText(state: UiState): String? {
     val summary = state.summary ?: return null
-    val counts = "성공 ${summary.succeeded} · 건너뜀 ${summary.skipped} · 실패 ${summary.failed}"
+    val took = state.elapsed?.let { " · 소요 ${elapsedLabel(it)}" }.orEmpty()
+    val counts = "성공 ${summary.succeeded} · 건너뜀 ${summary.skipped} · 실패 ${summary.failed}$took"
     return when (state.jobStatus) {
         JobStatus.COMPLETED -> "완료 — $counts"
         JobStatus.CANCELLED -> "취소됨 — $counts"
         JobStatus.FAILED -> "중단됨 — $counts"
         null -> null
+    }
+}
+
+/** [elapsed] in whole seconds as `42초`, `3분 05초` or `1시간 02분 05초`; never negative. */
+fun elapsedLabel(elapsed: Duration): String {
+    val total = elapsed.inWholeSeconds.coerceAtLeast(0)
+    val hours = total / 3600
+    val minutes = total % 3600 / 60
+    val seconds = total % 60
+    fun two(value: Long) = value.toString().padStart(2, '0')
+    return when {
+        hours > 0 -> "${hours}시간 ${two(minutes)}분 ${two(seconds)}초"
+        minutes > 0 -> "${minutes}분 ${two(seconds)}초"
+        else -> "${seconds}초"
     }
 }
 
