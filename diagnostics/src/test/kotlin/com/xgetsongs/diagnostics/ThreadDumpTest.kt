@@ -1,4 +1,4 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
 import java.time.LocalDateTime
 import java.util.concurrent.CountDownLatch

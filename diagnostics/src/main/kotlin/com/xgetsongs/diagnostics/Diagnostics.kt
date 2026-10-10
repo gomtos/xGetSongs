@@ -1,9 +1,7 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
 import com.xgetsongs.shared.log.LogRedaction
 import org.slf4j.LoggerFactory
-import java.awt.EventQueue
-import java.awt.GraphicsEnvironment
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -15,10 +13,10 @@ import kotlin.time.Duration.Companion.nanoseconds
  * The system property that tells logback.xml where the log files go. `main` sets it before anything asks for a logger:
  * logback reads its configuration, and with it this property, the first time that happens.
  */
-internal const val LOG_DIR_PROPERTY = "xgs.logDir"
+const val LOG_DIR_PROPERTY = "xgs.logDir"
 
 /** What this process and the others on the machine look like: the marker of the last run is judged with it. */
-internal interface Processes {
+interface Processes {
     val ownPid: Long
     val ownStart: Instant
 
@@ -26,7 +24,7 @@ internal interface Processes {
     fun startOf(pid: Long): Instant?
 }
 
-internal object SystemProcesses : Processes {
+object SystemProcesses : Processes {
     override val ownPid: Long get() = ProcessHandle.current().pid()
     override val ownStart: Instant by lazy { ProcessHandle.current().info().startInstant().orElseGet { Instant.now() } }
     override fun startOf(pid: Long): Instant? =
@@ -38,7 +36,7 @@ internal object SystemProcesses : Processes {
  * how the JVM was asked to exit, a marker file that tells the next run whether this one ended properly, and a thread dump
  * when the UI thread stops answering. [start] is called once, first thing in `main` (after [LOG_DIR_PROPERTY] is set).
  */
-internal object Diagnostics {
+object Diagnostics {
     /** The marker of the last run, next to the log. */
     const val MARKER_FILE_NAME = "last-run.txt"
 
@@ -52,12 +50,16 @@ internal object Diagnostics {
      * Prepares [logDir] (a failure is only reported on stderr), hooks the uncaught-exception handler, writes the startup
      * record, tells what the marker of the previous run says and writes the marker of this one, registers the exit logger
      * through [registerHook] and starts the watchdog, which posts its heartbeats with [postToUi].
+     *
+     * [postToUi] runs a Runnable on the thread whose answers the watchdog waits for (the app: the AWT event queue; the
+     * sidecar: a coroutine dispatcher). [headless] is only written into the startup record; null leaves the line out.
      */
     fun start(
         logDir: Path,
-        postToUi: (Runnable) -> Unit = EventQueue::invokeLater,
+        postToUi: (Runnable) -> Unit,
         registerHook: (Thread) -> Unit = Runtime.getRuntime()::addShutdownHook,
         processes: Processes = SystemProcesses,
+        headless: Boolean? = null,
     ): DiagnosticsHandle {
         ensureLogDirectory(logDir)
         uncaughtSeen = false
@@ -70,7 +72,7 @@ internal object Diagnostics {
                 property = System::getProperty,
                 processors = Runtime.getRuntime().availableProcessors(),
                 maxHeapMb = Runtime.getRuntime().maxMemory() / (1024 * 1024),
-                headless = GraphicsEnvironment.isHeadless(),
+                headless = headless,
                 workingDir = Path.of("").toAbsolutePath().toString(),
                 logDir = logDir,
             ),
@@ -117,7 +119,7 @@ internal object Diagnostics {
 }
 
 /** What `main` keeps from [Diagnostics.start]. */
-internal class DiagnosticsHandle(private val exitLogger: ExitLogger, private val watchdog: UiWatchdog) {
+class DiagnosticsHandle internal constructor(private val exitLogger: ExitLogger, private val watchdog: UiWatchdog) {
     private val log = LoggerFactory.getLogger(DiagnosticsHandle::class.java)
 
     /** The number of jobs the server has registered, for the exit record: -1 (unknown) until the server is up and `main` says how to ask it. */
@@ -143,7 +145,7 @@ internal fun startupRecord(
     property: (String) -> String?,
     processors: Int,
     maxHeapMb: Long,
-    headless: Boolean,
+    headless: Boolean?,
     workingDir: String,
     logDir: Path,
 ): String = buildString {
@@ -154,8 +156,8 @@ internal fun startupRecord(
     appendLine("  OS: ${value("os.name")} ${value("os.version")} ${value("os.arch")}")
     appendLine("  프로세서 ${processors}개, 최대 힙 ${maxHeapMb}MB")
     appendLine("  작업 폴더: $workingDir")
-    appendLine("  로그 폴더: $logDir")
-    append("  headless=$headless")
+    append("  로그 폴더: $logDir")
+    if (headless != null) append("\n  headless=$headless")
 }
 
 /** Creates [logDir] (the log files would be created on first use anyway); a failure is only [report]ed, never thrown. */
@@ -171,7 +173,7 @@ internal fun ensureLogDirectory(logDir: Path, report: (String) -> Unit = System.
  * The folder for the log files, in the order they are tried: a `log` folder next to the application ([applicationDir]; not
  * known when null), the app's data folder, the temp folder.
  */
-internal fun logDirectoryCandidates(applicationDir: Path?, appDataDir: Path, tempDir: Path): List<Path> =
+fun logDirectoryCandidates(applicationDir: Path?, appDataDir: Path, tempDir: Path): List<Path> =
     listOfNotNull(applicationDir?.resolve("log"), appDataDir.resolve("logs"), tempDir.resolve("xgetsongs-logs"))
 
 /**
@@ -181,7 +183,7 @@ internal fun logDirectoryCandidates(applicationDir: Path?, appDataDir: Path, tem
  * file, [isProjectRoot]), so that a run from Gradle does not put its `log` folder inside `build`. Null when nothing tells
  * ([property] and [codeSource] are what a test replaces).
  */
-internal fun applicationDirectory(
+fun applicationDirectory(
     property: (String) -> String? = { System.getProperty(it) },
     codeSource: () -> Path? = {
         Diagnostics::class.java.protectionDomain?.codeSource?.location?.toURI()?.let { Path.of(it) }
@@ -201,7 +203,7 @@ internal fun applicationDirectory(
  * [LOG_DIR_PROPERTY], so logback is never told about a folder that does not exist. It never throws; when even the last
  * candidate cannot be created it is still the answer, and logback then writes to the console only.
  */
-internal fun chooseLogDirectory(candidates: List<Path>, report: (String) -> Unit = System.err::println): Path {
+fun chooseLogDirectory(candidates: List<Path>, report: (String) -> Unit = System.err::println): Path {
     for ((index, candidate) in candidates.withIndex()) {
         if (ensureLogDirectory(candidate, report)) return candidate
         candidates.getOrNull(index + 1)?.let { report("로그를 대신 이 폴더에 씀: $it") }

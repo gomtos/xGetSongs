@@ -1,7 +1,7 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
-import com.xgetsongs.app.diagnostics.HangEvent.Hung
-import com.xgetsongs.app.diagnostics.HangEvent.Recovered
+import com.xgetsongs.diagnostics.HangEvent.Hung
+import com.xgetsongs.diagnostics.HangEvent.Recovered
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

@@ -1,4 +1,4 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory

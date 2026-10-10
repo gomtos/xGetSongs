@@ -1,4 +1,4 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
 /** What [HangDetector.onTick] has to tell about the UI thread. */
 internal sealed interface HangEvent {

@@ -32,6 +32,7 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(project(":server"))
+                implementation(project(":diagnostics"))
                 implementation(libs.ktor.client.cio)
                 implementation(libs.kotlinx.coroutines.swing)
                 // The diagnostics code logs through SLF4J; logback itself comes along at run time through :server.

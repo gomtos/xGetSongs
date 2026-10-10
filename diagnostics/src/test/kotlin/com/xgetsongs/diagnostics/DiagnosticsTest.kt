@@ -1,4 +1,4 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
 import ch.qos.logback.classic.Level
 import java.nio.file.Files
@@ -84,6 +84,14 @@ class DiagnosticsTest {
 
         assertTrue("프로세서 4개" in text, text)
         assertTrue("headless=true" in text, text)
+    }
+
+    @Test
+    fun theHeadlessLineIsLeftOutWhenNobodyAskedAnAwtForIt() {
+        val text = startupRecord(null, { null }, 4, 512, null, "C:\\w", Path.of("C:\\l"))
+
+        assertFalse("headless" in text, text)
+        assertTrue(text.endsWith("로그 폴더: C:\\l"), text)
     }
 
     // ---- the log folder --------------------------------------------------------------------
@@ -248,7 +256,7 @@ class DiagnosticsTest {
             assertEquals(Level.ERROR, record.level)
             assertTrue("worker-7" in record.formattedMessage, record.formattedMessage)
             assertTrue("java.lang.IllegalStateException: boom" in record.formattedMessage, record.formattedMessage)
-            assertTrue("\tat com.xgetsongs.app.diagnostics.DiagnosticsTest" in record.formattedMessage, "the stack is in it")
+            assertTrue("\tat com.xgetsongs.diagnostics.DiagnosticsTest" in record.formattedMessage, "the stack is in it")
             assertEquals(thread to error, passedOn)
         }
     }

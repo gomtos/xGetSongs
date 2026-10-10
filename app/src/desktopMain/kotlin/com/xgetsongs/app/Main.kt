@@ -7,13 +7,13 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.xgetsongs.app.api.HttpXgsApi
 import com.xgetsongs.app.api.configureXgs
-import com.xgetsongs.app.diagnostics.Diagnostics
-import com.xgetsongs.app.diagnostics.LOG_DIR_PROPERTY
-import com.xgetsongs.app.diagnostics.applicationDirectory
-import com.xgetsongs.app.diagnostics.chooseLogDirectory
-import com.xgetsongs.app.diagnostics.logDirectoryCandidates
 import com.xgetsongs.app.state.AppStateHolder
 import com.xgetsongs.app.ui.App
+import com.xgetsongs.diagnostics.Diagnostics
+import com.xgetsongs.diagnostics.LOG_DIR_PROPERTY
+import com.xgetsongs.diagnostics.applicationDirectory
+import com.xgetsongs.diagnostics.chooseLogDirectory
+import com.xgetsongs.diagnostics.logDirectoryCandidates
 import com.xgetsongs.server.LocalServer
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -21,6 +21,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import java.awt.EventQueue
+import java.awt.GraphicsEnvironment
 import java.nio.file.Path
 
 fun main() {
@@ -35,7 +37,7 @@ fun main() {
             tempDir = Path.of(System.getProperty("java.io.tmpdir") ?: "."),
         ),
     ).also { System.setProperty(LOG_DIR_PROPERTY, it.toString()) }
-    val diagnostics = Diagnostics.start(logDir)
+    val diagnostics = Diagnostics.start(logDir, postToUi = EventQueue::invokeLater, headless = GraphicsEnvironment.isHeadless())
     val server = LocalServer.start(appDataDirectory())
     diagnostics.runningJobs = server::runningJobs
     val http = HttpClient(CIO) {

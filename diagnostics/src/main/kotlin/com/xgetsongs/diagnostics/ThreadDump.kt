@@ -1,4 +1,4 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
 import java.lang.management.ManagementFactory
 import java.time.LocalDateTime

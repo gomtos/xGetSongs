@@ -1,4 +1,4 @@
-package com.xgetsongs.app.diagnostics
+package com.xgetsongs.diagnostics
 
 import ch.qos.logback.classic.Level
 import kotlin.test.AfterTest
