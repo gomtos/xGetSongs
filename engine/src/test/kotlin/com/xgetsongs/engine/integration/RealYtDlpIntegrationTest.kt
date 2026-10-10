@@ -5,9 +5,7 @@ import com.xgetsongs.engine.job.DefaultDownloadService
 import com.xgetsongs.engine.job.ItemDownloader
 import com.xgetsongs.engine.lyrics.LrclibLyricsProvider
 import com.xgetsongs.engine.output.LocalFolderSink
-import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.process.SystemProcessRunner
-import com.xgetsongs.engine.testutil.Id3v2Tag
 import com.xgetsongs.engine.tools.ToolLocator
 import com.xgetsongs.engine.ytdlp.VideoInfoFile
 import com.xgetsongs.engine.ytdlp.YtDlpCommands
@@ -47,29 +45,6 @@ class RealYtDlpIntegrationTest {
     private val locator = ToolLocator(appBinDir = appData.resolve("bin"))
     private val runner = SystemProcessRunner()
 
-    /**
-     * Passes everything to the real runner and remembers the progress lines yt-dlp prints (`XGSP|...` while downloading,
-     * `XGSPP|<status>|<post-processor>` around each post-processor), in order, repeats collapsed.
-     */
-    private class ProgressRecordingRunner(private val real: ProcessRunner) : ProcessRunner {
-        val sequence = CopyOnWriteArrayList<String>()
-
-        override suspend fun run(command: List<String>, onStdout: (String) -> Unit, onStderr: (String) -> Unit): Int =
-            real.run(
-                command,
-                onStdout = { line ->
-                    val label = when {
-                        line.startsWith("XGSPP|") -> line.trim()
-                        line.startsWith("XGSP|") -> "XGSP|" + line.split('|').getOrNull(1)
-                        else -> null
-                    }
-                    if (label != null && sequence.lastOrNull() != label) sequence += label
-                    onStdout(line)
-                },
-                onStderr = onStderr,
-            )
-    }
-
     @BeforeTest
     fun requireTools() {
         val tools = locator.current()
@@ -94,7 +69,7 @@ class RealYtDlpIntegrationTest {
             assertEquals(response.items.indices.map { it + 1 }, response.items.map { it.rank })
             val available = response.items.filter { it.available }
             assertTrue(available.isNotEmpty())
-            assertTrue(available.all { Regex("""\d{3} .+ - .+\.mp3""").matches(it.expectedFileName!!) })
+            assertTrue(available.all { Regex("""\d{3} .+ - .+\.m4a""").matches(it.expectedFileName!!) })
         }
     }
 
@@ -115,7 +90,7 @@ class RealYtDlpIntegrationTest {
     // JUnit does not discover test methods with a non-void return type, and the last expression of the runBlocking
     // blocks below is not Unit, so the return type must be declared Unit explicitly.
     @Test
-    fun writesTheInfoFileNextToTheMp3AndTheTestVideoHasNoAlbum(): Unit = runBlocking {
+    fun writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum(): Unit = runBlocking {
         withTimeout(180_000) {
             // "Me at the zoo" again: 19 seconds, uploaded by a person, so YouTube knows no album for it.
             val videoId = "jNQXAC9IVRw"
@@ -124,10 +99,11 @@ class RealYtDlpIntegrationTest {
                 runDownload(videoId, dir)
 
                 val info = dir.resolve("$videoId.info.json")
-                assertTrue(Files.isRegularFile(dir.resolve("$videoId.mp3")), "the mp3 must be there: ${Files.list(dir).use { it.toList() }}")
-                assertTrue(Files.isRegularFile(info), "yt-dlp must write <videoId>.info.json next to the mp3: ${Files.list(dir).use { it.toList() }}")
+                assertTrue(Files.isRegularFile(dir.resolve("$videoId.m4a")), "the m4a must be there: ${Files.list(dir).use { it.toList() }}")
+                assertTrue(Files.isRegularFile(info), "yt-dlp must write <videoId>.info.json next to the m4a: ${Files.list(dir).use { it.toList() }}")
                 val root = Json.parseToJsonElement(Files.readString(info)).jsonObject
                 assertEquals(videoId, root.getValue("id").jsonPrimitive.content)
+                assertEquals("140", root.getValue("format_id").jsonPrimitive.content, "the AAC stream (itag 140) is what is downloaded")
                 println("info file: ${Files.size(info)} bytes; album=${root["album"]}, artist=${root["artist"]}, track=${root["track"]}")
                 assertNull(VideoInfoFile.readAlbum(info), "the test video has no album")
             } finally {
@@ -149,7 +125,7 @@ class RealYtDlpIntegrationTest {
 
                 val info = dir.resolve("$videoId.info.json")
                 assertTrue(Files.isRegularFile(info), "yt-dlp must write <videoId>.info.json: ${Files.list(dir).use { it.toList() }}")
-                assertTrue(Files.notExists(dir.resolve("$videoId.mp3")), "no audio may be downloaded")
+                assertTrue(Files.notExists(dir.resolve("$videoId.m4a")), "no audio may be downloaded")
                 val root = Json.parseToJsonElement(Files.readString(info)).jsonObject
                 println("info file: ${Files.size(info)} bytes; album=${root["album"]}, artist=${root["artist"]}, track=${root["track"]}")
                 assertEquals("Love poem", VideoInfoFile.readAlbum(info))
@@ -186,7 +162,7 @@ class RealYtDlpIntegrationTest {
 
                 val info = dir.resolve("$videoId.info.json")
                 assertTrue(Files.isRegularFile(info), "yt-dlp must write <videoId>.info.json: ${Files.list(dir).use { it.toList() }}")
-                assertTrue(Files.notExists(dir.resolve("$videoId.mp3")), "no audio may be downloaded")
+                assertTrue(Files.notExists(dir.resolve("$videoId.m4a")), "no audio may be downloaded")
                 val description = VideoInfoFile.read(info).description
                 assertNotNull(description, "the video must have a description")
                 println("description structure: ${structureOf(description)}")
@@ -207,7 +183,7 @@ class RealYtDlpIntegrationTest {
     }
 
     @Test
-    fun downloadsAShortVideoAsMp3(): Unit = runBlocking {
+    fun downloadsAShortVideoAsM4aWithoutReencoding(): Unit = runBlocking {
         val ffprobePath = Ffprobe.besides(locator.current().ffmpeg)
         assumeTrue(ffprobePath != null, "ffprobe must be installed next to ffmpeg")
         val ffprobe = Ffprobe(ffprobePath!!, runner)
@@ -220,9 +196,8 @@ class RealYtDlpIntegrationTest {
                 val outDir = root.resolve("out")
 
                 // The lyrics lookup is on and the real LRCLIB is asked: this video has no lyrics in its description and none
-                // may be found anywhere else, so the file must come out without any lyrics frame.
-                val recording = ProgressRecordingRunner(runner)
-                val service = DefaultDownloadService(ItemDownloader(recording, locator, resolver, LrclibLyricsProvider()), root.resolve("work"), this)
+                // may be found anywhere else, so the file must come out without any lyrics tag.
+                val service = DefaultDownloadService(ItemDownloader(runner, locator, resolver, LrclibLyricsProvider()), root.resolve("work"), this)
                 val events = service
                     .start(
                         DownloadRequest(
@@ -237,25 +212,20 @@ class RealYtDlpIntegrationTest {
                 assertEquals(1, done.summary.succeeded, events.toString())
                 val file = Files.list(outDir).use { it.toList().single() }
                 println("downloaded: ${file.fileName} (${Files.size(file)} bytes)")
-                assertTrue(Regex("""001 .+ - .+\.mp3""").matches(file.fileName.toString()), file.fileName.toString())
+                assertTrue(Regex("""001 .+ - .+\.m4a""").matches(file.fileName.toString()), file.fileName.toString())
                 assertTrue(Files.size(file) > 50_000)
 
-                // The thumbnail converter runs before the download and every post-processor prints its progress line:
-                // none of them may make the job report "converting" before the download has started.
-                println("progress lines in order: ${recording.sequence}")
-                println("post-processors seen: ${recording.sequence.filter { it.startsWith("XGSPP|") }.map { it.split('|').last() }.distinct()}")
                 val stages = events.filterIsInstance<JobEvent.Progress>().map { it.stage }
                 println("reported stages: ${stages.fold(emptyList<Stage>()) { all, next -> if (all.lastOrNull() == next) all else all + next }}")
-                val firstDownloading = stages.indexOf(Stage.DOWNLOADING)
-                assertTrue(firstDownloading >= 0, "no download progress was reported: $stages")
-                assertTrue(Stage.FINISHING !in stages.take(firstDownloading), "converting was reported before the download: $stages")
-                assertTrue(Stage.FINISHING in stages, "the audio conversion must still be reported: $stages")
+                assertTrue(Stage.DOWNLOADING in stages, "no download progress was reported: $stages")
+                assertEquals(Stage.FINISHING, stages.last(), "the finishing stage comes last: $stages")
+                assertEquals(1, stages.count { it == Stage.FINISHING }, stages.toString())
 
                 val probed = ffprobe.probe(file)
                 // Never print a lyrics tag: if the lookup wrongly found lyrics, they must not end up in the log.
                 println("tags: ${probed.tags.filterKeys { !it.startsWith("lyrics") }}; lyrics tags: ${probed.tags.keys.count { it.startsWith("lyrics") }}; streams: ${probed.streams}")
                 assertTrue(probed.tags.keys.none { it.startsWith("lyrics") }, "the video has no lyrics anywhere: ${probed.tags.keys}")
-                assertTrue("USLT" !in Id3v2Tag.read(file).ids, "no lyrics frame may be written when nothing is found")
+                assertEquals("M4A ", probed.tags["major_brand"])
                 assertEquals("Me at the zoo", probed.tags["title"])
                 assertEquals("jawed", probed.tags["artist"])
                 assertEquals("Various Artists", probed.tags["album_artist"])
@@ -263,6 +233,7 @@ class RealYtDlpIntegrationTest {
                 assertEquals("1", probed.tags["track"])
                 assertTrue(probed.tags["comment"].orEmpty().startsWith("https://www.youtube.com/watch?v="), probed.tags.toString())
                 assertEquals(listOf("audio", "video"), probed.streams.map { it.codecType }.sorted(), probed.streams.toString())
+                assertEquals("aac", probed.streams.single { it.codecType == "audio" }.codecName, "YouTube's AAC stream is copied as it is")
                 val cover = probed.streams.single { it.codecType == "video" }
                 assertTrue(cover.attachedPic, "the picture must be an attached cover")
                 assertNotNull(cover.width)

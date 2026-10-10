@@ -15,10 +15,10 @@ class ApiModelsTest {
     @Test
     fun everyJobEventSurvivesARoundTrip() {
         val events = listOf(
-            JobEvent.ItemStarted(1, "abc", "001 A - B.mp3"),
+            JobEvent.ItemStarted(1, "abc", "001 A - B.m4a"),
             JobEvent.Progress(1, Stage.DOWNLOADING, 42.5),
             JobEvent.Progress(1, Stage.FINISHING),
-            JobEvent.ItemDone(1, "001 A - B.mp3"),
+            JobEvent.ItemDone(1, "001 A - B.m4a"),
             JobEvent.ItemSkipped(2, "이미 존재"),
             JobEvent.ItemFailed(3, "boom"),
             JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 1, 1)),
@@ -29,9 +29,9 @@ class ApiModelsTest {
     @Test
     fun eventTypeDiscriminatorMatchesSseName() {
         val events = listOf(
-            JobEvent.ItemStarted(1, "abc", "x.mp3"),
+            JobEvent.ItemStarted(1, "abc", "x.m4a"),
             JobEvent.Progress(1, Stage.DOWNLOADING, 1.0),
-            JobEvent.ItemDone(1, "x.mp3"),
+            JobEvent.ItemDone(1, "x.m4a"),
             JobEvent.ItemSkipped(1, "r"),
             JobEvent.ItemFailed(1, "m"),
             JobEvent.JobDone(JobStatus.CANCELLED, JobSummary(0, 0, 0)),
@@ -45,7 +45,7 @@ class ApiModelsTest {
     @Test
     fun anItemDoneSurvivesARoundTripWithEachLyricsOutcomeAndWithNone() {
         for (outcome in LyricsOutcome.entries + null) {
-            val event = JobEvent.ItemDone(4, "004 A - B.mp3", outcome)
+            val event = JobEvent.ItemDone(4, "004 A - B.m4a", outcome)
 
             assertEquals(event, roundTrip(event), "$outcome")
             assertEquals(outcome, (roundTrip(event) as JobEvent.ItemDone).lyrics, "$outcome")
@@ -57,7 +57,7 @@ class ApiModelsTest {
         val expectedNames = listOf("DESCRIPTION", "ONLINE", "NOT_FOUND", "SEARCH_OFF")
         assertEquals(expectedNames, LyricsOutcome.entries.map { it.name })
         for (name in expectedNames) {
-            val encoded = json.encodeToString(JobEvent.serializer(), JobEvent.ItemDone(1, "x.mp3", LyricsOutcome.valueOf(name)))
+            val encoded = json.encodeToString(JobEvent.serializer(), JobEvent.ItemDone(1, "x.m4a", LyricsOutcome.valueOf(name)))
 
             assertTrue(encoded.contains("\"lyrics\":\"$name\""), encoded)
         }
@@ -65,24 +65,24 @@ class ApiModelsTest {
 
     @Test
     fun anItemDoneWithoutTheLyricsFieldDecodesToNotKnown() {
-        val decoded = json.decodeFromString(JobEvent.serializer(), """{"type":"item-done","rank":2,"fileName":"002 A - B.mp3"}""")
+        val decoded = json.decodeFromString(JobEvent.serializer(), """{"type":"item-done","rank":2,"fileName":"002 A - B.m4a"}""")
 
-        assertEquals(JobEvent.ItemDone(2, "002 A - B.mp3", lyrics = null), decoded)
+        assertEquals(JobEvent.ItemDone(2, "002 A - B.m4a", lyrics = null), decoded)
         assertNull((decoded as JobEvent.ItemDone).lyrics)
-        assertNull(JobEvent.ItemDone(2, "002 A - B.mp3").lyrics, "the field defaults to not known")
+        assertNull(JobEvent.ItemDone(2, "002 A - B.m4a").lyrics, "the field defaults to not known")
     }
 
     @Test
     fun anItemDoneWithAnExplicitNullLyricsFieldDecodesToNotKnown() {
-        val decoded = json.decodeFromString(JobEvent.serializer(), """{"type":"item-done","rank":2,"fileName":"x.mp3","lyrics":null}""")
+        val decoded = json.decodeFromString(JobEvent.serializer(), """{"type":"item-done","rank":2,"fileName":"x.m4a","lyrics":null}""")
 
-        assertEquals(JobEvent.ItemDone(2, "x.mp3", null), decoded)
+        assertEquals(JobEvent.ItemDone(2, "x.m4a", null), decoded)
     }
 
     @Test
     fun theSseNameOfAnItemDoneStaysItemDoneWhateverTheOutcome() {
         for (outcome in LyricsOutcome.entries + null) {
-            val event = JobEvent.ItemDone(1, "x.mp3", outcome)
+            val event = JobEvent.ItemDone(1, "x.m4a", outcome)
             val encoded = json.encodeToString(JobEvent.serializer(), event)
 
             assertEquals("item-done", event.sseName, "$outcome")
@@ -176,7 +176,7 @@ class ApiModelsTest {
             kind = InputKind.PLAYLIST,
             playlistTitle = "Melon Daily Top 100",
             items = listOf(
-                ResolvedItem(1, "id1", "A - B", "ch", "A", "B", false, true, null, "001 A - B.mp3"),
+                ResolvedItem(1, "id1", "A - B", "ch", "A", "B", false, true, null, "001 A - B.m4a"),
                 ResolvedItem(2, "id2", "[Private video]", available = false, unavailableReason = "비공개 영상"),
             ),
             truncated = true,

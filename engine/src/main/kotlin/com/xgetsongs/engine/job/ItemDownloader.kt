@@ -4,7 +4,7 @@ import com.xgetsongs.engine.lyrics.LyricsProvider
 import com.xgetsongs.engine.lyrics.LyricsQuery
 import com.xgetsongs.engine.lyrics.NoLyricsProvider
 import com.xgetsongs.engine.process.ProcessRunner
-import com.xgetsongs.engine.tags.Id3Tagger
+import com.xgetsongs.engine.tags.M4aTagger
 import com.xgetsongs.engine.tags.TrackTags
 import com.xgetsongs.engine.tools.ToolPathProvider
 import com.xgetsongs.engine.ytdlp.ErrorClassifier
@@ -29,7 +29,7 @@ import java.nio.file.Path
 
 /**
  * An item whose final file name is settled. [artist] and [track] are the parsed originals the file name was made from
- * (the ID3 tags use them as they are); [album] is the album tag the files get unless [albumOverride] is set: the playlist
+ * (the tags use them as they are); [album] is the album tag the files get unless [albumOverride] is set: the playlist
  * title, or null for a single video, which then gets the album of its own video if it has one. [searchLyricsOnline] says
  * whether the lyrics may be looked up on the internet when the video description has none. [albumOverride] is the album
  * name the user chose, if any: the album tag gets it instead of [album].
@@ -44,12 +44,12 @@ data class PreparedItem(
     val albumOverride: String? = null,
 )
 
-/** The album artist (TPE2) of every file: one value for all tracks, so a player groups a playlist into one album. */
+/** The album artist of every file: one value for all tracks, so a player groups a playlist into one album. */
 private const val ALBUM_ARTIST = "Various Artists"
 
 sealed interface DownloadResult {
     /**
-     * The finished mp3, still inside the job's work directory. [lyrics] says what the file got as lyrics, or why it got
+     * The finished m4a, still inside the job's work directory. [lyrics] says what the file got as lyrics, or why it got
      * none: it describes what the tag step wrote, so it exists only for a file whose tags were written.
      */
     data class Downloaded(val file: Path, val lyrics: LyricsOutcome) : DownloadResult
@@ -58,7 +58,7 @@ sealed interface DownloadResult {
 }
 
 /**
- * Downloads one video's audio with yt-dlp and writes its ID3 tags. Knows nothing about concurrency, retries or sinks.
+ * Downloads one video's audio with yt-dlp and writes its tags. Knows nothing about concurrency, retries or sinks.
  * [lyrics] is asked for the lyrics of a song whose description has none (and only when the item allows it); the default
  * looks nothing up.
  */
@@ -68,7 +68,7 @@ class ItemDownloader(
     private val metadata: VideoMetadataSource,
     private val lyrics: LyricsProvider = NoLyricsProvider,
 ) {
-    private val tagger = Id3Tagger(runner, tools)
+    private val tagger = M4aTagger(runner, tools)
 
     /**
      * Settles the final file name. Items whose artist came from the channel name get a second chance:
@@ -99,12 +99,12 @@ class ItemDownloader(
     }
 
     /**
-     * Runs yt-dlp once, then writes the ID3 tags and the cover (the thumbnail yt-dlp left next to the mp3) into the
-     * mp3. The album tag is [PreparedItem.albumOverride], else [PreparedItem.album], else the video's own album from the
-     * info file yt-dlp left next to the mp3; the lyrics tag is the lyrics section of the video description in the same
+     * Runs yt-dlp once, then writes the tags and the cover (the thumbnail yt-dlp left next to the m4a) into the
+     * m4a. The album tag is [PreparedItem.albumOverride], else [PreparedItem.album], else the video's own album from the
+     * info file yt-dlp left next to the m4a; the lyrics tag is the lyrics section of the video description in the same
      * file, if it has one, else (when [PreparedItem.searchLyricsOnline] is set) what the lyrics provider finds for the
      * artist, title, the video's own album (else [PreparedItem.album]) and length of the video, else nothing: with no
-     * lyrics from either source no lyrics frame is written. A
+     * lyrics from either source no lyrics tag is written. A
      * missing or broken info file means no own album, no description lyrics and no length, and never fails the item; a
      * lookup that fails is no lyrics. The [DownloadResult.Downloaded.lyrics] of the result tells which of these happened;
      * it is reported only once the tags are written, so a tag failure is a failure with no outcome. [emit] receives
@@ -140,9 +140,9 @@ class ItemDownloader(
         }
         // From here on the work is ours (tags, cover, lyrics), so we say so ourselves instead of reading yt-dlp's output.
         emit(JobEvent.Progress(rank, Stage.FINISHING, null))
-        val file = workDir.resolve("$videoId.mp3")
+        val file = workDir.resolve("$videoId.m4a")
         if (!Files.isRegularFile(file)) {
-            return DownloadResult.Failed(Failure(FailureKind.OTHER, "변환된 mp3 파일을 찾을 수 없습니다."))
+            return DownloadResult.Failed(Failure(FailureKind.OTHER, "받은 m4a 파일을 찾을 수 없습니다."))
         }
         val cover = workDir.resolve("$videoId.jpg").takeIf { Files.isRegularFile(it) }
         val info = VideoInfoFile.read(workDir.resolve("$videoId.info.json"))
@@ -168,9 +168,9 @@ class ItemDownloader(
     }
 
     /**
-     * What [Id3Tagger] wrote as lyrics: the description's, else the lookup's, else nothing, which is "off" when the
+     * What [M4aTagger] wrote as lyrics: the description's, else the lookup's, else nothing, which is "off" when the
      * lookup was not allowed and "not found" when it ran (or failed) and gave nothing. Both texts are non-blank when
-     * present, so a non-null one is a real lyrics frame.
+     * present, so a non-null one is a real lyrics tag.
      */
     private fun lyricsOutcome(fromDescription: String?, found: String?, lookupAllowed: Boolean): LyricsOutcome = when {
         fromDescription != null -> LyricsOutcome.DESCRIPTION

@@ -52,7 +52,7 @@ class YtDlpResolverTest {
         assertEquals("vid00000001", first.videoId)
         assertEquals("소연 (SOYEON)", first.artist)
         assertEquals("퇴사할게여 (Narr. 기안84)", first.track)
-        assertEquals("001 소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).mp3", first.expectedFileName)
+        assertEquals("001 소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).m4a", first.expectedFileName)
         assertFalse(first.lowConfidence)
         assertTrue(first.available)
     }
@@ -74,7 +74,7 @@ class YtDlpResolverTest {
 
         assertTrue(item.lowConfidence)
         assertEquals("BTS", item.artist)
-        assertEquals("004 BTS - Dynamite.mp3", item.expectedFileName)
+        assertEquals("004 BTS - Dynamite.m4a", item.expectedFileName)
     }
 
     @Test
@@ -120,7 +120,7 @@ class YtDlpResolverTest {
         assertEquals(InputKind.VIDEO, response.kind)
         val item = response.items.single()
         assertEquals(1, item.rank)
-        assertEquals("001 Rick Astley - Never Gonna Give You Up.mp3", item.expectedFileName)
+        assertEquals("001 Rick Astley - Never Gonna Give You Up.m4a", item.expectedFileName)
         assertEquals("https://www.youtube.com/watch?v=dQw4w9WgXcQ", runner.commands.single().last())
     }
 

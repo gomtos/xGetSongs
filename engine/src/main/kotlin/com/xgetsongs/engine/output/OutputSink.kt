@@ -3,7 +3,7 @@ package com.xgetsongs.engine.output
 import java.nio.file.Path
 
 /**
- * Where finished mp3 files end up. The desktop app writes to a folder ([LocalFolderSink]); a web
+ * Where finished m4a files end up. The desktop app writes to a folder ([LocalFolderSink]); a web
  * deployment will hand files to the browser instead.
  */
 interface OutputSink {

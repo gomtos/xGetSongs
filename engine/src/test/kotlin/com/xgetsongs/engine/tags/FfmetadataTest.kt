@@ -12,7 +12,7 @@ class FfmetadataTest {
         album: String? = "Best of BTS",
         albumArtist: String = artist,
         trackNumber: Int = 7,
-        comment: String? = "note",
+        comment: String? = null,
     ) = TrackTags(title, artist, album, albumArtist, trackNumber, comment)
 
     private fun lines(text: String) = text.removeSuffix("\n").split("\n")
@@ -37,11 +37,21 @@ class FfmetadataTest {
     }
 
     @Test
-    fun theLyricsAreNotRendered() {
-        val withLyrics = tags().copy(lyrics = "Line one\nLine two=three\n첫 번째 줄")
+    fun theLyricsAreRenderedAfterTheCommentWithLineBreaksEscaped() {
+        val withLyrics = tags(comment = "note").copy(lyrics = "Line one\nLine two=three\n첫 번째 줄")
 
-        assertEquals(Ffmetadata.render(tags()), Ffmetadata.render(withLyrics))
-        assertFalse(Ffmetadata.render(withLyrics).contains("lyrics"))
+        assertEquals(
+            ";FFMETADATA1\ntitle=Dynamite\nartist=BTS\nalbum_artist=BTS\nalbum=Best of BTS\ntrack=7\ncomment=note\n" +
+                "lyrics=Line one\\\nLine two\\=three\\\n첫 번째 줄\n",
+            Ffmetadata.render(withLyrics),
+        )
+    }
+
+    @Test
+    fun blankLyricsAreNotRendered() {
+        for (lyrics in listOf(null, "", " \n\t")) {
+            assertFalse(Ffmetadata.render(tags().copy(lyrics = lyrics)).contains("lyrics"), "lyrics = [$lyrics]")
+        }
     }
 
     @Test
@@ -62,13 +72,14 @@ class FfmetadataTest {
     }
 
     @Test
-    fun neverWritesTheCommentBecauseFfmpegWouldStoreItAsTxxx() {
-        for (comment in listOf(null, "", "\t ", "https://www.youtube.com/watch?v=abc")) {
-            val text = Ffmetadata.render(tags(comment = comment))
-
-            assertFalse(lines(text).any { it.startsWith("comment") }, text)
-            assertFalse("youtube" in text, text)
+    fun theCommentIsRenderedUnlessItIsNullOrBlank() {
+        for (comment in listOf(null, "", "\t ")) {
+            assertFalse(lines(Ffmetadata.render(tags(comment = comment))).any { it.startsWith("comment") }, "comment = [$comment]")
         }
+
+        val text = Ffmetadata.render(tags(comment = "https://www.youtube.com/watch?v=abc"))
+
+        assertTrue("comment=https://www.youtube.com/watch?v\\=abc" in lines(text), text)
     }
 
     @Test

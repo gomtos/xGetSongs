@@ -74,7 +74,7 @@ class FakeApi : XgsApi {
             title = "$artist - $track",
             artist = artist,
             track = track,
-            expectedFileName = "${rank.toString().padStart(3, '0')} $artist - $track.mp3",
+            expectedFileName = "${rank.toString().padStart(3, '0')} $artist - $track.m4a",
         )
 
         fun playlist(alsoVideoId: String? = null) = ResolveResponse(

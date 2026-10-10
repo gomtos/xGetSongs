@@ -14,22 +14,23 @@ object FfmpegCommands {
     )
 
     /**
-     * Copies the audio of [input] into [output] without re-encoding and writes ID3v2.4 tags (text in UTF-8) read from the
-     * ffmetadata file [metadataFile]. With a [cover] the picture is cropped to a centered square, re-encoded as JPEG and
-     * attached as the front cover. [output] must end in `.mp3`: ffmpeg picks the muxer from the extension.
+     * Copies the audio of [input] into [output] without re-encoding and writes the MP4 tags (the lyrics and the comment
+     * too) read from the ffmetadata file [metadataFile]. With a [cover] the picture is cropped to a centered square,
+     * re-encoded as JPEG and attached as the front cover. [output] must end in `.m4a`: ffmpeg picks the muxer from the
+     * extension. Writing a new container also turns the fragmented DASH file yt-dlp leaves into a regular m4a.
      */
     fun tag(ffmpeg: Path, input: Path, cover: Path?, metadataFile: Path, output: Path): List<String> {
-        require(output.fileName.toString().endsWith(".mp3", ignoreCase = true)) { "output must be an .mp3 file: $output" }
+        require(output.fileName.toString().endsWith(".m4a", ignoreCase = true)) { "output must be an .m4a file: $output" }
         val coverInput = cover?.let { listOf("-i", it.toString()) }.orEmpty()
         val coverMap = if (cover != null) listOf("-map", "1:v") else emptyList()
         val coverOutput = if (cover != null) COVER_OUTPUT else emptyList()
-        // Inputs are numbered in order: the mp3 is 0, the cover (when there is one) is 1, the ffmetadata file is last.
+        // Inputs are numbered in order: the audio file is 0, the cover (when there is one) is 1, the ffmetadata file is last.
         val metadataIndex = if (cover != null) 2 else 1
         return listOf(ffmpeg.toString(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y") +
             listOf("-i", input.toString()) + coverInput + listOf("-f", "ffmetadata", "-i", metadataFile.toString()) +
             listOf("-map", "0:a") + coverMap +
             listOf("-map_chapters", "-1", "-map_metadata", metadataIndex.toString()) +
             listOf("-c:a", "copy") + coverOutput +
-            listOf("-id3v2_version", "4", output.toString())
+            listOf(output.toString())
     }
 }

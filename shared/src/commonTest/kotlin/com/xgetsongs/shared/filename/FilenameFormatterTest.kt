@@ -11,7 +11,7 @@ class FilenameFormatterTest {
     @Test
     fun formatsTheDocumentedExample() {
         assertEquals(
-            "001 소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).mp3",
+            "001 소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).m4a",
             FilenameFormatter.format(1, "소연 (SOYEON)", "퇴사할게여 (Narr. 기안84)"),
         )
     }
@@ -32,27 +32,27 @@ class FilenameFormatterTest {
     @Test
     fun replacesForbiddenCharactersWithFullWidthOnes() {
         assertEquals(
-            "005 태연 (TAEYEON) - 만찬가 (晩餐歌 ／ BANSANKA) ： J-POP REMAKE Vol.1.mp3",
+            "005 태연 (TAEYEON) - 만찬가 (晩餐歌 ／ BANSANKA) ： J-POP REMAKE Vol.1.m4a",
             FilenameFormatter.format(5, "태연 (TAEYEON)", "만찬가 (晩餐歌 / BANSANKA) : J-POP REMAKE Vol.1"),
         )
-        assertEquals("001 A - ＼／：＊？＂＜＞｜.mp3", FilenameFormatter.format(1, "A", "\\/:*?\"<>|"))
+        assertEquals("001 A - ＼／：＊？＂＜＞｜.m4a", FilenameFormatter.format(1, "A", "\\/:*?\"<>|"))
     }
 
     @Test
     fun dropsControlCharactersAndTrailingDotsAndSpaces() {
-        assertEquals("001 A - Mr.mp3", FilenameFormatter.format(1, "A", "Mr.\t\n. "))
-        assertEquals("001 A - B.C.mp3", FilenameFormatter.format(1, "A", "B.C"))
+        assertEquals("001 A - Mr.m4a", FilenameFormatter.format(1, "A", "Mr.\t\n. "))
+        assertEquals("001 A - B.C.m4a", FilenameFormatter.format(1, "A", "B.C"))
     }
 
     @Test
     fun emptyTitleGetsAPlaceholder() {
-        assertEquals("001 A - untitled.mp3", FilenameFormatter.format(1, "A", "  "))
+        assertEquals("001 A - untitled.m4a", FilenameFormatter.format(1, "A", "  "))
     }
 
     @Test
     fun longTitleIsTruncatedWithEllipsisKeepingRankAndArtist() {
         val name = FilenameFormatter.format(12, "ARTIST", "가".repeat(500))
-        val base = name.removeSuffix(".mp3")
+        val base = name.removeSuffix(".m4a")
         assertEquals(FilenameFormatter.MAX_BASE_LENGTH, base.length)
         assertTrue(base.startsWith("012 ARTIST - 가"))
         assertTrue(base.endsWith("…"))
@@ -61,7 +61,7 @@ class FilenameFormatterTest {
     @Test
     fun veryLongArtistIsTruncatedToo() {
         val name = FilenameFormatter.format(1, "A".repeat(300), "Song")
-        val base = name.removeSuffix(".mp3")
+        val base = name.removeSuffix(".m4a")
         assertTrue(base.length <= FilenameFormatter.MAX_BASE_LENGTH)
         assertTrue(base.startsWith("001 ${"A".repeat(10)}"))
         assertTrue(base.endsWith(" - Song"))
@@ -71,7 +71,7 @@ class FilenameFormatterTest {
     @Test
     fun truncationNeverSplitsASurrogatePair() {
         val name = FilenameFormatter.format(1, "A", "😀".repeat(200))
-        val base = name.removeSuffix(".mp3")
+        val base = name.removeSuffix(".m4a")
         assertTrue(base.length <= FilenameFormatter.MAX_BASE_LENGTH)
         base.forEachIndexed { i, c ->
             if (c.isHighSurrogate()) assertTrue(base.getOrNull(i + 1)?.isLowSurrogate() == true, "lone high surrogate at $i")
@@ -83,8 +83,8 @@ class FilenameFormatterTest {
 
     @Test
     fun theRankIsIncludedUnlessTheCallerLeavesItOut() {
-        assertEquals("001 A - B.mp3", FilenameFormatter.format(1, "A", "B"))
-        assertEquals("001 A - B.mp3", FilenameFormatter.format(1, "A", "B", includeRank = true))
+        assertEquals("001 A - B.m4a", FilenameFormatter.format(1, "A", "B"))
+        assertEquals("001 A - B.m4a", FilenameFormatter.format(1, "A", "B", includeRank = true))
         assertEquals(FilenameFormatter.format(42, "소연", "노래"), FilenameFormatter.format(42, "소연", "노래", true))
     }
 
@@ -92,14 +92,14 @@ class FilenameFormatterTest {
     fun withoutTheRankTheNameIsArtistDashTitle() {
         val name = FilenameFormatter.format(1, "A", "B", includeRank = false)
 
-        assertEquals("A - B.mp3", name)
+        assertEquals("A - B.m4a", name)
         assertFalse(name.startsWith(" "), "no leading space where the rank would have been")
     }
 
     @Test
     fun withoutTheRankTheDocumentedExampleLosesOnlyThePrefix() {
         assertEquals(
-            "소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).mp3",
+            "소연 (SOYEON) - 퇴사할게여 (Narr. 기안84).m4a",
             FilenameFormatter.format(1, "소연 (SOYEON)", "퇴사할게여 (Narr. 기안84)", includeRank = false),
         )
     }
@@ -108,7 +108,7 @@ class FilenameFormatterTest {
     fun withoutTheRankTheNameDoesNotDependOnTheRank() {
         val names = listOf(1, 7, 999).map { FilenameFormatter.format(it, "A", "B", includeRank = false) }
 
-        assertEquals(listOf("A - B.mp3"), names.distinct())
+        assertEquals(listOf("A - B.m4a"), names.distinct())
     }
 
     @Test
@@ -119,26 +119,26 @@ class FilenameFormatterTest {
 
     @Test
     fun withoutTheRankForbiddenCharactersAreStillReplaced() {
-        assertEquals("A - ＼／：＊？＂＜＞｜.mp3", FilenameFormatter.format(1, "A", "\\/:*?\"<>|", includeRank = false))
-        assertEquals("AC／DC - Who Made Who？.mp3", FilenameFormatter.format(1, "AC/DC", "Who Made Who?", includeRank = false))
+        assertEquals("A - ＼／：＊？＂＜＞｜.m4a", FilenameFormatter.format(1, "A", "\\/:*?\"<>|", includeRank = false))
+        assertEquals("AC／DC - Who Made Who？.m4a", FilenameFormatter.format(1, "AC/DC", "Who Made Who?", includeRank = false))
     }
 
     @Test
     fun withoutTheRankControlCharactersAndTrailingDotsAndSpacesAreStillDropped() {
-        assertEquals("A - Mr.mp3", FilenameFormatter.format(1, "A", "Mr.\t\n. ", includeRank = false))
-        assertEquals("A - B.C.mp3", FilenameFormatter.format(1, "A", "B.C", includeRank = false))
+        assertEquals("A - Mr.m4a", FilenameFormatter.format(1, "A", "Mr.\t\n. ", includeRank = false))
+        assertEquals("A - B.C.m4a", FilenameFormatter.format(1, "A", "B.C", includeRank = false))
     }
 
     @Test
     fun withoutTheRankAnEmptyTitleStillGetsAPlaceholder() {
-        assertEquals("A - untitled.mp3", FilenameFormatter.format(1, "A", "  ", includeRank = false))
-        assertEquals("A - untitled.mp3", FilenameFormatter.format(1, "A", "", includeRank = false))
+        assertEquals("A - untitled.m4a", FilenameFormatter.format(1, "A", "  ", includeRank = false))
+        assertEquals("A - untitled.m4a", FilenameFormatter.format(1, "A", "", includeRank = false))
     }
 
     @Test
     fun withoutTheRankALongTitleFillsTheWholeBaseBudget() {
         val name = FilenameFormatter.format(12, "ARTIST", "가".repeat(500), includeRank = false)
-        val base = name.removeSuffix(".mp3")
+        val base = name.removeSuffix(".m4a")
 
         assertEquals(FilenameFormatter.MAX_BASE_LENGTH, base.length)
         assertTrue(base.startsWith("ARTIST - 가"), base)
@@ -151,7 +151,7 @@ class FilenameFormatterTest {
     fun withoutTheRankAnArtistOfEightyCharactersIsKeptAndTheTitleGetsTheRest() {
         val artist = "A".repeat(FilenameFormatter.MAX_ARTIST_LENGTH)
 
-        val base = FilenameFormatter.format(1, artist, "T".repeat(500), includeRank = false).removeSuffix(".mp3")
+        val base = FilenameFormatter.format(1, artist, "T".repeat(500), includeRank = false).removeSuffix(".m4a")
 
         assertEquals(FilenameFormatter.MAX_BASE_LENGTH, base.length)
         assertTrue(base.startsWith("$artist - T"), base)
@@ -160,7 +160,7 @@ class FilenameFormatterTest {
 
     @Test
     fun withoutTheRankAnArtistOverEightyCharactersIsCutWithAnEllipsis() {
-        val expected = "A".repeat(FilenameFormatter.MAX_ARTIST_LENGTH - 1) + "… - Song.mp3"
+        val expected = "A".repeat(FilenameFormatter.MAX_ARTIST_LENGTH - 1) + "… - Song.m4a"
 
         assertEquals(expected, FilenameFormatter.format(1, "A".repeat(300), "Song", includeRank = false))
         assertEquals(expected, FilenameFormatter.format(1, "A".repeat(81), "Song", includeRank = false))
@@ -168,7 +168,7 @@ class FilenameFormatterTest {
 
     @Test
     fun withoutTheRankTruncationNeverSplitsASurrogatePair() {
-        val base = FilenameFormatter.format(1, "A", "😀".repeat(200), includeRank = false).removeSuffix(".mp3")
+        val base = FilenameFormatter.format(1, "A", "😀".repeat(200), includeRank = false).removeSuffix(".m4a")
 
         assertTrue(base.length <= FilenameFormatter.MAX_BASE_LENGTH)
         assertTrue(base.startsWith("A - 😀"), base)
@@ -180,44 +180,44 @@ class FilenameFormatterTest {
 
     @Test
     fun withoutTheRankADeviceNameAsTheArtistGetsAnUnderscoreAfterTheStem() {
-        assertEquals("NUL_.x - Song.mp3", FilenameFormatter.format(1, "NUL.x", "Song", includeRank = false))
-        assertEquals("Con_. - Song.mp3", FilenameFormatter.format(1, "Con.", "Song", includeRank = false))
-        assertEquals("com1_.x - Song.mp3", FilenameFormatter.format(1, "com1.x", "Song", includeRank = false))
-        assertEquals("LPT9_.x - Song.mp3", FilenameFormatter.format(1, "LPT9.x", "Song", includeRank = false))
-        assertEquals("aux_.tar.gz - Song.mp3", FilenameFormatter.format(1, "aux.tar.gz", "Song", includeRank = false))
-        assertEquals("CON_ .x - Song.mp3", FilenameFormatter.format(1, "CON .x", "Song", includeRank = false))
+        assertEquals("NUL_.x - Song.m4a", FilenameFormatter.format(1, "NUL.x", "Song", includeRank = false))
+        assertEquals("Con_. - Song.m4a", FilenameFormatter.format(1, "Con.", "Song", includeRank = false))
+        assertEquals("com1_.x - Song.m4a", FilenameFormatter.format(1, "com1.x", "Song", includeRank = false))
+        assertEquals("LPT9_.x - Song.m4a", FilenameFormatter.format(1, "LPT9.x", "Song", includeRank = false))
+        assertEquals("aux_.tar.gz - Song.m4a", FilenameFormatter.format(1, "aux.tar.gz", "Song", includeRank = false))
+        assertEquals("CON_ .x - Song.m4a", FilenameFormatter.format(1, "CON .x", "Song", includeRank = false))
     }
 
     @Test
     fun withoutTheRankEveryDeviceNameAsTheArtistIsCaught() {
         for (device in listOf("CON", "PRN", "AUX", "NUL") + (1..9).flatMap { listOf("COM$it", "LPT$it") }) {
-            assertEquals("${device}_.x - B.mp3", FilenameFormatter.format(1, "$device.x", "B", includeRank = false), device)
+            assertEquals("${device}_.x - B.m4a", FilenameFormatter.format(1, "$device.x", "B", includeRank = false), device)
         }
     }
 
     @Test
     fun withoutTheRankNamesThatMerelyResembleDeviceNamesStayUnchanged() {
-        assertEquals("Console - Song.mp3", FilenameFormatter.format(1, "Console", "Song", includeRank = false))
-        assertEquals("Con - Song.mp3", FilenameFormatter.format(1, "Con", "Song", includeRank = false))
-        assertEquals("LPT9 - Song.mp3", FilenameFormatter.format(1, "LPT9", "Song", includeRank = false))
-        assertEquals("NULL - Song.mp3", FilenameFormatter.format(1, "NULL", "Song", includeRank = false))
-        assertEquals("CON TEST - Song.mp3", FilenameFormatter.format(1, "CON TEST", "Song", includeRank = false))
-        assertEquals("COM0 - Song.mp3", FilenameFormatter.format(1, "COM0", "Song", includeRank = false))
-        assertEquals("my.con - Song.mp3", FilenameFormatter.format(1, "my.con", "Song", includeRank = false))
+        assertEquals("Console - Song.m4a", FilenameFormatter.format(1, "Console", "Song", includeRank = false))
+        assertEquals("Con - Song.m4a", FilenameFormatter.format(1, "Con", "Song", includeRank = false))
+        assertEquals("LPT9 - Song.m4a", FilenameFormatter.format(1, "LPT9", "Song", includeRank = false))
+        assertEquals("NULL - Song.m4a", FilenameFormatter.format(1, "NULL", "Song", includeRank = false))
+        assertEquals("CON TEST - Song.m4a", FilenameFormatter.format(1, "CON TEST", "Song", includeRank = false))
+        assertEquals("COM0 - Song.m4a", FilenameFormatter.format(1, "COM0", "Song", includeRank = false))
+        assertEquals("my.con - Song.m4a", FilenameFormatter.format(1, "my.con", "Song", includeRank = false))
     }
 
     @Test
     fun withTheRankADeviceNameAsTheArtistIsLeftAlone() {
-        assertEquals("001 NUL.x - Song.mp3", FilenameFormatter.format(1, "NUL.x", "Song"))
-        assertEquals("001 Con - Song.mp3", FilenameFormatter.format(1, "Con", "Song", includeRank = true))
-        assertEquals("042 LPT9 - Song.mp3", FilenameFormatter.format(42, "LPT9", "Song", includeRank = true))
+        assertEquals("001 NUL.x - Song.m4a", FilenameFormatter.format(1, "NUL.x", "Song"))
+        assertEquals("001 Con - Song.m4a", FilenameFormatter.format(1, "Con", "Song", includeRank = true))
+        assertEquals("042 LPT9 - Song.m4a", FilenameFormatter.format(42, "LPT9", "Song", includeRank = true))
     }
 
     @Test
     fun theUnderscoreForADeviceNameArtistStillKeepsTheNameWithinTheBudget() {
         val artist = "NUL." + "A".repeat(300)
 
-        val base = FilenameFormatter.format(1, artist, "T".repeat(500), includeRank = false).removeSuffix(".mp3")
+        val base = FilenameFormatter.format(1, artist, "T".repeat(500), includeRank = false).removeSuffix(".m4a")
 
         assertEquals(FilenameFormatter.MAX_BASE_LENGTH, base.length)
         assertTrue(base.startsWith("NUL_.AAA"), base)

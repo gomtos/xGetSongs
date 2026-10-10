@@ -4,8 +4,8 @@ package com.xgetsongs.engine.tags
  * Renders [TrackTags] as an ffmetadata file (`-f ffmetadata`), so tag text reaches ffmpeg through a file and never
  * through a command line. Write the result as UTF-8.
  *
- * The comment and the lyrics are not rendered: ffmpeg would store them as `TXXX` frames, so [Id3Tagger] adds a real
- * `COMM` frame and a real `USLT` frame itself.
+ * The MP4 muxer stores `comment` as `©cmt` and `lyrics` as `©lyr`, so every value is rendered. A null or blank album,
+ * comment or lyrics text writes no entry.
  */
 object Ffmetadata {
     /** Characters that need a backslash in front: the syntax characters and the line breaks (which stay in place). */
@@ -21,6 +21,8 @@ object Ffmetadata {
         entry("album_artist", tags.albumArtist)
         tags.album?.takeIf { it.isNotBlank() }?.let { entry("album", it) }
         entry("track", tags.trackNumber.toString())
+        tags.comment?.takeIf { it.isNotBlank() }?.let { entry("comment", it) }
+        tags.lyrics?.takeIf { it.isNotBlank() }?.let { entry("lyrics", it) }
     }
 
     private fun StringBuilder.entry(key: String, value: String) {

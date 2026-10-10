@@ -7,10 +7,10 @@ import kotlin.test.assertFailsWith
 
 class FfmpegCommandsTest {
     private val ffmpeg = Path.of("C:/tools/ffmpeg.exe")
-    private val input = Path.of("C:/work/1/vid.mp3")
+    private val input = Path.of("C:/work/1/vid.m4a")
     private val cover = Path.of("C:/work/1/vid.jpg")
     private val metadata = Path.of("C:/work/1/vid.ffmeta")
-    private val output = Path.of("C:/work/1/vid.tagged.mp3")
+    private val output = Path.of("C:/work/1/vid.tagged.m4a")
 
     @Test
     fun withoutACoverCopiesTheAudioAndTagsItFromTheMetadataFile() {
@@ -22,7 +22,7 @@ class FfmpegCommandsTest {
                 "-i", input.toString(), "-f", "ffmetadata", "-i", metadata.toString(),
                 "-map", "0:a", "-map_chapters", "-1", "-map_metadata", "1",
                 "-c:a", "copy",
-                "-id3v2_version", "4", output.toString(),
+                output.toString(),
             ),
             command,
         )
@@ -40,7 +40,7 @@ class FfmpegCommandsTest {
                 "-c:a", "copy",
                 "-c:v", "mjpeg", "-q:v", "2", "-vf", "crop=min(iw\\,ih):min(iw\\,ih)", "-disposition:v", "attached_pic",
                 "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)",
-                "-id3v2_version", "4", output.toString(),
+                output.toString(),
             ),
             command,
         )
@@ -54,9 +54,11 @@ class FfmpegCommandsTest {
     }
 
     @Test
-    fun theOutputMustBeAnMp3SoFfmpegPicksTheId3Muxer() {
-        assertFailsWith<IllegalArgumentException> {
-            FfmpegCommands.tag(ffmpeg, input, null, metadata, Path.of("C:/work/1/vid.tmp"))
+    fun theOutputMustBeAnM4aSoFfmpegPicksTheMp4Muxer() {
+        for (wrong in listOf("vid.tmp", "vid.mp3")) {
+            assertFailsWith<IllegalArgumentException>(wrong) {
+                FfmpegCommands.tag(ffmpeg, input, null, metadata, Path.of("C:/work/1/$wrong"))
+            }
         }
     }
 }

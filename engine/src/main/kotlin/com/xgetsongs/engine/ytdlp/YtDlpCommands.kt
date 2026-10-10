@@ -21,9 +21,11 @@ object YtDlpCommands {
         listOf(ytDlp(tools)) + COMMON + jsRuntimeArgs(tools) + listOf("--no-playlist", "-J", "--", url)
 
     /**
-     * Downloads the audio of [url] as `<outputDir>/<videoId>.mp3` and leaves the thumbnail, converted to JPEG, as
-     * `<outputDir>/<videoId>.jpg` (the cover for the ID3 tags) and the video's info as `<outputDir>/<videoId>.info.json`
-     * (where [VideoInfoFile] reads the album from).
+     * Downloads the AAC audio stream of [url] (YouTube's itag 140) as it is, without re-encoding, as
+     * `<outputDir>/<videoId>.m4a`, and leaves the thumbnail, converted to JPEG, as `<outputDir>/<videoId>.jpg` (the
+     * cover for the tags) and the video's info as `<outputDir>/<videoId>.info.json` (where [VideoInfoFile] reads the
+     * album from). The m4a is a fragmented DASH file: `--fixup never` leaves it so, because the tag step rewrites the
+     * container anyway.
      */
     fun download(tools: ToolPaths, url: String, outputDir: Path, videoId: String): List<String> {
         val progress = "download:$PROGRESS_PREFIX|%(progress.status)s|%(progress.downloaded_bytes)s|" +
@@ -33,7 +35,7 @@ object YtDlpCommands {
         return listOf(ytDlp(tools)) + COMMON + jsRuntimeArgs(tools) + ffmpeg + listOf(
             "--no-playlist", "--newline",
             "--progress-template", progress,
-            "-x", "--audio-format", "mp3", "--audio-quality", "0",
+            "-f", "bestaudio[ext=m4a]", "--fixup", "never",
             "--write-thumbnail", "--convert-thumbnails", "jpg",
             "--write-info-json",
             "-o", output,

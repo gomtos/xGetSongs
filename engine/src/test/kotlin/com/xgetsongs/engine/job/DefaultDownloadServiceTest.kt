@@ -10,7 +10,7 @@ import com.xgetsongs.engine.output.OutputSink
 import com.xgetsongs.engine.process.ProcessRunner
 import com.xgetsongs.engine.testutil.FakeLyricsProvider
 import com.xgetsongs.engine.testutil.FakeProcessRunner
-import com.xgetsongs.engine.testutil.Id3v2Tag
+import com.xgetsongs.engine.testutil.FfmetadataReader
 import com.xgetsongs.engine.testutil.TEST_TOOLS
 import com.xgetsongs.engine.testutil.downloadRunner
 import com.xgetsongs.engine.testutil.endsWithFakeAudio
@@ -21,7 +21,7 @@ import com.xgetsongs.engine.testutil.outputDirOf
 import com.xgetsongs.engine.testutil.toolsOf
 import com.xgetsongs.engine.testutil.writeFakeCover
 import com.xgetsongs.engine.testutil.writeFakeInfo
-import com.xgetsongs.engine.testutil.writeFakeMp3
+import com.xgetsongs.engine.testutil.writeFakeM4a
 import com.xgetsongs.engine.testutil.writeFakeTagged
 import com.xgetsongs.engine.testutil.ytDlpCommands
 import com.xgetsongs.engine.tools.ToolPathProvider
@@ -57,6 +57,8 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DefaultDownloadServiceTest {
@@ -104,7 +106,7 @@ class DefaultDownloadServiceTest {
 
     private val succeeding = downloadRunner { command, onStdout, _ ->
         onStdout("XGSP|downloading|50|100|NA")
-        writeFakeMp3(command)
+        writeFakeM4a(command)
         0
     }
 
@@ -121,10 +123,10 @@ class DefaultDownloadServiceTest {
 
         val events = handle.collect()
 
-        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
-        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.mp3")))
+        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.m4a")))
+        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.m4a")))
         assertEquals(setOf(1, 2), events.filterIsInstance<JobEvent.ItemStarted>().map { it.rank }.toSet())
-        assertEquals(setOf("001 A1 - T1.mp3", "002 A2 - T2.mp3"), events.filterIsInstance<JobEvent.ItemDone>().map { it.fileName }.toSet())
+        assertEquals(setOf("001 A1 - T1.m4a", "002 A2 - T2.m4a"), events.filterIsInstance<JobEvent.ItemDone>().map { it.fileName }.toSet())
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(2, 0, 0)), done(events))
     }
 
@@ -141,7 +143,7 @@ class DefaultDownloadServiceTest {
     fun progressEventsAreThrottledToWholePercents() = runTest {
         val noisy = downloadRunner { command, onStdout, _ ->
             repeat(1000) { onStdout("XGSP|downloading|$it|1000|NA") }
-            writeFakeMp3(command)
+            writeFakeM4a(command)
             0
         }
 
@@ -155,15 +157,15 @@ class DefaultDownloadServiceTest {
     @Test
     fun existingFilesAreSkippedUnlessOverwriteIsOn() = runTest {
         Files.createDirectories(outDir)
-        Files.writeString(outDir.resolve("001 A1 - T1.mp3"), "old")
+        Files.writeString(outDir.resolve("001 A1 - T1.m4a"), "old")
 
         val skipped = service(succeeding).start(request(item(1))).collect()
         assertEquals(listOf(JobEvent.ItemSkipped(1, "이미 존재")), skipped.filterIsInstance<JobEvent.ItemSkipped>())
-        assertEquals("old", Files.readString(outDir.resolve("001 A1 - T1.mp3")))
+        assertEquals("old", Files.readString(outDir.resolve("001 A1 - T1.m4a")))
         assertEquals(1, done(skipped).summary.skipped)
 
         service(succeeding).start(request(item(1), overwrite = true)).collect()
-        assertTrue(endsWithFakeAudio(outDir.resolve("001 A1 - T1.mp3")), "the old file must be replaced by the tagged one")
+        assertTrue(endsWithFakeAudio(outDir.resolve("001 A1 - T1.m4a")), "the old file must be replaced by the tagged one")
     }
 
     @Test
@@ -174,7 +176,7 @@ class DefaultDownloadServiceTest {
                 onStderr("ERROR: unable to download video data: HTTP Error 503: Service Unavailable")
                 1
             } else {
-                writeFakeMp3(command)
+                writeFakeM4a(command)
                 0
             }
         }
@@ -216,7 +218,7 @@ class DefaultDownloadServiceTest {
                 onStderr("ERROR: something odd")
                 1
             } else {
-                writeFakeMp3(command)
+                writeFakeM4a(command)
                 0
             }
         }
@@ -274,7 +276,7 @@ class DefaultDownloadServiceTest {
     fun cancellingAlsoRemovesWorkDirectories() = runTest {
         val started = CompletableDeferred<Unit>()
         val hanging = FakeProcessRunner { command, _, _ ->
-            writeFakeMp3(command)
+            writeFakeM4a(command)
             started.complete(Unit)
             awaitCancellation()
         }
@@ -298,7 +300,7 @@ class DefaultDownloadServiceTest {
         val gate = CompletableDeferred<Unit>()
         val held = downloadRunner { command, _, _ ->
             gate.await()
-            writeFakeMp3(command)
+            writeFakeM4a(command)
             0
         }
         val handle = service(held).start(request(*(1..6).map { item(it) }.toTypedArray(), concurrency = 2))
@@ -318,7 +320,7 @@ class DefaultDownloadServiceTest {
         val gate = CompletableDeferred<Unit>()
         val held = downloadRunner { command, _, _ ->
             gate.await()
-            writeFakeMp3(command)
+            writeFakeM4a(command)
             0
         }
         val handle = service(held).start(request(*(1..10).map { item(it) }.toTypedArray(), concurrency = 8))
@@ -346,8 +348,8 @@ class DefaultDownloadServiceTest {
 
         val events = service(succeeding, metadata = metadata).start(request(lowConfidence)).collect()
 
-        assertEquals("001 BTS - Dynamite.mp3", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
-        assertTrue(Files.exists(outDir.resolve("001 BTS - Dynamite.mp3")))
+        assertEquals("001 BTS - Dynamite.m4a", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
+        assertTrue(Files.exists(outDir.resolve("001 BTS - Dynamite.m4a")))
     }
 
     @Test
@@ -402,8 +404,8 @@ class DefaultDownloadServiceTest {
         val events = service(succeeding).start(request(first, second, concurrency = 2)).collect()
 
         assertEquals(setOf(1, 2), events.filterIsInstance<JobEvent.ItemDone>().map { it.rank }.toSet())
-        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
-        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.mp3")))
+        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.m4a")))
+        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.m4a")))
         assertEquals(2, succeeding.ytDlpCommands.map { outputDirOf(it) }.distinct().size)
     }
 
@@ -432,7 +434,7 @@ class DefaultDownloadServiceTest {
     @Test
     fun jobDoneIsSentExactlyOnce() = runTest {
         val completed = service(succeeding).start(request(item(1), item(2))).collect()
-        // A second sink: the first job already put "001 A1 - T1.mp3" into outDir, so the items would be skipped there.
+        // A second sink: the first job already put "001 A1 - T1.m4a" into outDir, so the items would be skipped there.
         val aborted = service(failingWith("OSError: [Errno 28] No space left on device"))
             .start(request(item(1), item(2), sink = LocalFolderSink(root.resolve("out-aborted"))))
             .collect()
@@ -448,7 +450,7 @@ class DefaultDownloadServiceTest {
     @Test
     fun aFileNamedLikeADiskFullErrorDoesNotAbortTheJob() = runTest {
         // FileAlreadyExistsException's message is just the path: a file name containing disk-full words is not a full disk.
-        val sink = failingSink(FileAlreadyExistsException("C:/out/001 A - Disk Full No Space Left.mp3"))
+        val sink = failingSink(FileAlreadyExistsException("C:/out/001 A - Disk Full No Space Left.m4a"))
 
         val events = service(succeeding).start(request(item(1), item(2), sink = sink)).collect()
 
@@ -459,7 +461,7 @@ class DefaultDownloadServiceTest {
 
     @Test
     fun aRealDiskFullReasonInsideAFileSystemExceptionAbortsTheJob() = runTest {
-        val sink = failingSink(FileSystemException("C:/out/x.mp3", null, "No space left on device"))
+        val sink = failingSink(FileSystemException("C:/out/x.m4a", null, "No space left on device"))
 
         val events = service(succeeding).start(request(item(1), item(2), item(3), sink = sink)).collect()
 
@@ -467,16 +469,16 @@ class DefaultDownloadServiceTest {
         assertEquals(1, succeeding.ytDlpCommands.size)
     }
 
-    // ---- ID3 tagging ----
+    // ---- tagging ----
 
-    /** A runner whose yt-dlp writes the mp3 (and a cover when [withCover]) and whose ffmpeg records its ffmetadata. */
+    /** A runner whose yt-dlp writes the m4a (and a cover when [withCover]) and whose ffmpeg records its ffmetadata. */
     private fun taggingRunner(metadataTexts: MutableList<String>, withCover: Boolean = false) =
         FakeProcessRunner { command, _, _ ->
             if (isFfmpegCommand(command)) {
                 metadataTexts += ffmetadataTextOf(command)
                 writeFakeTagged(command)
             } else {
-                writeFakeMp3(command)
+                writeFakeM4a(command)
                 if (withCover) writeFakeCover(command)
             }
             0
@@ -491,18 +493,14 @@ class DefaultDownloadServiceTest {
         assertEquals(listOf(false, true, false, true), runner.commands.map { isFfmpegCommand(it) })
         assertEquals(2, runner.ffmpegCommands.size)
         val tagged = runner.ffmpegCommands.map { command -> Path.of(command[command.indexOf("-i") + 1]).fileName.toString() }
-        assertEquals(listOf("vid00000001.mp3", "vid00000002.mp3"), tagged)
+        assertEquals(listOf("vid00000001.m4a", "vid00000002.m4a"), tagged)
     }
 
     @Test
-    fun theTaggedFileWithItsCommentFrameIsWhatReachesTheSink() = runTest {
+    fun theTaggedFileIsWhatReachesTheSink() = runTest {
         service(succeeding).start(request(item(1))).collect()
 
-        val delivered = outDir.resolve("001 A1 - T1.mp3")
-        assertTrue(endsWithFakeAudio(delivered))
-        val tag = Id3v2Tag.read(delivered)
-        assertEquals(listOf("TIT2", "COMM"), tag.ids)
-        assertEquals("https://www.youtube.com/watch?v=vid00000001", tag.comments().single().text)
+        assertTrue(endsWithFakeAudio(outDir.resolve("001 A1 - T1.m4a")))
     }
 
     @Test
@@ -511,7 +509,7 @@ class DefaultDownloadServiceTest {
             onStdout("XGSPP|started|ThumbnailsConvertor") // yt-dlp's post-processor lines are not read any more
             onStdout("XGSP|downloading|50|100|NA")
             onStdout("XGSPP|started|MoveFiles")
-            writeFakeMp3(command)
+            writeFakeM4a(command)
             0
         }
 
@@ -548,21 +546,21 @@ class DefaultDownloadServiceTest {
                 "album_artist=Various Artists",
                 "album=My List",
                 "track=5",
+                "comment=https://www.youtube.com/watch?v\\=vid00000005",
             ),
             texts.single().removeSuffix("\n").split("\n"),
         )
     }
 
     @Test
-    fun theUrlReachesTheFileAsACommFrameAndNotThroughTheMetadataFile() = runTest {
+    fun theUrlIsTheCommentInTheMetadataFileAndNeverOnTheCommandLine() = runTest {
         val texts = mutableListOf<String>()
         val runner = taggingRunner(texts)
 
         service(runner).start(request(item(5))).collect()
 
-        assertTrue("youtube" !in texts.single(), "ffmpeg would store the comment as TXXX: ${texts.single()}")
-        val comment = Id3v2Tag.read(outDir.resolve("005 A5 - T5.mp3")).comments().single()
-        assertEquals("https://www.youtube.com/watch?v=vid00000005", comment.text)
+        assertEquals("https://www.youtube.com/watch?v=vid00000005", FfmetadataReader.read(texts.single())["comment"])
+        assertTrue(runner.ffmpegCommands.single().none { "youtube" in it }, "tag text must not be on the command line")
     }
 
     @Test
@@ -614,7 +612,7 @@ class DefaultDownloadServiceTest {
 
         val command = runner.ffmpegCommands.single()
         val inputs = command.indices.filter { command[it] == "-i" }.map { Path.of(command[it + 1]).fileName.toString() }
-        assertEquals(listOf("vid00000001.mp3", "vid00000001.jpg", "vid00000001.ffmeta"), inputs)
+        assertEquals(listOf("vid00000001.m4a", "vid00000001.jpg", "vid00000001.ffmeta"), inputs)
         assertTrue("attached_pic" in command)
     }
 
@@ -635,7 +633,7 @@ class DefaultDownloadServiceTest {
         val runner = FakeProcessRunner { command, _, onStderr ->
             when {
                 !isFfmpegCommand(command) -> {
-                    writeFakeMp3(command)
+                    writeFakeM4a(command)
                     0
                 }
                 command.any { it.contains("vid00000001") } -> {
@@ -652,13 +650,13 @@ class DefaultDownloadServiceTest {
         val events = service(runner).start(request(item(1), item(2))).collect()
 
         assertEquals(
-            listOf(JobEvent.ItemFailed(1, "ID3 태그를 쓰지 못했습니다: Error while writing the tag")),
+            listOf(JobEvent.ItemFailed(1, "태그를 쓰지 못했습니다: Error while writing the tag")),
             events.filterIsInstance<JobEvent.ItemFailed>(),
         )
         assertEquals(listOf(2), events.filterIsInstance<JobEvent.ItemDone>().map { it.rank })
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)), done(events))
-        assertFalse(Files.exists(outDir.resolve("001 A1 - T1.mp3")), "an untagged file must not reach the sink")
-        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.mp3")))
+        assertFalse(Files.exists(outDir.resolve("001 A1 - T1.m4a")), "an untagged file must not reach the sink")
+        assertTrue(Files.exists(outDir.resolve("002 A2 - T2.m4a")))
         assertEquals(2, runner.ytDlpCommands.size, "a tagging failure is not retried")
     }
 
@@ -687,7 +685,7 @@ class DefaultDownloadServiceTest {
                 metadataTexts += ffmetadataTextOf(command)
                 writeFakeTagged(command)
             } else {
-                writeFakeMp3(command)
+                writeFakeM4a(command)
                 if (infoJson != null) writeFakeInfo(command, infoJson)
             }
             0
@@ -705,7 +703,7 @@ class DefaultDownloadServiceTest {
         assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
         assertTrue("album_artist=Various Artists" in texts.single().lines(), "the album artist is always Various Artists: ${texts.single()}")
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
-        assertEquals(listOf("001 A1 - T1.mp3"), filesIn(outDir), "the info file stays in the work folder")
+        assertEquals(listOf("001 A1 - T1.m4a"), filesIn(outDir), "the info file stays in the work folder")
     }
 
     @Test
@@ -800,7 +798,7 @@ class DefaultDownloadServiceTest {
         assertEquals(listOf("album=My List"), albumLines(texts.single()), texts.single())
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events))
         assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
-        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.mp3")))
+        assertTrue(Files.exists(outDir.resolve("001 A1 - T1.m4a")))
     }
 
     // ---- lyrics: the description in the info file ----
@@ -815,29 +813,25 @@ class DefaultDownloadServiceTest {
     private val describedLyrics = "Example Artist - Example Song\n=======\n[Lyrics]\n=======\n첫 번째 줄\n두 번째 줄\n\nLa la la\n=======\n" +
         "Instagram: https://example.invalid/artist\n© 2024 Example Label\n#example"
 
-    /** Downloads item 1 with the info file [infoJson] and returns the tag of the file that reached the sink. */
+    /** Downloads item 1 with the info file [infoJson] and returns the tag values that were handed to ffmpeg. */
     private suspend fun TestScope.deliveredTag(
         infoJson: String?,
         texts: MutableList<String> = mutableListOf(),
         album: String? = "My List",
-    ): Id3v2Tag {
+    ): Map<String, String> {
         val events = service(infoRunner(texts, infoJson)).start(request(item(1), album = album)).collect()
 
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events), events.toString())
         assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
-        return Id3v2Tag.read(outDir.resolve("001 A1 - T1.mp3"))
+        return FfmetadataReader.read(texts.single())
     }
 
     @Test
-    fun lyricsFromTheInfoDescriptionReachTheFileAsAUsltFrameAndNotTheMetadataFile() = runTest {
-        val texts = mutableListOf<String>()
+    fun lyricsFromTheInfoDescriptionAreInTheMetadataFile() = runTest {
+        val tag = deliveredTag(infoWithDescription(describedLyrics))
 
-        val tag = deliveredTag(infoWithDescription(describedLyrics), texts)
-
-        assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids)
-        assertEquals(listOf(Id3v2Tag.Lyrics(3, "kor", "", "첫 번째 줄\r\n두 번째 줄\r\n\r\nLa la la")), tag.lyrics())
-        assertTrue("첫 번째" !in texts.single() && "lyrics" !in texts.single(), "ffmpeg would store the lyrics as a TXXX frame: ${texts.single()}")
-        assertEquals("https://www.youtube.com/watch?v=vid00000001", tag.comments().single().text, "the comment is unchanged")
+        assertEquals("첫 번째 줄\n두 번째 줄\n\nLa la la", tag["lyrics"])
+        assertEquals("https://www.youtube.com/watch?v=vid00000001", tag["comment"], "the comment is unchanged")
     }
 
     @Test
@@ -847,58 +841,57 @@ class DefaultDownloadServiceTest {
         val tag = deliveredTag(infoWithDescription("Heading\nLyrics:\nLine one\nLine two\nLine three", album = "Palette"), texts, album = null)
 
         assertEquals(listOf("album=Palette"), albumLines(texts.single()), texts.single())
-        assertEquals(listOf(Id3v2Tag.Lyrics(3, "eng", "", "Line one\r\nLine two\r\nLine three")), tag.lyrics())
+        assertEquals("Line one\nLine two\nLine three", tag["lyrics"])
     }
 
     @Test
-    fun withoutAnInfoFileThereIsNoLyricsFrame() = runTest {
-        assertEquals(listOf("TIT2", "COMM"), deliveredTag(infoJson = null).ids)
+    fun withoutAnInfoFileThereIsNoLyrics() = runTest {
+        assertNull(deliveredTag(infoJson = null)["lyrics"])
     }
 
     @Test
-    fun anInfoFileWithoutADescriptionGivesNoLyricsFrame() = runTest {
-        assertEquals(listOf("TIT2", "COMM"), deliveredTag("""{"id":"vid00000001","album":"Palette"}""").ids)
+    fun anInfoFileWithoutADescriptionGivesNoLyrics() = runTest {
+        assertNull(deliveredTag("""{"id":"vid00000001","album":"Palette"}""")["lyrics"])
     }
 
     @Test
-    fun aDescriptionThatIsNotAStringGivesNoLyricsFrame() = runTest {
-        assertEquals(listOf("TIT2", "COMM"), deliveredTag("""{"id":"vid00000001","description":["[Lyrics]","a","b","c"]}""").ids)
+    fun aDescriptionThatIsNotAStringGivesNoLyrics() = runTest {
+        assertNull(deliveredTag("""{"id":"vid00000001","description":["[Lyrics]","a","b","c"]}""")["lyrics"])
     }
 
     @Test
-    fun aDescriptionWithoutALyricsSectionGivesNoLyricsFrame() = runTest {
+    fun aDescriptionWithoutALyricsSectionGivesNoLyrics() = runTest {
         val description = "Example Artist - Example Song\nListen everywhere\nhttps://example.invalid\n\n#example"
 
-        assertEquals(listOf("TIT2", "COMM"), deliveredTag(infoWithDescription(description)).ids)
+        assertNull(deliveredTag(infoWithDescription(description))["lyrics"])
     }
 
     @Test
-    fun aLyricsSectionWithFewerThanThreeLinesGivesNoLyricsFrame() = runTest {
+    fun aLyricsSectionWithFewerThanThreeLinesGivesNoLyrics() = runTest {
         val description = "[Lyrics]\nLine one\nLine two\n=======\nhttps://example.invalid"
 
-        assertEquals(listOf("TIT2", "COMM"), deliveredTag(infoWithDescription(description)).ids)
+        assertNull(deliveredTag(infoWithDescription(description))["lyrics"])
     }
 
     @Test
-    fun aCorruptInfoFileGivesNoLyricsFrameAndTheItemStillSucceeds() = runTest {
+    fun aCorruptInfoFileGivesNoLyricsAndTheItemStillSucceeds() = runTest {
         // Cut off inside the description: the lyrics section itself is complete, but the file is not valid JSON.
         val tag = deliveredTag("""{"description":"[Lyrics]\nLine one\nLine two\nLine three""")
 
-        assertEquals(listOf("TIT2", "COMM"), tag.ids)
+        assertNull(tag["lyrics"])
     }
 
     // ---- lyrics: the internet lookup when the description has none ----
 
-    /** A made-up answer of the lookup: Korean and English lines, so the language of the frame is `kor`. */
+    /** A made-up answer of the lookup: Korean and English lines. */
     private val onlineLyrics = "온라인 첫 줄\nLa la online\n온라인 셋째 줄"
-    private val onlineLyricsInTheFile = "온라인 첫 줄\r\nLa la online\r\n온라인 셋째 줄"
 
     /** A description that has no lyrics section: a title, a link and a hashtag. */
     private val descriptionWithoutLyrics = "Example Artist - Example Song\nListen everywhere\nhttps://example.invalid\n\n#example"
 
     /**
      * Downloads [item] with [provider], the info file [infoJson] and the lookup switched [online]; the item must succeed.
-     * Returns the tag of the file that reached the sink.
+     * Returns the tag values that were handed to ffmpeg.
      */
     private suspend fun TestScope.deliveredWith(
         provider: LyricsProvider,
@@ -908,27 +901,24 @@ class DefaultDownloadServiceTest {
         album: String? = "My List",
         texts: MutableList<String> = mutableListOf(),
         metadata: VideoMetadataSource = VideoMetadataSource { null },
-    ): Id3v2Tag {
+    ): Map<String, String> {
         val events = service(infoRunner(texts, infoJson), lyrics = provider, metadata = metadata)
             .start(request(item, album = album, searchLyricsOnline = online))
             .collect()
 
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)), done(events), events.toString())
         assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
-        return Id3v2Tag.read(outDir.resolve(events.filterIsInstance<JobEvent.ItemStarted>().single().fileName))
+        return FfmetadataReader.read(texts.single())
     }
 
     @Test
     fun withoutLyricsInTheDescriptionAndTheOptionOnTheProviderIsAskedOnceAndItsLyricsReachTheFile() = runTest {
         val provider = FakeLyricsProvider { onlineLyrics }
-        val texts = mutableListOf<String>()
 
-        val tag = deliveredWith(provider, infoWithDescription(descriptionWithoutLyrics), texts = texts)
+        val tag = deliveredWith(provider, infoWithDescription(descriptionWithoutLyrics))
 
         assertEquals(1, provider.queries.size)
-        assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids)
-        assertEquals(listOf(Id3v2Tag.Lyrics(3, "kor", "", onlineLyricsInTheFile)), tag.lyrics())
-        assertTrue("온라인" !in texts.single() && "lyrics" !in texts.single(), "ffmpeg would store the lyrics as a TXXX frame: ${texts.single()}")
+        assertEquals(onlineLyrics, tag["lyrics"])
     }
 
     @Test
@@ -983,7 +973,7 @@ class DefaultDownloadServiceTest {
         deliveredWith(provider, infoWithDescription(descriptionWithoutLyrics), item = item(2))
 
         assertEquals(listOf(null, null), provider.queries.map { it.durationSeconds })
-        assertEquals(listOf("TIT2", "COMM", "USLT"), tag.ids, "a missing info file still lets the lookup run")
+        assertNotNull(tag["lyrics"], "a missing info file still lets the lookup run")
     }
 
     @Test
@@ -1004,7 +994,7 @@ class DefaultDownloadServiceTest {
         val tag = deliveredWith(provider, infoWithDescription(describedLyrics))
 
         assertEquals(emptyList(), provider.queries.toList(), "the description has lyrics, so nobody is asked")
-        assertEquals(listOf(Id3v2Tag.Lyrics(3, "kor", "", "첫 번째 줄\r\n두 번째 줄\r\n\r\nLa la la")), tag.lyrics())
+        assertEquals("첫 번째 줄\n두 번째 줄\n\nLa la la", tag["lyrics"])
     }
 
     @Test
@@ -1014,7 +1004,7 @@ class DefaultDownloadServiceTest {
         val tag = deliveredWith(provider, infoWithDescription(descriptionWithoutLyrics), online = false)
 
         assertEquals(emptyList(), provider.queries.toList())
-        assertEquals(listOf("TIT2", "COMM"), tag.ids)
+        assertNull(tag["lyrics"])
     }
 
     @Test
@@ -1031,32 +1021,34 @@ class DefaultDownloadServiceTest {
 
     @Test
     fun withoutAProviderTheOptionChangesNothing() = runTest {
-        service(infoRunner(mutableListOf(), infoWithDescription(descriptionWithoutLyrics)))
+        val texts = mutableListOf<String>()
+
+        service(infoRunner(texts, infoWithDescription(descriptionWithoutLyrics)))
             .start(request(item(1), searchLyricsOnline = true))
             .collect()
 
-        assertEquals(listOf("TIT2", "COMM"), Id3v2Tag.read(outDir.resolve("001 A1 - T1.mp3")).ids, "the engine's default provider finds nothing")
+        assertNull(FfmetadataReader.read(texts.single())["lyrics"], "the engine's default provider finds nothing")
     }
 
     @Test
-    fun aProviderThatFindsNothingLeavesNoLyricsFrame() = runTest {
+    fun aProviderThatFindsNothingLeavesNoLyrics() = runTest {
         val provider = FakeLyricsProvider { null }
 
         val tag = deliveredWith(provider, infoWithDescription(descriptionWithoutLyrics))
 
         assertEquals(1, provider.queries.size)
-        assertEquals(listOf("TIT2", "COMM"), tag.ids)
+        assertNull(tag["lyrics"])
     }
 
     @Test
-    fun aBlankAnswerWritesNoLyricsFrame() = runTest {
+    fun aBlankAnswerWritesNoLyrics() = runTest {
         val tag = deliveredWith(FakeLyricsProvider { "  \n " }, infoWithDescription(descriptionWithoutLyrics))
 
-        assertEquals(listOf("TIT2", "COMM"), tag.ids)
+        assertNull(tag["lyrics"])
     }
 
     @Test
-    fun aProviderThatThrowsGivesNoLyricsFrameAndASuccessfulItem() = runTest {
+    fun aProviderThatThrowsGivesNoLyricsAndASuccessfulItem() = runTest {
         val failures = listOf(RuntimeException("boom"), IllegalStateException("bad state"), IOException("offline"), UnsupportedOperationException())
         for ((index, failure) in failures.withIndex()) {
             val provider = FakeLyricsProvider { throw failure }
@@ -1064,21 +1056,25 @@ class DefaultDownloadServiceTest {
             val tag = deliveredWith(provider, infoWithDescription(descriptionWithoutLyrics), item = item(index + 1))
 
             assertEquals(1, provider.queries.size, "$failure")
-            assertEquals(listOf("TIT2", "COMM"), tag.ids, "$failure")
+            assertNull(tag["lyrics"], "$failure")
         }
     }
 
     @Test
     fun aFailingLookupDoesNotAffectTheOtherItems() = runTest {
         val provider = FakeLyricsProvider { query -> if (query.title == "T1") throw RuntimeException("boom") else onlineLyrics }
+        val texts = mutableListOf<String>()
 
-        val events = service(infoRunner(mutableListOf(), infoWithDescription(descriptionWithoutLyrics)), lyrics = provider)
+        val events = service(infoRunner(texts, infoWithDescription(descriptionWithoutLyrics)), lyrics = provider)
             .start(request(item(1), item(2), searchLyricsOnline = true))
             .collect()
 
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(2, 0, 0)), done(events))
-        assertEquals(listOf("TIT2", "COMM"), Id3v2Tag.read(outDir.resolve("001 A1 - T1.mp3")).ids)
-        assertEquals(listOf("TIT2", "COMM", "USLT"), Id3v2Tag.read(outDir.resolve("002 A2 - T2.mp3")).ids)
+        assertEquals(
+            listOf(null, onlineLyrics),
+            texts.map { FfmetadataReader.read(it)["lyrics"] },
+            "one metadata file per item, in order (the request runs one item at a time)",
+        )
     }
 
     @Test
@@ -1091,7 +1087,7 @@ class DefaultDownloadServiceTest {
 
         assertEquals(1, provider.queries.size)
         assertTrue(events.none { it is JobEvent.ItemDone || it is JobEvent.ItemFailed }, "the item is cancelled, not done and not failed: $events")
-        assertFalse(Files.exists(outDir.resolve("001 A1 - T1.mp3")), "a cancelled item delivers nothing")
+        assertFalse(Files.exists(outDir.resolve("001 A1 - T1.m4a")), "a cancelled item delivers nothing")
     }
 
     @Test
@@ -1171,7 +1167,7 @@ class DefaultDownloadServiceTest {
                 if (isFfmpegCommand(command)) {
                     writeFakeTagged(command)
                 } else {
-                    writeFakeMp3(command)
+                    writeFakeM4a(command)
                     if (infoJson != null) writeFakeInfo(command, infoJson)
                 }
                 0
@@ -1184,7 +1180,7 @@ class DefaultDownloadServiceTest {
 
         val events = eventsWith(provider, infoWithDescription(describedLyrics), online = true)
 
-        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION), itemDone(events))
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.DESCRIPTION), itemDone(events))
         assertEquals(emptyList(), provider.queries.toList())
         assertEquals(JobSummary(1, 0, 0), done(events).summary)
     }
@@ -1195,7 +1191,7 @@ class DefaultDownloadServiceTest {
 
         val events = eventsWith(provider, infoWithDescription(descriptionWithoutLyrics), online = true)
 
-        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE), itemDone(events))
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.ONLINE), itemDone(events))
         assertEquals(1, provider.queries.size)
     }
 
@@ -1205,7 +1201,7 @@ class DefaultDownloadServiceTest {
             val events = eventsWith(FakeLyricsProvider { onlineLyrics }, infoJson, online = true)
 
             assertEquals(LyricsOutcome.ONLINE, itemDone(events).lyrics, "$infoJson")
-            Files.deleteIfExists(outDir.resolve("001 A1 - T1.mp3"))
+            Files.deleteIfExists(outDir.resolve("001 A1 - T1.m4a"))
         }
     }
 
@@ -1215,7 +1211,7 @@ class DefaultDownloadServiceTest {
 
         val events = eventsWith(provider, infoWithDescription(descriptionWithoutLyrics), online = true)
 
-        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.NOT_FOUND), itemDone(events))
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.NOT_FOUND), itemDone(events))
         assertEquals(1, provider.queries.size)
     }
 
@@ -1241,10 +1237,10 @@ class DefaultDownloadServiceTest {
         for (failure in failures) {
             val events = eventsWith(FakeLyricsProvider { throw failure }, infoWithDescription(descriptionWithoutLyrics), online = true)
 
-            assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.NOT_FOUND), itemDone(events), "$failure")
+            assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.NOT_FOUND), itemDone(events), "$failure")
             assertEquals(JobSummary(1, 0, 0), done(events).summary, "$failure")
             assertTrue(events.none { it is JobEvent.ItemFailed }, "$failure")
-            Files.deleteIfExists(outDir.resolve("001 A1 - T1.mp3"))
+            Files.deleteIfExists(outDir.resolve("001 A1 - T1.m4a"))
         }
     }
 
@@ -1255,8 +1251,8 @@ class DefaultDownloadServiceTest {
         for (infoJson in infos) {
             val events = eventsWith(provider, infoJson, online = false)
 
-            assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.SEARCH_OFF), itemDone(events), "$infoJson")
-            Files.deleteIfExists(outDir.resolve("001 A1 - T1.mp3"))
+            assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.SEARCH_OFF), itemDone(events), "$infoJson")
+            Files.deleteIfExists(outDir.resolve("001 A1 - T1.m4a"))
         }
         assertEquals(emptyList(), provider.queries.toList(), "with the lookup off nobody is asked")
     }
@@ -1267,7 +1263,7 @@ class DefaultDownloadServiceTest {
 
         val events = eventsWith(provider, infoWithDescription(describedLyrics), online = false)
 
-        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION), itemDone(events))
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.DESCRIPTION), itemDone(events))
         assertEquals(emptyList(), provider.queries.toList())
     }
 
@@ -1311,7 +1307,7 @@ class DefaultDownloadServiceTest {
 
         assertEquals(2, flaky.ytDlpCommands.size)
         assertEquals(1, provider.queries.size, "the failed attempt looked nothing up")
-        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE), itemDone(events))
+        assertEquals(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.ONLINE), itemDone(events))
     }
 
     @Test
@@ -1329,11 +1325,11 @@ class DefaultDownloadServiceTest {
         val events = service(runner).start(request(item(1), item(2))).collect()
 
         assertEquals(
-            listOf(JobEvent.ItemFailed(1, "ID3 태그를 쓰지 못했습니다: Error while writing the tag")),
+            listOf(JobEvent.ItemFailed(1, "태그를 쓰지 못했습니다: Error while writing the tag")),
             events.filterIsInstance<JobEvent.ItemFailed>(),
         )
         assertEquals(
-            listOf(JobEvent.ItemDone(2, "002 A2 - T2.mp3", LyricsOutcome.DESCRIPTION)),
+            listOf(JobEvent.ItemDone(2, "002 A2 - T2.m4a", LyricsOutcome.DESCRIPTION)),
             events.filterIsInstance<JobEvent.ItemDone>(),
             "no item-done at all for the item whose tag could not be written",
         )
@@ -1341,31 +1337,9 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun aFailureWhileAddingTheLyricsFrameFailsTheItemAndReportsNoOutcome() = runTest {
-        // ffmpeg "succeeds" but leaves a tag of another version, which the engine does not extend with its USLT frame.
-        val runner = FakeProcessRunner { command, _, _ ->
-            if (isFfmpegCommand(command)) {
-                Files.write(Path.of(command.last()), "ID3".toByteArray(Charsets.ISO_8859_1) + byteArrayOf(3, 0, 0, 0, 0, 0, 0) + "audio".toByteArray())
-            } else {
-                writeFakeMp3(command)
-                writeFakeInfo(command, infoWithDescription(describedLyrics))
-            }
-            0
-        }
-
-        val events = service(runner).start(request(item(1))).collect()
-
-        val failed = events.filterIsInstance<JobEvent.ItemFailed>().single()
-        assertTrue(failed.message.startsWith("ID3 태그를 쓰지 못했습니다"), failed.message)
-        assertTrue(events.none { it is JobEvent.ItemDone }, events.toString())
-        assertFalse(Files.exists(outDir.resolve("001 A1 - T1.mp3")), "an untagged file must not reach the sink")
-        assertEquals(JobSummary(0, 0, 1), done(events).summary)
-    }
-
-    @Test
     fun anExistingFileIsSkippedWithoutAnOutcomeAndWithoutALookup() = runTest {
         Files.createDirectories(outDir)
-        Files.writeString(outDir.resolve("001 A1 - T1.mp3"), "old")
+        Files.writeString(outDir.resolve("001 A1 - T1.m4a"), "old")
         val provider = FakeLyricsProvider { onlineLyrics }
 
         val events = service(infoRunner(mutableListOf(), infoWithDescription(describedLyrics)), lyrics = provider)
@@ -1375,7 +1349,7 @@ class DefaultDownloadServiceTest {
         assertEquals(listOf(JobEvent.ItemSkipped(1, "이미 존재")), events.filterIsInstance<JobEvent.ItemSkipped>())
         assertTrue(events.none { it is JobEvent.ItemDone }, events.toString())
         assertEquals(emptyList(), provider.queries.toList())
-        assertEquals("old", Files.readString(outDir.resolve("001 A1 - T1.mp3")))
+        assertEquals("old", Files.readString(outDir.resolve("001 A1 - T1.m4a")))
     }
 
     @Test
@@ -1437,7 +1411,7 @@ class DefaultDownloadServiceTest {
             .start(request(item(5, artist = "Artist Five", track = "Song Five"), sink = recordingSink, album = "My List", includeRank = false))
             .collect()
 
-        val name = "Artist Five - Song Five.mp3"
+        val name = "Artist Five - Song Five.m4a"
         assertEquals(listOf("exists:$name", "put:$name"), recorded)
         assertEquals(listOf(name), filesIn(outDir))
         assertEquals(JobEvent.ItemStarted(5, "vid00000005", name), events.filterIsInstance<JobEvent.ItemStarted>().single())
@@ -1456,16 +1430,16 @@ class DefaultDownloadServiceTest {
 
         val events = service(succeeding, metadata = metadata).start(request(lowConfidence, includeRank = false)).collect()
 
-        assertEquals("BTS - Dynamite.mp3", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
-        assertEquals(listOf("BTS - Dynamite.mp3"), filesIn(outDir))
+        assertEquals("BTS - Dynamite.m4a", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
+        assertEquals(listOf("BTS - Dynamite.m4a"), filesIn(outDir))
     }
 
     @Test
     fun withTheRankTurnedOnTheNameKeepsTheRankPrefix() = runTest {
         val events = service(succeeding).start(request(item(5, artist = "Artist Five", track = "Song Five"), includeRank = true)).collect()
 
-        assertEquals("005 Artist Five - Song Five.mp3", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
-        assertEquals(listOf("005 Artist Five - Song Five.mp3"), filesIn(outDir))
+        assertEquals("005 Artist Five - Song Five.m4a", events.filterIsInstance<JobEvent.ItemStarted>().single().fileName)
+        assertEquals(listOf("005 Artist Five - Song Five.m4a"), filesIn(outDir))
     }
 
     // ---- two items of one job with the same file name ----
@@ -1477,7 +1451,7 @@ class DefaultDownloadServiceTest {
     /** A runner whose yt-dlp calls all wait for [gate], so every item has passed its existence check before any file is put. */
     private fun heldRunner(gate: CompletableDeferred<Unit>) = downloadRunner { command, _, _ ->
         gate.await()
-        writeFakeMp3(command)
+        writeFakeM4a(command)
         0
     }
 
@@ -1487,8 +1461,8 @@ class DefaultDownloadServiceTest {
 
         val events = service(runner).start(request(firstTwin, secondTwin, concurrency = 1, includeRank = false)).collect()
 
-        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
-        assertEquals(listOf(JobEvent.ItemDone(1, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF)), events.filterIsInstance<JobEvent.ItemDone>())
+        assertEquals(listOf("Same - Song.m4a"), filesIn(outDir))
+        assertEquals(listOf(JobEvent.ItemDone(1, "Same - Song.m4a", LyricsOutcome.SEARCH_OFF)), events.filterIsInstance<JobEvent.ItemDone>())
         assertEquals(listOf(JobEvent.ItemSkipped(2, "이미 존재")), events.filterIsInstance<JobEvent.ItemSkipped>())
         assertTrue(events.none { it is JobEvent.ItemFailed }, events.toString())
         assertEquals(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 1, 0)), done(events))
@@ -1504,8 +1478,8 @@ class DefaultDownloadServiceTest {
 
         val events = handle.collect()
 
-        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
-        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")), "the delivered file is the tagged one")
+        assertEquals(listOf("Same - Song.m4a"), filesIn(outDir))
+        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.m4a")), "the delivered file is the tagged one")
         assertEquals(1, events.count { it is JobEvent.ItemDone }, events.toString())
         assertEquals(1, events.filterIsInstance<JobEvent.ItemSkipped>().size, events.toString())
         assertEquals("이미 존재", events.filterIsInstance<JobEvent.ItemSkipped>().single().reason)
@@ -1517,10 +1491,10 @@ class DefaultDownloadServiceTest {
     fun withOverwriteTwoItemsWithTheSameNameOneAfterAnotherBothFinishAndOneFileRemains() = runTest {
         val events = service(succeeding).start(request(firstTwin, secondTwin, overwrite = true, concurrency = 1, includeRank = false)).collect()
 
-        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
-        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")))
+        assertEquals(listOf("Same - Song.m4a"), filesIn(outDir))
+        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.m4a")))
         assertEquals(
-            listOf(JobEvent.ItemDone(1, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF), JobEvent.ItemDone(2, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF)),
+            listOf(JobEvent.ItemDone(1, "Same - Song.m4a", LyricsOutcome.SEARCH_OFF), JobEvent.ItemDone(2, "Same - Song.m4a", LyricsOutcome.SEARCH_OFF)),
             events.filterIsInstance<JobEvent.ItemDone>().sortedBy { it.rank },
             events.toString(),
         )
@@ -1538,10 +1512,10 @@ class DefaultDownloadServiceTest {
 
         val events = handle.collect()
 
-        assertEquals(listOf("Same - Song.mp3"), filesIn(outDir))
-        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.mp3")))
+        assertEquals(listOf("Same - Song.m4a"), filesIn(outDir))
+        assertTrue(endsWithFakeAudio(outDir.resolve("Same - Song.m4a")))
         assertEquals(
-            listOf(JobEvent.ItemDone(1, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF), JobEvent.ItemDone(2, "Same - Song.mp3", LyricsOutcome.SEARCH_OFF)),
+            listOf(JobEvent.ItemDone(1, "Same - Song.m4a", LyricsOutcome.SEARCH_OFF), JobEvent.ItemDone(2, "Same - Song.m4a", LyricsOutcome.SEARCH_OFF)),
             events.filterIsInstance<JobEvent.ItemDone>().sortedBy { it.rank },
             events.toString(),
         )

@@ -57,6 +57,8 @@ object ErrorClassifier {
         UNAVAILABLE.firstOrNull { text.contains(it.first) }?.let { return Failure(FailureKind.UNAVAILABLE, it.second) }
         val message = summarize(stderrLines)
         if (TRANSIENT.any { text.contains(it) }) return Failure(FailureKind.TRANSIENT, message)
+        // Not "unavailable": it can be a hiccup on YouTube's side, so the item fails and can be retried.
+        if (text.contains("requested format is not available")) return Failure(FailureKind.OTHER, "m4a 오디오 형식이 없습니다.")
         return Failure(FailureKind.OTHER, message)
     }
 

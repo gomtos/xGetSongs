@@ -73,7 +73,7 @@ class AppStateHolderTest {
         assertEquals(listOf(1, 2, 3), state.rows.map { it.item.rank })
         assertEquals(ItemStatus.Ready, holder.row(1).status)
         assertEquals(ItemStatus.Skipped("비공개 영상"), holder.row(2).status)
-        assertEquals("001 A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("001 A1 - T1.m4a", holder.row(1).fileName)
     }
 
     @Test
@@ -118,7 +118,7 @@ class AppStateHolderTest {
 
         holder.onSingleRank(42)
 
-        assertEquals("042 IU - Love.mp3", holder.row(42).fileName)
+        assertEquals("042 IU - Love.m4a", holder.row(42).fileName)
         assertEquals(42, holder.state.value.singleRank)
     }
 
@@ -152,8 +152,8 @@ class AppStateHolderTest {
         holder.onIncludeRank(false)
 
         assertEquals(Phase.PREVIEW, holder.state.value.phase)
-        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
-        assertEquals("A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals("A1 - T1.m4a", holder.row(1).fileName)
+        assertEquals("A3 - T3.m4a", holder.row(3).fileName)
         assertEquals(listOf(1, 2, 3), holder.state.value.rows.map { it.item.rank }, "the position column stays")
         assertEquals(ItemStatus.Ready, holder.row(1).status)
     }
@@ -165,24 +165,24 @@ class AppStateHolderTest {
         holder.onIncludeRank(false)
         holder.onIncludeRank(true)
 
-        assertEquals("001 A1 - T1.mp3", holder.row(1).fileName)
-        assertEquals("003 A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals("001 A1 - T1.m4a", holder.row(1).fileName)
+        assertEquals("003 A3 - T3.m4a", holder.row(3).fileName)
     }
 
     @Test
     fun unavailableRowsKeepTheirTextWhenTheOptionChanges() = runTest {
         val unavailable = ResolvedItem(
             rank = 2, videoId = "vid00000002", title = "[Private video]", available = false,
-            unavailableReason = "비공개 영상", expectedFileName = "kept as it was.mp3",
+            unavailableReason = "비공개 영상", expectedFileName = "kept as it was.m4a",
         )
         val api = FakeApi().apply { resolveResponse = FakeApi.playlist().copy(items = listOf(FakeApi.item(1), unavailable)) }
         val (_, holder) = resolved(api)
 
         holder.onIncludeRank(false)
 
-        assertEquals("kept as it was.mp3", holder.row(2).fileName)
+        assertEquals("kept as it was.m4a", holder.row(2).fileName)
         assertEquals(ItemStatus.Skipped("비공개 영상"), holder.row(2).status)
-        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("A1 - T1.m4a", holder.row(1).fileName)
     }
 
     @Test
@@ -194,8 +194,8 @@ class AppStateHolderTest {
         holder.resolve()
         runCurrent()
 
-        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
-        assertEquals("A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals("A1 - T1.m4a", holder.row(1).fileName)
+        assertEquals("A3 - T3.m4a", holder.row(3).fileName)
         assertNull(holder.row(2).fileName)
     }
 
@@ -210,7 +210,7 @@ class AppStateHolderTest {
         holder.resolve()
         runCurrent()
 
-        assertEquals("IU - Love.mp3", holder.row(42).fileName)
+        assertEquals("IU - Love.m4a", holder.row(42).fileName)
     }
 
     @Test
@@ -221,10 +221,10 @@ class AppStateHolderTest {
 
         holder.onSingleRank(42)
 
-        assertEquals("IU - Love.mp3", holder.row(42).fileName)
+        assertEquals("IU - Love.m4a", holder.row(42).fileName)
         assertEquals(42, holder.state.value.singleRank)
         holder.onIncludeRank(true)
-        assertEquals("042 IU - Love.mp3", holder.row(42).fileName, "the rank typed by the user is what comes back")
+        assertEquals("042 IU - Love.m4a", holder.row(42).fileName, "the rank typed by the user is what comes back")
     }
 
     @Test
@@ -237,7 +237,7 @@ class AppStateHolderTest {
 
         assertEquals(Phase.PREVIEW, holder.state.value.phase)
         assertEquals(listOf(playlistId), api.resolveInputs)
-        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("A1 - T1.m4a", holder.row(1).fileName)
     }
 
     @Test
@@ -277,15 +277,15 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Real - Name.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Real - Name.m4a"))
         runCurrent()
 
         holder.onIncludeRank(false)
 
         assertEquals(Phase.RUNNING, holder.state.value.phase)
         assertEquals(false, holder.state.value.includeRank)
-        assertEquals("001 Real - Name.mp3", holder.row(1).fileName)
-        assertEquals("003 A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals("001 Real - Name.m4a", holder.row(1).fileName)
+        assertEquals("003 A3 - T3.m4a", holder.row(3).fileName)
         assertEquals(ItemStatus.Downloading(null), holder.row(1).status)
     }
 
@@ -296,8 +296,8 @@ class AppStateHolderTest {
         holder.onIncludeRank(false)
 
         assertEquals(Phase.FINISHED, holder.state.value.phase)
-        assertEquals("001 A1 - T1.mp3", holder.row(1).fileName)
-        assertEquals("003 A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals("001 A1 - T1.m4a", holder.row(1).fileName)
+        assertEquals("003 A3 - T3.m4a", holder.row(3).fileName)
         assertEquals(false, holder.state.value.includeRank)
     }
 
@@ -970,10 +970,10 @@ class AppStateHolderTest {
         holder.startDownload()
         runCurrent()
 
-        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Real - Name.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Real - Name.m4a"))
         runCurrent()
         assertEquals(ItemStatus.Downloading(null), holder.row(1).status)
-        assertEquals("001 Real - Name.mp3", holder.row(1).fileName)
+        assertEquals("001 Real - Name.m4a", holder.row(1).fileName)
 
         api.eventChannel.trySend(JobEvent.Progress(1, Stage.DOWNLOADING, 40.0))
         runCurrent()
@@ -983,7 +983,7 @@ class AppStateHolderTest {
         runCurrent()
         assertEquals(ItemStatus.Finishing, holder.row(1).status)
 
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 Real - Name.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 Real - Name.m4a"))
         api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
         api.eventChannel.close()
@@ -1006,13 +1006,13 @@ class AppStateHolderTest {
             val (api, holder) = resolved()
             holder.startDownload()
             runCurrent()
-            api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Preview - Name.mp3"))
+            api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 Preview - Name.m4a"))
 
-            api.eventChannel.trySend(JobEvent.ItemDone(1, "001 Real - Name.mp3", outcome))
+            api.eventChannel.trySend(JobEvent.ItemDone(1, "001 Real - Name.m4a", outcome))
             runCurrent()
 
             assertEquals(ItemStatus.Done(outcome), holder.row(1).status, "$outcome")
-            assertEquals("001 Real - Name.mp3", holder.row(1).fileName, "$outcome")
+            assertEquals("001 Real - Name.m4a", holder.row(1).fileName, "$outcome")
         }
     }
 
@@ -1022,8 +1022,8 @@ class AppStateHolderTest {
         holder.startDownload()
         runCurrent()
 
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
-        api.eventChannel.trySend(JobEvent.ItemDone(3, "003 A3 - T3.mp3", LyricsOutcome.SEARCH_OFF))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.ItemDone(3, "003 A3 - T3.m4a", LyricsOutcome.SEARCH_OFF))
         runCurrent()
 
         assertEquals("완료 · 가사 ✓ 인터넷", statusLabel(holder.row(1).status))
@@ -1036,7 +1036,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.ONLINE))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
         api.eventChannel.close()
         runCurrent()
@@ -1046,7 +1046,7 @@ class AppStateHolderTest {
         runCurrent()
         assertEquals(ItemStatus.Waiting, holder.row(1).status, "the old outcome is gone as soon as the new run starts")
 
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.NOT_FOUND))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.NOT_FOUND))
         runCurrent()
 
         assertEquals(ItemStatus.Done(LyricsOutcome.NOT_FOUND), holder.row(1).status)
@@ -1057,7 +1057,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.DESCRIPTION))
         api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
         api.eventChannel.close()
@@ -1065,7 +1065,7 @@ class AppStateHolderTest {
         holder.retryFailed()
         runCurrent()
 
-        api.eventChannel.trySend(JobEvent.ItemDone(3, "003 A3 - T3.mp3", LyricsOutcome.NOT_FOUND))
+        api.eventChannel.trySend(JobEvent.ItemDone(3, "003 A3 - T3.m4a", LyricsOutcome.NOT_FOUND))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
         api.eventChannel.close()
         runCurrent()
@@ -1080,8 +1080,8 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
-        api.eventChannel.trySend(JobEvent.ItemStarted(3, "vid00000003", "003 A3 - T3.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.ItemStarted(3, "vid00000003", "003 A3 - T3.m4a"))
         runCurrent()
 
         api.eventChannel.close() // no JobDone: the connection broke while row 3 was in flight
@@ -1097,7 +1097,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.SEARCH_OFF))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.SEARCH_OFF))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.CANCELLED, JobSummary(1, 0, 0)))
         api.eventChannel.close()
         runCurrent()
@@ -1111,7 +1111,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.ONLINE))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
         api.eventChannel.close()
         runCurrent()
@@ -1141,7 +1141,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.DESCRIPTION))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.DESCRIPTION))
         api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
         api.eventChannel.close()
@@ -1276,7 +1276,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved(timeSource = timeSource)
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a"))
         api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 1)))
         api.eventChannel.close()
@@ -1289,7 +1289,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.m4a"))
         api.eventChannel.trySend(JobEvent.Progress(1, Stage.DOWNLOADING, 40.0))
         runCurrent()
         assertEquals(ItemStatus.Downloading(40.0), holder.row(1).status)
@@ -1308,7 +1308,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.mp3"))
+        api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.m4a"))
         api.eventChannel.trySend(JobEvent.Progress(1, Stage.FINISHING))
         runCurrent()
         assertEquals(ItemStatus.Finishing, holder.row(1).status)
@@ -1399,7 +1399,7 @@ class AppStateHolderTest {
     @Test
     fun aFailedSecondLookupShowsTheOldRowsWithTheOptionAsItIsNow() = runTest {
         val (api, holder) = resolved()
-        assertEquals("001 A1 - T1.mp3", holder.row(1).fileName)
+        assertEquals("001 A1 - T1.m4a", holder.row(1).fileName)
         api.resolveGate = CompletableDeferred()
         api.resolveError = ApiError("x")
         holder.onInput(playlistId)
@@ -1415,8 +1415,8 @@ class AppStateHolderTest {
         assertEquals(Phase.PREVIEW, state.phase)
         assertEquals("x", state.error)
         assertEquals(false, state.includeRank)
-        assertEquals("A1 - T1.mp3", holder.row(1).fileName)
-        assertEquals("A3 - T3.mp3", holder.row(3).fileName)
+        assertEquals("A1 - T1.m4a", holder.row(1).fileName)
+        assertEquals("A3 - T3.m4a", holder.row(3).fileName)
         assertEquals(listOf(1, 2, 3), state.rows.map { it.item.rank })
         assertEquals(ItemStatus.Ready, holder.row(1).status)
     }
@@ -1426,7 +1426,7 @@ class AppStateHolderTest {
         val (api, holder) = resolved()
         holder.startDownload()
         runCurrent()
-        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.mp3", LyricsOutcome.ONLINE))
+        api.eventChannel.trySend(JobEvent.ItemDone(1, "001 A1 - T1.m4a", LyricsOutcome.ONLINE))
         api.eventChannel.trySend(JobEvent.JobDone(JobStatus.COMPLETED, JobSummary(1, 0, 0)))
         api.eventChannel.close()
         runCurrent()

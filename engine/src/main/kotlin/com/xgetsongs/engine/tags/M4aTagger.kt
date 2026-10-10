@@ -15,11 +15,11 @@ import java.nio.file.StandardCopyOption
 import kotlin.io.path.nameWithoutExtension
 
 /**
- * Writes ID3 tags and the cover into an mp3 with one ffmpeg stream-copy pass. The tag text travels in an ffmetadata
- * file next to the mp3, never on the command line. The comment and the lyrics are the exceptions to ffmpeg writing the
- * tags: they become a real `COMM` frame and a real `USLT` frame added by [Id3Frames] afterwards.
+ * Writes the tags and the cover into an m4a with one ffmpeg stream-copy pass. The tag text travels in an ffmetadata
+ * file next to the m4a, never on the command line. The same pass writes a new container, so the fragmented DASH file
+ * yt-dlp leaves behind comes out as a regular m4a.
  */
-class Id3Tagger(
+class M4aTagger(
     private val runner: ProcessRunner,
     private val tools: ToolPathProvider,
 ) {
@@ -31,7 +31,7 @@ class Id3Tagger(
         val ffmpeg = tools.current().ffmpeg ?: return Failure(FailureKind.FATAL, "ffmpeg를 찾을 수 없습니다.")
         val name = file.nameWithoutExtension
         val metadataFile = file.resolveSibling("$name.ffmeta")
-        val output = file.resolveSibling("$name.tagged.mp3")
+        val output = file.resolveSibling("$name.tagged.m4a")
         val stderr = mutableListOf<String>()
         try {
             withContext(Dispatchers.IO) { Files.writeString(metadataFile, Ffmetadata.render(tags), Charsets.UTF_8) }
@@ -43,11 +43,7 @@ class Id3Tagger(
             if (exitCode != 0 || !written) {
                 return failure(synchronized(stderr) { stderr.lastOrNull { it.isNotBlank() } }?.trim()?.take(MAX_DETAIL))
             }
-            withContext(Dispatchers.IO) {
-                // ffmpeg cannot write COMM or USLT frames, so they are added to ffmpeg's output before that replaces the original.
-                Id3Frames.add(output, tags.comment, tags.lyrics)
-                Files.move(output, file, StandardCopyOption.REPLACE_EXISTING)
-            }
+            withContext(Dispatchers.IO) { Files.move(output, file, StandardCopyOption.REPLACE_EXISTING) }
             return null
         } catch (e: IOException) {
             return failure(e.message)
@@ -60,7 +56,7 @@ class Id3Tagger(
     }
 
     private fun failure(detail: String?) =
-        Failure(FailureKind.OTHER, "ID3 태그를 쓰지 못했습니다: ${detail ?: "알 수 없는 오류"}")
+        Failure(FailureKind.OTHER, "태그를 쓰지 못했습니다: ${detail ?: "알 수 없는 오류"}")
 
     /** A leftover temp file is harmless (the job's work folder is removed), so it must not hide the real result. */
     private fun deleteQuietly(path: Path) {

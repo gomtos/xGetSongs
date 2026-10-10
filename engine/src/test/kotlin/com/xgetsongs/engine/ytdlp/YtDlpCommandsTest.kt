@@ -30,20 +30,21 @@ class YtDlpCommandsTest {
     }
 
     @Test
-    fun downloadExtractsMp3IntoTheOutputDirectory() {
+    fun downloadSavesTheAacStreamAsItIsIntoTheOutputDirectory() {
         val command = YtDlpCommands.download(TEST_TOOLS, url, Path.of("C:/work/job-1"), "dQw4w9WgXcQ")
-        assertContains(command, "-x")
-        assertEquals("mp3", command[command.indexOf("--audio-format") + 1])
-        assertEquals("0", command[command.indexOf("--audio-quality") + 1])
+        assertEquals("bestaudio[ext=m4a]", command[command.indexOf("-f") + 1])
+        assertEquals("never", command[command.indexOf("--fixup") + 1])
+        for (reencoding in listOf("-x", "--extract-audio", "--audio-format", "--audio-quality")) {
+            assertFalse(reencoding in command, "the audio must not be re-encoded: $reencoding")
+        }
         assertTrue(command[command.indexOf("-o") + 1].endsWith("dQw4w9WgXcQ.%(ext)s"))
         assertEquals(TEST_TOOLS.ffmpeg.toString(), command[command.indexOf("--ffmpeg-location") + 1])
         assertEquals(1, command.count { it == "--progress-template" })
-        assertFalse(command.any { it.startsWith("postprocess:") }, "yt-dlp's post-processor lines are not read any more")
         assertEquals(listOf("--", url), command.takeLast(2))
     }
 
     @Test
-    fun downloadSavesTheThumbnailAsJpgNextToTheMp3() {
+    fun downloadSavesTheThumbnailAsJpgNextToTheAudio() {
         val command = YtDlpCommands.download(TEST_TOOLS, url, Path.of("C:/work/job-1"), "dQw4w9WgXcQ")
         assertContains(command, "--write-thumbnail")
         assertEquals("jpg", command[command.indexOf("--convert-thumbnails") + 1])

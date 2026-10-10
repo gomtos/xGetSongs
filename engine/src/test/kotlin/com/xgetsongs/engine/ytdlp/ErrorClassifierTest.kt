@@ -35,6 +35,23 @@ class ErrorClassifierTest {
     }
 
     @Test
+    fun aVideoWithoutAnM4aStreamFailsWithAClearReason() {
+        val failure = classify("ERROR: [youtube] abc: Requested format is not available. Use --list-formats for a list of available formats")
+
+        assertEquals(FailureKind.OTHER, failure.kind)
+        assertEquals("m4a 오디오 형식이 없습니다.", failure.message)
+    }
+
+    @Test
+    fun otherClassificationsComeBeforeTheMissingFormat() {
+        assertEquals(FailureKind.UNAVAILABLE, classify("ERROR: [youtube] abc: Video unavailable. Requested format is not available").kind)
+        assertEquals(
+            FailureKind.TRANSIENT,
+            classify("ERROR: unable to download video data: HTTP Error 503", "Requested format is not available").kind,
+        )
+    }
+
+    @Test
     fun fatalWinsOverTransient() {
         assertEquals(
             FailureKind.FATAL,

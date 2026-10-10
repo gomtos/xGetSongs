@@ -1,7 +1,7 @@
 package com.xgetsongs.shared.filename
 
 /**
- * Builds `{rank 3 digits} {artist} - {title}.mp3` file names (the rank is optional) and playlist folder names
+ * Builds `{rank 3 digits} {artist} - {title}.m4a` file names (the rank is optional) and playlist folder names
  * that are safe on Windows.
  */
 object FilenameFormatter {
@@ -18,7 +18,7 @@ object FilenameFormatter {
     /** Folder name used when a playlist has no usable title. */
     const val UNTITLED_PLAYLIST = "재생목록"
     private const val ELLIPSIS = "…"
-    private const val EXTENSION = ".mp3"
+    private const val EXTENSION = ".m4a"
     private const val EMPTY_TITLE_PLACEHOLDER = "untitled"
 
     private val FULLWIDTH = mapOf(
@@ -31,11 +31,11 @@ object FilenameFormatter {
         (1..9).flatMap { listOf("COM$it", "LPT$it") }
 
     /**
-     * Builds `{rank 3 digits} {artist} - {title}.mp3`, or `{artist} - {title}.mp3` when [includeRank] is false. The length
+     * Builds `{rank 3 digits} {artist} - {title}.m4a`, or `{artist} - {title}.m4a` when [includeRank] is false. The length
      * limits are the same either way ([MAX_BASE_LENGTH] for the whole name, so the title gets what the prefix leaves).
      * [rank] must be in [MIN_RANK]..[MAX_RANK] even when it is not printed. Without the rank the artist starts the name,
      * so an artist whose text before the first `.` is a reserved Windows device name gets a `_` after it (`NUL.x` becomes
-     * `NUL_.x`; plain `Con - Song.mp3` is fine because the name's stem is `Con - Song`); the digits of the rank already
+     * `NUL_.x`; plain `Con - Song.m4a` is fine because the name's stem is `Con - Song`); the digits of the rank already
      * rule that out when it is printed.
      */
     fun format(rank: Int, artist: String, title: String, includeRank: Boolean = true): String {

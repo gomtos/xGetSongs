@@ -1,28 +1,22 @@
 package com.xgetsongs.engine.tags
 
 /**
- * The ID3 values of one track, as they are written into the mp3. They are the original text: unlike the file name
+ * The tag values of one track, as they are written into the m4a. They are the original text: unlike the file name
  * nothing is sanitized or shortened.
  */
 data class TrackTags(
-    /** TIT2. */
+    /** The title (`©nam`). */
     val title: String,
-    /** TPE1. */
+    /** The artist (`©ART`). */
     val artist: String,
-    /** TALB: the name of the folder (the user's album name, else the playlist title), else the video's own album; null (no frame) if none. */
+    /** The album (`©alb`): the name of the folder (the user's album name, else the playlist title), else the video's own album; null (no tag) if none. */
     val album: String?,
-    /** TPE2. */
+    /** The album artist (`aART`). */
     val albumArtist: String,
-    /** TRCK: the playlist position, written without leading zeros. */
+    /** The track number (`trkn`): the playlist position, written without leading zeros. */
     val trackNumber: Int,
-    /**
-     * COMM: the video URL. Written as a real `COMM` frame by [Id3Frames] after ffmpeg is done (ffmpeg itself can only
-     * write a comment as a `TXXX` frame); a null or blank comment writes no frame.
-     */
+    /** The comment (`©cmt`): the video URL. A null or blank comment writes no tag. */
     val comment: String?,
-    /**
-     * USLT: the lyrics found in the video description, lines separated by `\n`. Written as a real `USLT` frame by
-     * [Id3Frames] after ffmpeg is done (ffmpeg would make a `TXXX` frame of it); a null or blank text writes no frame.
-     */
+    /** The lyrics (`©lyr`) found in the video description or by the lookup, lines separated by `\n`. A null or blank text writes no tag. */
     val lyrics: String? = null,
 )
