@@ -108,7 +108,8 @@ class ItemDownloader(
      * missing or broken info file means no own album, no description lyrics and no length, and never fails the item; a
      * lookup that fails is no lyrics. The [DownloadResult.Downloaded.lyrics] of the result tells which of these happened;
      * it is reported only once the tags are written, so a tag failure is a failure with no outcome. [emit] receives
-     * throttled [JobEvent.Progress] events.
+     * the throttled [JobEvent.Progress] events of the download and then, once yt-dlp has finished successfully and
+     * before the tags are written, one [JobEvent.Progress] event with [Stage.FINISHING].
      */
     suspend fun download(prepared: PreparedItem, workDir: Path, emit: (JobEvent) -> Unit): DownloadResult {
         val paths = tools.current()

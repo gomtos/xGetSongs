@@ -190,7 +190,7 @@ class RoutesTest {
 
         val request = fakes.downloads.requests.single()
         assertFalse(request.includeRank)
-        assertEquals(listOf(42), request.items.map { it.rank }, "the rank is still passed on: it is the ID3 track number")
+        assertEquals(listOf(42), request.items.map { it.rank }, "the rank is still passed on: it is the track number")
     }
 
     @Test

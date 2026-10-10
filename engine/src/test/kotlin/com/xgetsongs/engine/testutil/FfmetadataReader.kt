@@ -1,9 +1,12 @@
 package com.xgetsongs.engine.testutil
 
 /**
- * Reads an ffmetadata file the way ffmpeg does, so a test can see the values that reach the tags: the first line is the
- * header, a backslash makes the next character part of the text (a line break too), an unescaped line feed ends the
- * entry and the first unescaped `=` splits the key from the value.
+ * A simplified reader for an ffmetadata file, so a test can see the values that `Ffmetadata.render` intends to hand to
+ * ffmpeg: the first line is the header, a backslash makes the next character part of the text (a line break too), an
+ * unescaped line feed ends the entry and the first unescaped `=` splits the key from the value. It is not exactly what
+ * ffmpeg does: it decodes the backslash escapes pair by pair, while ffmpeg 8.x joins a line that ends in a backslash
+ * with the next line even when that backslash is itself escaped. So it cannot catch a regression of the
+ * trailing-backslash workaround; `FfmetadataTest` and `RealFfmpegTaggingIntegrationTest` cover that.
  */
 object FfmetadataReader {
     fun read(text: String): Map<String, String> {
