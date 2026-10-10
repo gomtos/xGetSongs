@@ -11,12 +11,12 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // Two pages: the prototype (index.html) and the spike's debug page (spike.html).
+  // Two pages: the prototype (index.html) and the bridge check page (check.html).
   build: {
     rollupOptions: {
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
-        spike: fileURLToPath(new URL("./spike.html", import.meta.url)),
+        check: fileURLToPath(new URL("./check.html", import.meta.url)),
       },
     },
   },

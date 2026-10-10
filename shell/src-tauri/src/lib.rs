@@ -1,135 +1,149 @@
-use serde::Serialize;
+use serde_json::{json, Value};
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
-use tauri::{Manager, RunEvent};
-use xgs_sidecar::{http_get, job, Sidecar, SidecarConfig};
+use std::time::Duration;
+use tauri::ipc::Channel;
+use tauri::{Manager, RunEvent, State};
+use xgs_sidecar::{job, Bridge, BridgeError, Lifecycle, Sidecar, SidecarConfig};
 
-/// Where the sidecar is in its life. Starting takes seconds (a JVM), so it is not waited for on the UI thread.
-enum Phase {
-    Starting,
-    Ready { sidecar: Sidecar, ready_ms: u128 },
-    Failed(String),
-    Stopped,
+/// How long a call waits for a sidecar that is still starting. Starting itself gives up after [SIDECAR_START_LIMIT].
+const READY_WAIT: Duration = Duration::from_secs(90);
+const SIDECAR_START_LIMIT: Duration = Duration::from_secs(60);
+/// When the app closes: how long the sidecar gets to end by itself, and how long one that is still starting is waited for.
+const STOP_GRACE: Duration = Duration::from_secs(3);
+const STOP_START_WAIT: Duration = Duration::from_secs(10);
+
+/// Runs [call] once the sidecar is ready, on a thread meant for waiting: a call lasts as long as the sidecar works (a
+/// resolve takes as long as yt-dlp does), and the thread of the window must stay free.
+async fn with_bridge<T, F>(lifecycle: &Lifecycle, call: F) -> Result<T, BridgeError>
+where
+    T: Send + 'static,
+    F: FnOnce(Bridge) -> Result<T, BridgeError> + Send + 'static,
+{
+    let lifecycle = lifecycle.clone();
+    tauri::async_runtime::spawn_blocking(move || call(lifecycle.wait_ready(READY_WAIT)?))
+        .await
+        .map_err(|error| BridgeError::new(format!("내부 오류: {error}")))?
 }
 
-struct SidecarState(Mutex<Phase>);
-
-/// The sidecar's app data folder, where the spike leaves its result files for the scripted checks of the plan.
-struct SpikeFolder(PathBuf);
-
-/// What the page shows. The token is here for the spike's own checks (the direct-fetch demo, a curl by hand) only: the real
-/// bridge keeps it in Rust.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Probe {
-    port: u16,
-    token: String,
-    ready_ms: u128,
-    tools_ms: u128,
-    tools: String,
-}
-
-/// Asks the sidecar for its tools. `Err("starting")` until the sidecar has said it is ready.
+/// Resolves when the sidecar is ready, so the page can show "starting" until then.
 #[tauri::command]
-fn sidecar_probe(state: tauri::State<'_, SidecarState>) -> Result<Probe, String> {
-    let phase = state.0.lock().map_err(|_| "the state is poisoned".to_string())?;
-    match &*phase {
-        Phase::Starting => Err("starting".to_string()),
-        Phase::Failed(reason) => Err(reason.clone()),
-        Phase::Stopped => Err("stopped".to_string()),
-        Phase::Ready { sidecar, ready_ms } => {
-            let started = Instant::now();
-            let tools = http_get(&sidecar.handshake, "/tools")?;
-            Ok(Probe {
-                port: sidecar.handshake.port,
-                token: sidecar.handshake.token.clone(),
-                ready_ms: *ready_ms,
-                tools_ms: started.elapsed().as_millis(),
-                tools,
-            })
-        }
-    }
+async fn sidecar_ready(lifecycle: State<'_, Lifecycle>) -> Result<(), BridgeError> {
+    with_bridge(&lifecycle, |_| Ok(())).await
 }
 
-/// The page reports what it measured as one `key=value` line of `spike-record.txt`.
 #[tauri::command]
-fn spike_record(folder: tauri::State<'_, SpikeFolder>, key: String, value: String) -> Result<(), String> {
+async fn tools(lifecycle: State<'_, Lifecycle>) -> Result<Value, BridgeError> {
+    with_bridge(&lifecycle, |bridge| bridge.tools()).await
+}
+
+#[tauri::command]
+async fn install_yt_dlp(lifecycle: State<'_, Lifecycle>) -> Result<Value, BridgeError> {
+    with_bridge(&lifecycle, |bridge| bridge.install_yt_dlp()).await
+}
+
+#[tauri::command]
+async fn update_yt_dlp(lifecycle: State<'_, Lifecycle>) -> Result<Value, BridgeError> {
+    with_bridge(&lifecycle, |bridge| bridge.update_yt_dlp()).await
+}
+
+#[tauri::command]
+async fn resolve(lifecycle: State<'_, Lifecycle>, input: String) -> Result<Value, BridgeError> {
+    with_bridge(&lifecycle, move |bridge| bridge.resolve(&input)).await
+}
+
+#[tauri::command]
+async fn start_job(lifecycle: State<'_, Lifecycle>, request: Value) -> Result<Value, BridgeError> {
+    with_bridge(&lifecycle, move |bridge| bridge.start_job(&request)).await
+}
+
+#[tauri::command]
+async fn cancel_job(lifecycle: State<'_, Lifecycle>, job_id: String) -> Result<(), BridgeError> {
+    with_bridge(&lifecycle, move |bridge| bridge.cancel_job(&job_id)).await
+}
+
+/// Sends the events of the job to [on_event] as they come and resolves after `job-done`. It rejects when the stream fails
+/// (the server's `error` event, a cut connection) or when the page that listens is gone.
+#[tauri::command]
+async fn watch_job(
+    lifecycle: State<'_, Lifecycle>,
+    job_id: String,
+    on_event: Channel<Value>,
+) -> Result<(), BridgeError> {
+    with_bridge(&lifecycle, move |bridge| bridge.watch_job(&job_id, |event| on_event.send(event).is_ok())).await
+}
+
+/// Check mode is on when the check script names a file in `XGS_BRIDGE_CHECK_FILE`; a normal run has no such variable and
+/// the two commands below refuse.
+fn check_file() -> Result<std::path::PathBuf, String> {
+    std::env::var_os("XGS_BRIDGE_CHECK_FILE").map(Into::into).ok_or_else(|| "not in check mode".to_string())
+}
+
+/// The check page (`check.html`) reports what it saw as one `key=value` line of the check file.
+#[tauri::command]
+fn check_record(key: String, value: String) -> Result<(), String> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(folder.0.join("spike-record.txt"))
+        .open(check_file()?)
         .map_err(|error| error.to_string())?;
     writeln!(file, "{key}={}", value.replace(['\r', '\n'], " ")).map_err(|error| error.to_string())
 }
 
+/// Does nothing. The check page times how long a round trip to Rust takes while the sidecar starts: a window whose thread is
+/// busy answers late.
+#[tauri::command]
+fn check_ping() {}
+
+/// Sends [count] numbered progress events to [on_event] as fast as it can, to check the event path of the webview (order,
+/// loss, speed) without a download.
+#[tauri::command]
+async fn check_burst(count: u32, on_event: Channel<Value>) -> Result<(), String> {
+    check_file()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        for seq in 0..count {
+            let event = json!({"type":"progress","rank":1,"stage":"DOWNLOADING","percent":f64::from(seq % 100),"seq":seq});
+            on_event.send(event).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // First of all: whatever happens to this process, the sidecar and its children go with it.
-    let job_result = job::kill_children_when_this_process_ends();
+    // First of all: whatever happens to this process, the sidecar and its children go with it. (Whether this worked is not
+    // recorded anywhere yet; the sidecar also ends by itself when its stdin closes.)
+    let _ = job::kill_children_when_this_process_ends();
 
-    let folder = SidecarConfig::from_env()
-        .map(|config| config.app_data)
-        .unwrap_or_else(|_| std::env::temp_dir().join("xgs-spike-appdata"));
-    let _ = std::fs::create_dir_all(&folder);
-    // The results of an earlier run must not be mistaken for this one.
-    for stale in ["spike-ready.json", "spike-failed.txt", "spike-record.txt"] {
-        let _ = std::fs::remove_file(folder.join(stale));
-    }
-    let _ = std::fs::write(
-        folder.join("spike-job.txt"),
-        match &job_result {
-            Ok(()) => "ok".to_string(),
-            Err(reason) => format!("failed: {reason}"),
-        },
-    );
+    let config = SidecarConfig::from_env();
+    let lifecycle = Lifecycle::start(move || {
+        let config = config?;
+        Sidecar::spawn(config.command(), &config.stderr_log(), SIDECAR_START_LIMIT)
+    });
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(SidecarState(Mutex::new(Phase::Starting)))
-        .manage(SpikeFolder(folder))
-        .setup(|app| {
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let started = Instant::now();
-                let result = SidecarConfig::from_env().and_then(|config| {
-                    Sidecar::spawn(config.command(), &config.stderr_log(), Duration::from_secs(60))
-                });
-                let folder = handle.state::<SpikeFolder>().0.clone();
-                let phase = match result {
-                    Ok(sidecar) => {
-                        let ready_ms = started.elapsed().as_millis();
-                        let ready = format!(
-                            r#"{{"port":{},"token":"{}","readyMs":{}}}"#,
-                            sidecar.handshake.port, sidecar.handshake.token, ready_ms
-                        );
-                        let _ = std::fs::write(folder.join("spike-ready.json"), ready);
-                        Phase::Ready { sidecar, ready_ms }
-                    }
-                    Err(reason) => {
-                        let _ = std::fs::write(folder.join("spike-failed.txt"), &reason);
-                        Phase::Failed(reason)
-                    }
-                };
-                if let Ok(mut state) = handle.state::<SidecarState>().0.lock() {
-                    *state = phase;
-                }
-            });
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![sidecar_probe, spike_record])
+        .manage(lifecycle)
+        .invoke_handler(tauri::generate_handler![
+            sidecar_ready,
+            tools,
+            install_yt_dlp,
+            update_yt_dlp,
+            resolve,
+            start_job,
+            cancel_job,
+            watch_job,
+            check_record,
+            check_ping,
+            check_burst
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
-            let state = handle.state::<SidecarState>();
-            let mut phase = state.0.lock().unwrap();
-            if let Phase::Ready { sidecar, .. } = &mut *phase {
-                sidecar.shutdown(Duration::from_secs(3));
-            }
-            *phase = Phase::Stopped;
+            handle.state::<Lifecycle>().shutdown(STOP_GRACE, STOP_START_WAIT);
         }
     });
 }

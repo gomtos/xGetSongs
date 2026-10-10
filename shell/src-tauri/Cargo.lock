@@ -4738,6 +4738,8 @@ dependencies = [
 name = "xgs-sidecar"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "ureq",
  "win32job",
 ]
