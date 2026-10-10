@@ -135,7 +135,7 @@ class DefaultDownloadServiceTest {
 
         val progress = events.filterIsInstance<JobEvent.Progress>()
         assertEquals(JobEvent.Progress(1, Stage.DOWNLOADING, 50.0), progress.first())
-        assertEquals(JobEvent.Progress(1, Stage.CONVERTING, null), progress.last())
+        assertEquals(JobEvent.Progress(1, Stage.FINISHING, null), progress.last())
     }
 
     @Test
@@ -521,7 +521,7 @@ class DefaultDownloadServiceTest {
         assertEquals(
             listOf(
                 JobEvent.Progress(1, Stage.DOWNLOADING, 50.0),
-                JobEvent.Progress(1, Stage.CONVERTING, null),
+                JobEvent.Progress(1, Stage.FINISHING, null),
             ),
             events.filterIsInstance<JobEvent.Progress>(),
         )

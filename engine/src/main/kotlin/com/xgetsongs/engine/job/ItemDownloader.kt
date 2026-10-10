@@ -200,11 +200,11 @@ class ItemDownloader(
 
         fun accept(update: ProgressUpdate): Pair<Stage, Double?>? = when (update) {
             is ProgressUpdate.Converting -> {
-                if (stage == Stage.CONVERTING) {
+                if (stage == Stage.FINISHING) {
                     null
                 } else {
-                    stage = Stage.CONVERTING
-                    Stage.CONVERTING to null
+                    stage = Stage.FINISHING
+                    Stage.FINISHING to null
                 }
             }
             is ProgressUpdate.Downloading -> {

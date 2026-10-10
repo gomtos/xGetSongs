@@ -11,7 +11,7 @@ fun statusLabel(status: ItemStatus): String = when (status) {
     ItemStatus.Ready -> "준비됨"
     ItemStatus.Waiting -> "대기 중"
     is ItemStatus.Downloading -> status.percent?.let { "다운로드 ${it.toInt()}%" } ?: "다운로드 중…"
-    ItemStatus.Converting -> "mp3 변환 중…"
+    ItemStatus.Finishing -> "마무리 중…"
     is ItemStatus.Done -> doneLabel(status.lyrics)
     is ItemStatus.Skipped -> "건너뜀: ${status.reason}"
     is ItemStatus.Failed -> "실패: ${status.message}"

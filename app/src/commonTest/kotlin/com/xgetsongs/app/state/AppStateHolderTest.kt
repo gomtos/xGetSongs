@@ -979,9 +979,9 @@ class AppStateHolderTest {
         runCurrent()
         assertEquals(ItemStatus.Downloading(40.0), holder.row(1).status)
 
-        api.eventChannel.trySend(JobEvent.Progress(1, Stage.CONVERTING))
+        api.eventChannel.trySend(JobEvent.Progress(1, Stage.FINISHING))
         runCurrent()
-        assertEquals(ItemStatus.Converting, holder.row(1).status)
+        assertEquals(ItemStatus.Finishing, holder.row(1).status)
 
         api.eventChannel.trySend(JobEvent.ItemDone(1, "001 Real - Name.mp3"))
         api.eventChannel.trySend(JobEvent.ItemFailed(3, "boom"))
@@ -1309,9 +1309,9 @@ class AppStateHolderTest {
         holder.startDownload()
         runCurrent()
         api.eventChannel.trySend(JobEvent.ItemStarted(1, "vid00000001", "001 A1 - T1.mp3"))
-        api.eventChannel.trySend(JobEvent.Progress(1, Stage.CONVERTING))
+        api.eventChannel.trySend(JobEvent.Progress(1, Stage.FINISHING))
         runCurrent()
-        assertEquals(ItemStatus.Converting, holder.row(1).status)
+        assertEquals(ItemStatus.Finishing, holder.row(1).status)
 
         api.eventChannel.close()
         runCurrent()

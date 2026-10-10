@@ -384,7 +384,7 @@ class AppStateHolder(
      * rows go back to [ItemStatus.Ready]. Finished, skipped and failed rows keep their result.
      */
     private fun resetTransient(row: ItemRow): ItemRow = when (row.status) {
-        ItemStatus.Waiting, is ItemStatus.Downloading, ItemStatus.Converting -> row.copy(status = ItemStatus.Ready)
+        ItemStatus.Waiting, is ItemStatus.Downloading, ItemStatus.Finishing -> row.copy(status = ItemStatus.Ready)
         else -> row
     }
 
@@ -395,7 +395,7 @@ class AppStateHolder(
             it.copy(
                 status = when (event.stage) {
                     Stage.DOWNLOADING -> ItemStatus.Downloading(event.percent)
-                    Stage.CONVERTING -> ItemStatus.Converting
+                    Stage.FINISHING -> ItemStatus.Finishing
                 },
             )
         }

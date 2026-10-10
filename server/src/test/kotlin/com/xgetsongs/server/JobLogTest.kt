@@ -50,7 +50,7 @@ class JobLogTest {
     @Test
     fun progressIsNotLogged() {
         assertNull(JobLog.describe(JobEvent.Progress(1, Stage.DOWNLOADING, 42.0)))
-        assertNull(JobLog.describe(JobEvent.Progress(1, Stage.CONVERTING, null)))
+        assertNull(JobLog.describe(JobEvent.Progress(1, Stage.FINISHING, null)))
     }
 
     @Test

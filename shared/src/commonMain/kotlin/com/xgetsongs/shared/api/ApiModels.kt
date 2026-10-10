@@ -87,8 +87,9 @@ data class JobRequest(
 @Serializable
 data class JobCreated(val jobId: String)
 
+/** What an item is doing: [DOWNLOADING] the audio, then [FINISHING] it (writing the tags, the cover and the lyrics). */
 @Serializable
-enum class Stage { DOWNLOADING, CONVERTING }
+enum class Stage { DOWNLOADING, FINISHING }
 
 @Serializable
 enum class JobStatus { COMPLETED, CANCELLED, FAILED }

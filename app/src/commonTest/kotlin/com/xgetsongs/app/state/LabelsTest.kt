@@ -20,7 +20,7 @@ class LabelsTest {
         assertEquals("대기 중", statusLabel(ItemStatus.Waiting))
         assertEquals("다운로드 중…", statusLabel(ItemStatus.Downloading(null)))
         assertEquals("다운로드 42%", statusLabel(ItemStatus.Downloading(42.9)))
-        assertEquals("mp3 변환 중…", statusLabel(ItemStatus.Converting))
+        assertEquals("마무리 중…", statusLabel(ItemStatus.Finishing))
         assertEquals("완료", statusLabel(ItemStatus.Done()))
         assertEquals("건너뜀: 비공개 영상", statusLabel(ItemStatus.Skipped("비공개 영상")))
         assertEquals("실패: boom", statusLabel(ItemStatus.Failed("boom")))

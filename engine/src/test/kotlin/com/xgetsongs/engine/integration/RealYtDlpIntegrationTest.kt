@@ -248,8 +248,8 @@ class RealYtDlpIntegrationTest {
                 println("reported stages: ${stages.fold(emptyList<Stage>()) { all, next -> if (all.lastOrNull() == next) all else all + next }}")
                 val firstDownloading = stages.indexOf(Stage.DOWNLOADING)
                 assertTrue(firstDownloading >= 0, "no download progress was reported: $stages")
-                assertTrue(Stage.CONVERTING !in stages.take(firstDownloading), "converting was reported before the download: $stages")
-                assertTrue(Stage.CONVERTING in stages, "the audio conversion must still be reported: $stages")
+                assertTrue(Stage.FINISHING !in stages.take(firstDownloading), "converting was reported before the download: $stages")
+                assertTrue(Stage.FINISHING in stages, "the audio conversion must still be reported: $stages")
 
                 val probed = ffprobe.probe(file)
                 // Never print a lyrics tag: if the lookup wrongly found lyrics, they must not end up in the log.

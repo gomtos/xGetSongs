@@ -16,7 +16,7 @@ sealed interface ItemStatus {
     data object Waiting : ItemStatus
 
     data class Downloading(val percent: Double?) : ItemStatus
-    data object Converting : ItemStatus
+    data object Finishing : ItemStatus
 
     /** [lyrics] is what the finished file got as lyrics (or why it got none); null when the server did not say. */
     data class Done(val lyrics: LyricsOutcome? = null) : ItemStatus

@@ -17,7 +17,7 @@ class ApiModelsTest {
         val events = listOf(
             JobEvent.ItemStarted(1, "abc", "001 A - B.mp3"),
             JobEvent.Progress(1, Stage.DOWNLOADING, 42.5),
-            JobEvent.Progress(1, Stage.CONVERTING),
+            JobEvent.Progress(1, Stage.FINISHING),
             JobEvent.ItemDone(1, "001 A - B.mp3"),
             JobEvent.ItemSkipped(2, "이미 존재"),
             JobEvent.ItemFailed(3, "boom"),
