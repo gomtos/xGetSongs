@@ -27,6 +27,14 @@ class LabelsTest {
     }
 
     @Test
+    fun theFormatFailureHelpNamesTheFailureTheUpdateButtonByItsRealLabelAndTheJsRuntimes() {
+        assertTrue("“m4a 오디오 형식이 없습니다.”" in FORMAT_FAILURE_HELP)
+        assertTrue("앱 위쪽의 $UPDATE_YT_DLP_LABEL 버튼" in FORMAT_FAILURE_HELP)
+        assertTrue("JavaScript 런타임(Node.js, Deno)" in FORMAT_FAILURE_HELP)
+        assertTrue("Node.js 22+ 또는 Deno 2.3+" in FORMAT_FAILURE_HELP)
+    }
+
+    @Test
     fun aFinishedRowSaysWhereItsLyricsCameFromOrWhyItHasNone() {
         assertEquals("완료", statusLabel(ItemStatus.Done(null)))
         assertEquals("완료 · 가사 ✓ 설명란", statusLabel(ItemStatus.Done(LyricsOutcome.DESCRIPTION)))

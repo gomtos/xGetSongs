@@ -6,6 +6,18 @@ import com.xgetsongs.shared.api.LyricsOutcome
 import com.xgetsongs.shared.filename.FilenameFormatter
 import kotlin.time.Duration
 
+/** The label of the button that updates yt-dlp; [FORMAT_FAILURE_HELP] points to it by this name. */
+const val UPDATE_YT_DLP_LABEL = "yt-dlp 업데이트"
+
+/**
+ * The help behind the `?` button of the tools panel. "m4a 오디오 형식이 없습니다." (the engine's message) is also what an
+ * outdated yt-dlp or a broken JavaScript runtime makes every song fail with, so the user is told to check those first.
+ */
+const val FORMAT_FAILURE_HELP =
+    "재생목록의 모든 곡이 “m4a 오디오 형식이 없습니다.”로 실패하면 영상 문제가 아니라 yt-dlp가 낡았거나 " +
+        "JavaScript 런타임(Node.js, Deno)에 문제가 있는 것일 수 있습니다. 앱 위쪽의 $UPDATE_YT_DLP_LABEL 버튼으로 " +
+        "최신 버전으로 바꾸고 Node.js 22+ 또는 Deno 2.3+가 설치돼 있는지 확인한 뒤 다시 받으세요."
+
 /** The text shown in an item's status cell. */
 fun statusLabel(status: ItemStatus): String = when (status) {
     ItemStatus.Ready -> "준비됨"
