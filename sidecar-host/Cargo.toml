@@ -1,0 +1,12 @@
+[package]
+name = "xgs-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "Starts, talks to and stops the Kotlin sidecar of xGetSongs. No Tauri here, so its tests build fast."
+
+[dependencies]
+# Plain HTTP to 127.0.0.1 only: no TLS needed.
+ureq = { version = "2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+win32job = "2"
