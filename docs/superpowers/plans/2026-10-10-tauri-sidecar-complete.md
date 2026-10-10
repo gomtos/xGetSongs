@@ -1630,7 +1630,7 @@ val sidecarImageTest by tasks.registering(Test::class) {
 - [ ] **Step 4: 통과하는 것을 확인한다 (GREEN)**
 
 Run: `.\gradlew.bat :server:sidecarImageTest --no-daemon`
-Expected: PASS — `SidecarImageTest` 2개. `server\build\sidecar-image\lib`에 jar가 77개(`installDist`의 81개에서 다른 OS의 네이티브 4개가 빠진다), `runtime\bin\java.exe`가 있다. 로그에서 `passed`가 두 줄 보인다.
+Expected: PASS — `SidecarImageTest` 2개. `server\build\sidecar-image\lib`에 jar가 78개(스파이크 때 `installDist`의 81개에서 다른 OS의 네이티브 4개가 빠지고 `diagnostics.jar` 하나가 더해졌다), `runtime\bin\java.exe`가 있다. 로그에서 `passed`가 두 줄 보인다.
 
 Run: `.\gradlew.bat :server:test --no-daemon`
 Expected: PASS — `SidecarImageTest`는 건너뛴다(`image` 태그). 나머지 테스트 전부 통과.
@@ -1643,7 +1643,7 @@ Expected: PASS — `SidecarImageTest`는 건너뛴다(`image` 태그). 나머지
 "{0:N1} MB  runtime" -f ((Get-ChildItem server\build\sidecar-image\runtime -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
 ```
 
-Expected: lib가 스파이크 때(76.8MB, 81개)보다 약 9.7MB 작다(약 67MB, 77개). runtime은 약 92MB다. 값을 Task 7의 보고서에 적는다.
+Expected: lib가 스파이크 때(76.8MB, 81개)보다 약 9.6MB 작다(67.2MB, 78개). runtime은 약 92MB(91.9MB), 이미지 전체는 약 159MB다. 값을 Task 7의 보고서에 적는다.
 
 - [ ] **Step 6: Commit**
 
