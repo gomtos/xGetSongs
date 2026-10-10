@@ -1,5 +1,5 @@
 use crate::handshake::{parse_handshake, Handshake};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Sender};
@@ -52,9 +52,14 @@ impl Sidecar {
         }
     }
 
-    /// Ends the sidecar: closing its stdin is the request to stop, and after [grace] it is killed together with whatever it
-    /// started. Returns true when it ended on its own.
+    /// Ends the sidecar: the user asked for it, so an `exit` line is written before stdin is closed (a pipe that only
+    /// closes tells the sidecar that the shell is gone), and after [grace] it is killed together with whatever it started.
+    /// Returns true when it ended on its own.
     pub fn shutdown(&mut self, grace: Duration) -> bool {
+        if let Some(stdin) = self.stdin.as_mut() {
+            let _ = stdin.write_all(b"exit\n");
+            let _ = stdin.flush();
+        }
         drop(self.stdin.take());
         let deadline = Instant::now() + grace;
         loop {
@@ -233,5 +238,50 @@ mod tests {
         .unwrap();
 
         assert!(error.contains("could not start"), "{error}");
+    }
+
+    /// Waits for [path] to hold something and returns it (the stand-in writes it just before it ends).
+    fn read_when_written(path: &PathBuf) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            let content = std::fs::read_to_string(path).unwrap_or_default();
+            if !content.is_empty() {
+                return content;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        String::new()
+    }
+
+    #[test]
+    fn shutdown_tells_the_sidecar_that_the_user_asked_for_the_end() {
+        let result = log_path("exit-line");
+        let _ = std::fs::remove_file(&result);
+        let script = format!(
+            "{READY} $line = [Console]::In.ReadLine(); [IO.File]::WriteAllText('{}', [string]$line)",
+            result.display()
+        );
+        let mut sidecar = Sidecar::spawn(powershell(&script), &log_path("exit-line-err"), Duration::from_secs(30)).unwrap();
+
+        assert!(sidecar.shutdown(Duration::from_secs(10)));
+
+        assert_eq!(read_when_written(&result), "exit");
+        let _ = std::fs::remove_file(&result);
+    }
+
+    #[test]
+    fn a_dropped_sidecar_closes_its_stdin_without_an_exit_line() {
+        let result = log_path("dropped");
+        let _ = std::fs::remove_file(&result);
+        let script = format!(
+            "{READY} $line = [Console]::In.ReadLine(); if ($null -eq $line) {{ $line = 'eof' }}; [IO.File]::WriteAllText('{}', [string]$line)",
+            result.display()
+        );
+        let sidecar = Sidecar::spawn(powershell(&script), &log_path("dropped-err"), Duration::from_secs(30)).unwrap();
+
+        drop(sidecar); // the shell is gone: the pipe closes and nobody wrote an exit line
+
+        assert_eq!(read_when_written(&result), "eof");
+        let _ = std::fs::remove_file(&result);
     }
 }
