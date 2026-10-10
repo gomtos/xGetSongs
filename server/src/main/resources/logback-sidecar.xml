@@ -1,15 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The sidecar's logging, chosen by -Dlogback.configurationFile=logback-sidecar.xml in the start script. stdout carries the
-  handshake line, so everything goes to stderr. The Compose app has its own logback.xml; this file has another name so
-  that the two never compete on one class path.
+  The sidecar's logging, chosen by -Dlogback.configurationFile=logback-sidecar.xml in the start script. The folder comes from
+  the system property xgs.logDir, which the sidecar sets before anything asks for a logger (logback reads this file the first
+  time that happens). stdout carries the handshake line, so the console is stderr. The Compose app has its own logback.xml;
+  this file has another name so that the two never compete on one class path.
 -->
 <configuration>
-    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+    <property name="LOG_DIR" value="${xgs.logDir:-${java.io.tmpdir}/xgetsongs-logs}"/>
+
+    <!-- The console shows INFO and above only; DEBUG lines go to the file alone. -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <target>System.err</target>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
         <encoder>
             <charset>UTF-8</charset>
             <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Every line is flushed at once, so a crash or a kill does not lose the last lines. -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/xgetsongs.log</file>
+        <immediateFlush>true</immediateFlush>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/xgetsongs.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>5MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>50MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <charset>UTF-8</charset>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -17,7 +40,9 @@
     <logger name="io.ktor" level="INFO"/>
     <logger name="com.xgetsongs" level="DEBUG"/>
 
+    <!-- The file comes first: a console that blocks (a full pipe) must not delay the write to the file. -->
     <root level="INFO">
-        <appender-ref ref="STDERR"/>
+        <appender-ref ref="FILE"/>
+        <appender-ref ref="CONSOLE"/>
     </root>
 </configuration>

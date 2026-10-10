@@ -17,6 +17,7 @@ kotlin {
 
 dependencies {
     api(project(":engine"))
+    implementation(project(":diagnostics"))
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.content.negotiation)
