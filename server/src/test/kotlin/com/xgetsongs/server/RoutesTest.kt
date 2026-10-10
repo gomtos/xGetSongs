@@ -146,7 +146,7 @@ class RoutesTest {
 
         client.startJob(JobRequest(resolved.resolveId, options()))
 
-        assertEquals(DownloadConcurrency.automatic(), fakes.downloads.requests.single().concurrency, "one item per core of this machine")
+        assertEquals(DownloadConcurrency.automatic(), fakes.downloads.requests.single().concurrency, "85% of the cores of this machine")
     }
 
     @Test
