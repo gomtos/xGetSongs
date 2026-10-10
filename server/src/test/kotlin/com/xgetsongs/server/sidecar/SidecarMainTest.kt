@@ -90,4 +90,51 @@ class SidecarMainTest {
         assertTrue("IllegalStateException" in err(), err())
         assertEquals("", out(), "no handshake for a server that is not there")
     }
+
+    @Test
+    fun anExitLineFromTheShellStopsTheServerAndIsReportedAsTheUsers() {
+        val appData = Files.createTempDirectory("xgs-sidecar").resolve("data")
+        val parentWriter = PipedOutputStream()
+        val asked = LinkedBlockingQueue<Boolean>()
+
+        runSidecar(
+            arrayOf("--app-data", appData.toString()),
+            PipedInputStream(parentWriter),
+            PrintStream(stdout, true, "UTF-8"),
+            PrintStream(stderr, true, "UTF-8"),
+            startServer = { LocalServer.start(fakes.services) },
+            onParentGone = { asked.put(it) },
+            exit = { exits.put(it) },
+        )
+        val port = out().lines().first { it.isNotBlank() }.split(' ')[1].toInt()
+
+        parentWriter.write("exit\n".toByteArray())
+        parentWriter.flush() // the pipe stays open: the line alone ends it
+
+        assertEquals(true, asked.poll(30, TimeUnit.SECONDS))
+        assertEquals(0, exits.poll(30, TimeUnit.SECONDS))
+        assertFailsWith<ConnectException> { Socket("127.0.0.1", port).close() }
+    }
+
+    @Test
+    fun aClosedPipeWithoutAnExitLineIsReportedAsNotAskedFor() {
+        val appData = Files.createTempDirectory("xgs-sidecar").resolve("data")
+        val parentWriter = PipedOutputStream()
+        val asked = LinkedBlockingQueue<Boolean>()
+
+        runSidecar(
+            arrayOf("--app-data", appData.toString()),
+            PipedInputStream(parentWriter),
+            PrintStream(stdout, true, "UTF-8"),
+            PrintStream(stderr, true, "UTF-8"),
+            startServer = { LocalServer.start(fakes.services) },
+            onParentGone = { asked.put(it) },
+            exit = { exits.put(it) },
+        )
+
+        parentWriter.close()
+
+        assertEquals(false, asked.poll(30, TimeUnit.SECONDS))
+        assertEquals(0, exits.poll(30, TimeUnit.SECONDS))
+    }
 }

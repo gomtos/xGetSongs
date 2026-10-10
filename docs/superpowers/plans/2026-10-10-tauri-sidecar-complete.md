@@ -832,7 +832,11 @@ internal fun runSidecar(
     }.start()
 ```
 
-`main`은 이 Task에서 그대로 둔다(`runSidecar(...)?.join()` 호출이 그대로 컴파일된다. 마지막 인자가 후행 람다 `{ exitProcess(it) }`이므로 `onParentGone`은 기본값을 쓴다).
+`main`에서 `runSidecar`를 부르는 줄은 `exit`를 이름 인자로 넘기게 바꾼다(`main`이 두 람다를 위치 인자로 넘기는데, 새 `onParentGone`이 여섯 번째 자리를 차지해서 그대로 두면 `exit`가 비고 컴파일되지 않는다). Task 4가 이 줄을 다시 쓴다:
+
+```kotlin
+    runSidecar(args, System.`in`, System.out, System.err, { LocalServer.start(it) }, exit = { exitProcess(it) })?.join()
+```
 
 - [ ] **Step 4: 통과하는 것을 확인한다 (GREEN)**
 

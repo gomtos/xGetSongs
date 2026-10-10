@@ -12,7 +12,8 @@ import kotlin.system.exitProcess
 
 /**
  * Starts the server for the shell that owns this process: tells it where the server is on stdout, and stops when
- * [stdin] ends. [exit] ends the process; the tests pass a recorder, so this function returns after it.
+ * [stdin] ends or carries an `exit` line. [onParentGone] is told whether the shell asked for the end (the `exit` line)
+ * before the server is stopped. [exit] ends the process; the tests pass a recorder, so this function returns after it.
  *
  * Returns the thread that watches [stdin], or null when the sidecar did not start. The caller has to wait for that thread:
  * the server's own threads are daemons, so nothing else would keep the JVM from shutting down (and taking the server with
@@ -24,6 +25,7 @@ internal fun runSidecar(
     stdout: PrintStream,
     stderr: PrintStream,
     startServer: (Path) -> LocalServer,
+    onParentGone: (userRequested: Boolean) -> Unit = {},
     exit: (Int) -> Unit,
 ): Thread? {
     val parsed = SidecarArgs.parse(args)
@@ -42,7 +44,8 @@ internal fun runSidecar(
     }
     stdout.println(Handshake.line(server.port, server.token))
     stdout.flush()
-    return ParentWatch(stdin) {
+    return ParentWatch(stdin) { userRequested ->
+        onParentGone(userRequested)
         server.stop()
         exit(0)
     }.start()
@@ -50,5 +53,5 @@ internal fun runSidecar(
 
 fun main(args: Array<String>) {
     // Waiting for the watching thread keeps the JVM alive until the parent is gone; that thread ends the process itself.
-    runSidecar(args, System.`in`, System.out, System.err, { LocalServer.start(it) }, { exitProcess(it) })?.join()
+    runSidecar(args, System.`in`, System.out, System.err, { LocalServer.start(it) }, exit = { exitProcess(it) })?.join()
 }

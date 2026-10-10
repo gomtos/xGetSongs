@@ -5,20 +5,34 @@ import java.io.InputStream
 import kotlin.concurrent.thread
 
 /**
- * Calls [onGone] once when [input] ends or fails. The shell that owns the other end of the sidecar's stdin closes it to ask
- * the sidecar to stop, and the operating system closes it when the shell dies, so this one signal covers both.
+ * Tells once that the shell that owns the other end of the sidecar's stdin is gone, and whether it asked for that.
+ *
+ * The shell writes a line `exit` when the user closes the window; that line alone ends the watch (`onGone(true)`). When the
+ * stream just ends or fails without it, the shell died or was killed and the operating system closed the pipe
+ * (`onGone(false)`). The exit record of the log tells the two apart by this.
  */
-class ParentWatch(private val input: InputStream, private val onGone: () -> Unit) {
+class ParentWatch(private val input: InputStream, private val onGone: (userRequested: Boolean) -> Unit) {
     /** Starts the watching thread. It is a daemon: it never keeps the JVM alive. */
     fun start(): Thread = thread(name = "parent-watch", isDaemon = true) {
-        val buffer = ByteArray(256)
+        var userRequested = false
         try {
-            while (input.read(buffer) != -1) {
-                // What the shell writes is not interpreted: only the end of the stream matters.
+            val reader = input.bufferedReader(Charsets.UTF_8)
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.trim() == EXIT_LINE) {
+                    userRequested = true
+                    break
+                }
+                // Any other line is not interpreted: only the exit line and the end of the stream matter.
             }
         } catch (e: IOException) {
             // A stream that fails is as good as one that ended.
         }
-        onGone()
+        onGone(userRequested)
+    }
+
+    companion object {
+        /** The line the shell writes before it closes the pipe when the user asked for the end. */
+        const val EXIT_LINE = "exit"
     }
 }
