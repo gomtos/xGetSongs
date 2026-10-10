@@ -52,6 +52,18 @@ internal fun runSidecar(
 }
 
 fun main(args: Array<String>) {
+    // The arguments are read first, without a logger: logback learns the log folder from them (see SidecarDiagnostics).
+    val diagnostics = SidecarArgs.parse(args)?.let { SidecarDiagnostics.start(it) }
     // Waiting for the watching thread keeps the JVM alive until the parent is gone; that thread ends the process itself.
-    runSidecar(args, System.`in`, System.out, System.err, { LocalServer.start(it) }, exit = { exitProcess(it) })?.join()
+    runSidecar(
+        args, System.`in`, System.out, System.err,
+        startServer = { appData ->
+            LocalServer.start(appData).also { server -> diagnostics?.runningJobs = server::runningJobs }
+        },
+        onParentGone = { userRequested -> if (userRequested) diagnostics?.markUserExit() },
+        exit = { code ->
+            diagnostics?.stop()
+            exitProcess(code)
+        },
+    )?.join()
 }
