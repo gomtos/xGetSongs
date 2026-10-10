@@ -644,7 +644,7 @@ git commit -m "feat(shell): 프로토타입의 화면 문구와 가짜 목록·�
     <div id="app">
       <section id="tools" class="card" aria-label="외부 도구"></section>
 
-      <form id="input-form" class="row-flex">
+      <form id="input-form" class="row-flex align-end">
         <label class="field grow">
           <span class="field-label">재생목록 ID 또는 영상 주소</span>
           <input id="input" type="text" autocomplete="off" spellcheck="false" />
@@ -661,7 +661,7 @@ git commit -m "feat(shell): 프로토타입의 화면 문구와 가짜 목록·�
         <h2 id="info-title"></h2>
 
         <fieldset id="options" class="options">
-          <div class="row-flex">
+          <div class="row-flex align-end">
             <label class="field grow">
               <span class="field-label">출력 폴더</span>
               <input id="output-dir" type="text" value="C:\Users\사용자\Music\xGetSongs" spellcheck="false" />
@@ -768,6 +768,11 @@ p {
   gap: 8px;
 }
 
+/* A text box with a label above it next to a button: the button lines up with the box, not with the label and box together. */
+.align-end {
+  align-items: flex-end;
+}
+
 .grow {
   flex: 1;
   min-width: 0;
@@ -803,7 +808,8 @@ input[type="text"] {
 }
 
 button {
-  padding: 5px 14px;
+  /* The same height as a text box (6px padding and a 1px border), so a button next to one lines up with it. */
+  padding: 6px 14px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: ButtonFace;

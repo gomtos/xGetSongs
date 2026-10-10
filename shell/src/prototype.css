@@ -63,6 +63,11 @@ p {
   gap: 8px;
 }
 
+/* A text box with a label above it next to a button: the button lines up with the box, not with the label and box together. */
+.align-end {
+  align-items: flex-end;
+}
+
 .grow {
   flex: 1;
   min-width: 0;
@@ -98,7 +103,8 @@ input[type="text"] {
 }
 
 button {
-  padding: 5px 14px;
+  /* The same height as a text box (6px padding and a 1px border), so a button next to one lines up with it. */
+  padding: 6px 14px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: ButtonFace;
