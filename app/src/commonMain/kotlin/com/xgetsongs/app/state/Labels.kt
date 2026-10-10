@@ -10,7 +10,7 @@ import kotlin.time.Duration
 const val UPDATE_YT_DLP_LABEL = "yt-dlp 업데이트"
 
 /**
- * The help behind the `?` button of the tools panel. "m4a 오디오 형식이 없습니다." (the engine's message) is also what an
+ * The help shown next to the update button of the tools panel. "m4a 오디오 형식이 없습니다." (the engine's message) is also what an
  * outdated yt-dlp or a broken JavaScript runtime makes every song fail with, so the user is told to check those first.
  */
 const val FORMAT_FAILURE_HELP =

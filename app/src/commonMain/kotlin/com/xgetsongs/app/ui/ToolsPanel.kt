@@ -30,7 +30,6 @@ import com.xgetsongs.shared.api.ToolInfo
 @Composable
 fun ToolsPanel(state: UiState, onInstall: () -> Unit, onUpdate: () -> Unit) {
     var confirmInstall by remember { mutableStateOf(false) }
-    var showFormatHelp by remember { mutableStateOf(false) }
     val tools = state.tools
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -43,15 +42,20 @@ fun ToolsPanel(state: UiState, onInstall: () -> Unit, onUpdate: () -> Unit) {
                     ToolStatus("ffmpeg", tools.ffmpeg)
                     ToolStatus("JS 런타임", tools.jsRuntime)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (!tools.ytDlp.found) {
                         Button(enabled = !state.toolBusy, onClick = { confirmInstall = true }) { Text("yt-dlp 설치") }
                     } else {
                         OutlinedButton(enabled = !state.toolBusy && state.phase != Phase.RUNNING, onClick = onUpdate) {
                             Text(UPDATE_YT_DLP_LABEL)
                         }
+                        Text(
+                            FORMAT_FAILURE_HELP,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
-                    TextButton(onClick = { showFormatHelp = true }) { Text("?") }
                 }
                 if (!tools.ffmpeg.found) {
                     Text(
@@ -71,15 +75,6 @@ fun ToolsPanel(state: UiState, onInstall: () -> Unit, onUpdate: () -> Unit) {
             if (state.toolBusy) Text("작업 중…", style = MaterialTheme.typography.bodySmall)
             state.toolMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
-    }
-
-    if (showFormatHelp) {
-        AlertDialog(
-            onDismissRequest = { showFormatHelp = false },
-            title = { Text("모든 곡이 “m4a 오디오 형식이 없습니다.”로 실패할 때") },
-            text = { Text(FORMAT_FAILURE_HELP) },
-            confirmButton = { TextButton(onClick = { showFormatHelp = false }) { Text("확인") } },
-        )
     }
 
     if (confirmInstall) {
