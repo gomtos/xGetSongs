@@ -1,43 +1,65 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
+    <meta name="color-scheme" content="light dark" />
+    <title>xGetSongs</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
-
   <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
+    <div id="app">
+      <section id="tools" class="card" aria-label="외부 도구"></section>
 
-      <div class="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/src/assets/vite.svg" class="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img
-            src="/src/assets/tauri.svg"
-            class="logo tauri"
-            alt="Tauri logo"
-          />
-        </a>
-        <a href="https://www.typescriptlang.org/docs" target="_blank">
-          <img
-            src="/src/assets/typescript.svg"
-            class="logo typescript"
-            alt="typescript logo"
-          />
-        </a>
-      </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
-
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
+      <form id="input-form" class="row-flex">
+        <label class="field grow">
+          <span class="field-label">재생목록 ID 또는 영상 주소</span>
+          <input id="input" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <button id="resolve" type="submit" class="primary" disabled>조회</button>
       </form>
-      <p id="greet-msg"></p>
-    </main>
+
+      <div id="error" class="error-banner" role="alert" hidden>
+        <span id="error-text" class="grow"></span>
+        <button id="error-close" type="button">닫기</button>
+      </div>
+
+      <section id="resolved" class="resolved" hidden>
+        <h2 id="info-title"></h2>
+
+        <fieldset id="options" class="options">
+          <div class="row-flex">
+            <label class="field grow">
+              <span class="field-label">출력 폴더</span>
+              <input id="output-dir" type="text" value="C:\Users\사용자\Music\xGetSongs" spellcheck="false" />
+            </label>
+            <button id="pick-folder" type="button">폴더 선택</button>
+          </div>
+          <div class="row-flex">
+            <span id="destination" class="small grow ellipsis"></span>
+            <button id="open-folder" type="button" class="small-button">탐색기에서 보기</button>
+          </div>
+          <label class="field">
+            <span class="field-label">앨범명 (폴더명)</span>
+            <input id="album" type="text" />
+            <span class="hint">저장 폴더 이름과 앨범 태그가 모두 이 이름입니다. 비우면 재생목록 제목(영상 1개는 폴더 없이 영상 자체의 앨범)</span>
+          </label>
+          <div class="checks">
+            <label class="check"><input id="opt-overwrite" type="checkbox" /> 기존 파일 덮어쓰기</label>
+            <label class="check"><input id="opt-rank" type="checkbox" checked /> 파일명에 순번 포함</label>
+            <label class="check"><input id="opt-lyrics" type="checkbox" checked /> 가사가 없으면 인터넷에서 검색</label>
+          </div>
+          <div class="row-flex">
+            <span class="concurrency-label">동시 다운로드</span>
+            <span>코어 수의 70% (자동)</span>
+          </div>
+        </fieldset>
+
+        <ul id="list" class="list" aria-label="곡 목록"></ul>
+        <div id="actions" class="row-flex actions"></div>
+      </section>
+    </div>
+
+    <nav id="dev" class="dev" aria-label="프로토타입 상태 전환"></nav>
   </body>
 </html>

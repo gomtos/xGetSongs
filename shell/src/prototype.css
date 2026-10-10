@@ -1,0 +1,324 @@
+/*
+  The look is the operating system's: its fonts, its light or dark setting (color-scheme), its accent colour, and the
+  browser's own form controls. There is no design system here on purpose.
+*/
+:root {
+  color-scheme: light dark;
+  --muted: color-mix(in srgb, CanvasText 62%, transparent);
+  --line: color-mix(in srgb, CanvasText 16%, transparent);
+  --card: color-mix(in srgb, CanvasText 4%, Canvas);
+  --error: #c42b1c;
+  --warn: #9d5d00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --error: #ff99a4;
+    --warn: #fce100;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+  font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  padding: 16px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+}
+
+/* ---- layout helpers ---- */
+.row-flex {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.small {
+  font-size: 12px;
+}
+
+.muted,
+.hint {
+  color: var(--muted);
+}
+
+.hint {
+  font-size: 12px;
+}
+
+.bad {
+  color: var(--error);
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- controls ---- */
+button,
+input[type="text"] {
+  font: inherit;
+}
+
+button {
+  padding: 5px 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: ButtonFace;
+  color: ButtonText;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled) {
+  background: color-mix(in srgb, ButtonFace 88%, CanvasText);
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+button.primary {
+  border-color: transparent;
+  background: Highlight;
+  background: AccentColor;
+  color: HighlightText;
+  color: AccentColorText;
+}
+
+button.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+button.small-button {
+  padding: 2px 12px;
+  font-size: 12px;
+}
+
+:focus-visible {
+  outline: 2px solid Highlight;
+  outline: 2px solid AccentColor;
+  outline-offset: 2px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-bottom-color: color-mix(in srgb, CanvasText 45%, transparent);
+  border-radius: 4px;
+  background: Field;
+  color: FieldText;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  padding-bottom: 5px;
+  border-bottom: 2px solid Highlight;
+  border-bottom: 2px solid AccentColor;
+}
+
+input[type="text"]:disabled {
+  opacity: 0.6;
+}
+
+input[type="checkbox"] {
+  accent-color: AccentColor;
+}
+
+fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* ---- sections ---- */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.tool-line {
+  display: flex;
+  gap: 16px;
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--error);
+}
+
+.resolved {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 16px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.concurrency-label {
+  min-width: 100px;
+}
+
+/* ---- the list ---- */
+.list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 40px 1fr 220px;
+  gap: 12px;
+  align-items: center;
+}
+
+.rank {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.file,
+.label {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.label {
+  font-size: 12px;
+}
+
+.label.failed {
+  color: var(--error);
+}
+
+.item.unavailable .file {
+  color: var(--muted);
+}
+
+.warn {
+  display: block;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+progress {
+  width: 100%;
+  height: 4px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 2px;
+  appearance: none;
+  background: var(--line);
+}
+
+progress::-webkit-progress-bar {
+  border-radius: 2px;
+  background: var(--line);
+}
+
+progress::-webkit-progress-value {
+  border-radius: 2px;
+  background: Highlight;
+  background: AccentColor;
+}
+
+.actions .summary {
+  margin-right: 4px;
+}
+
+/* ---- the bar that switches the prototype between states (F2 hides it) ---- */
+.dev {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: Canvas;
+  opacity: 0.92;
+}
