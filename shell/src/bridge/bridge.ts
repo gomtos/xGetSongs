@@ -58,7 +58,8 @@ export function createBridge(deps: BridgeDeps) {
 
     /**
      * Calls [onEvent] with each event of the job, in order, and resolves after `job-done` has been delivered. Rejects with the
-     * server's message when it sends an `error` event, and when the connection is lost before `job-done`.
+     * server's message when it sends an `error` event, and when the connection is lost before `job-done`. An exception of
+     * [onEvent] is logged with `console.error` and does not stop the events after it.
      */
     watchJob(jobId: string, onEvent: (event: JobEvent) => void): Promise<void> {
       const channel = deps.channel<JobEvent>();
@@ -67,7 +68,13 @@ export function createBridge(deps: BridgeDeps) {
         delivered = resolve;
       });
       channel.onmessage = (event) => {
-        onEvent(event);
+        // A handler that throws makes Tauri's Channel stop delivering for good (it counts a message as handled only when
+        // the handler returns), so the listener's failure is reported here and the events after it still come.
+        try {
+          onEvent(event);
+        } catch (error) {
+          console.error("watchJob: the listener threw", error);
+        }
         if (event.type === "job-done") delivered();
       };
       // The command ends after the last event was sent, but the page may still be handling it: wait for `job-done`.

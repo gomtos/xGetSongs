@@ -65,6 +65,13 @@ fn the_bridge_speaks_the_contract_of_the_real_server() {
     assert_eq!(bridge.resolve("한글").unwrap_err().message, "재생목록 ID 또는 영상 주소로 인식할 수 없습니다.");
     assert_eq!(bridge.resolve("").unwrap_err().message, "재생목록 ID 또는 영상 주소를 입력하세요.");
 
+    // POST /tools/yt-dlp/update: with no yt-dlp there is nothing to update, and the server says so without any download.
+    // (Skipped when yt-dlp is found, because the call would then really update it. The install call is never made here:
+    // it downloads a file.)
+    if tools["ytDlp"]["found"] == false {
+        assert_eq!(bridge.update_yt_dlp().unwrap_err().message, "yt-dlp가 설치되어 있지 않습니다.");
+    }
+
     // POST /jobs
     assert_eq!(
         bridge.start_job(&json!({ "resolveId": "nope" })).unwrap_err().message,

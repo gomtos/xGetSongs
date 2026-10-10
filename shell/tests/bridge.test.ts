@@ -106,6 +106,31 @@ test("a late job-done after the wait was given up does no harm", async () => {
   await sleep(20);
 });
 
+test("a listener that throws does not stop the events that come after it", async () => {
+  // Tauri's Channel stops delivering for good when a handler throws, so the handler it is given must never throw.
+  const { bridge, channels } = fakeBridge(async () => {});
+  const seen: JobEvent[] = [];
+  const logged: unknown[][] = [];
+  const consoleError = console.error;
+  console.error = (...args: unknown[]) => logged.push(args);
+  try {
+    const watching = bridge.watchJob("j-1", (event) => {
+      seen.push(event);
+      if (seen.length === 1) throw new TypeError("the screen has a bug");
+    });
+
+    assert.doesNotThrow(() => channels[0].onmessage(progress(10)));
+    channels[0].onmessage(progress(20));
+    channels[0].onmessage(jobDone);
+    await watching;
+  } finally {
+    console.error = consoleError;
+  }
+
+  assert.deepEqual(seen, [progress(10), progress(20), jobDone], "every event reached the listener");
+  assert.equal(logged.length, 1, "the listener's failure was reported once");
+});
+
 test("errorMessage reads a BridgeError, an Error and a string", () => {
   assert.equal(errorMessage({ message: "서버와의 연결이 끊어졌습니다." }), "서버와의 연결이 끊어졌습니다.");
   assert.equal(errorMessage(new Error("boom")), "boom");

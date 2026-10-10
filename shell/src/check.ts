@@ -64,6 +64,13 @@ async function main() {
   await record("tools", Object.keys(tools).join(","));
   await record("toolsFound", `${typeof tools.ytDlp.found},${typeof tools.ffmpeg.found},${typeof tools.jsRuntime.found}`);
 
+  // With no yt-dlp the update has nothing to do and fails at once. (It is skipped when yt-dlp exists, because it would
+  // really update it. The install call is never made here: it downloads a file.)
+  await record(
+    "updateWithoutYtDlp",
+    tools.ytDlp.found ? "(skipped: yt-dlp is installed)" : await rejection(() => bridge.updateYtDlp()),
+  );
+
   await record("resolveEmpty", await rejection(() => bridge.resolve("")));
   await record("resolveUnknown", await rejection(() => bridge.resolve("한글")));
   await record("startJobExpired", await rejection(() => bridge.startJob({ resolveId: "nope" })));
