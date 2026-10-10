@@ -69,7 +69,7 @@
 |---|---|---|
 | 0a | **UI 프로토타입 (먼저):** 사이드카 없이 Tauri 웹뷰에 실제 화면을 가짜 데이터로 그려서 Compose와 나란히 비교한다. Rust 설치와 `shell/` 스캐폴드만 있으면 된다 | UI 관문 U1~U4 판정(§5.2) ([계획서](../plans/2026-10-10-tauri-ui-prototype.md)) |
 | 0b | **스파이크:** 사이드카 진입점 + 최소 Tauri 셸. 시작·종료·정리·크기를 잰다 | 보고서 + **기술 관문 판정** ([계획서](../plans/2026-10-10-tauri-sidecar-spike.md)) |
-| 1 | 사이드카 완성: `Diagnostics`(로그, 종료 기록, `last-run.txt`)를 `app`에서 옮기고 파일 로그를 쓴다. 번들한 JRE로 실행한다 | 사이드카만으로 로그·종료 기록이 지금과 같다 ([계획서](../plans/2026-10-10-tauri-sidecar-complete.md)). 런타임은 JDK 복사본이고 `jlink`로 줄이는 것은 5단계(`jmods`가 있는 JDK가 필요) |
+| 1 | 사이드카 완성: `Diagnostics`(로그, 종료 기록, `last-run.txt`)를 `app`에서 옮기고 파일 로그를 쓴다. 번들한 JRE로 실행한다 | 사이드카만으로 로그·종료 기록이 지금과 같다 ([계획서](../plans/2026-10-10-tauri-sidecar-complete.md), [보고서](2026-10-10-tauri-sidecar-complete-report.md): 통과). 런타임은 JDK 복사본이고 `jlink`로 줄이는 것은 5단계(`jmods`가 있는 JDK가 필요) |
 | 2 | Rust 브리지: 명령 8개와 SSE → 이벤트. 토큰을 Rust 안에 숨긴다 | 브리지 계약 테스트 |
 | 3 | 프런트엔드 이식: `AppStateHolder` 논리와 `Labels`, 화면. `shared` 로직 재사용 방식 확정 | 지금의 `AppStateHolderTest` 시나리오가 새 테스트에서 통과 |
 | 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 |
