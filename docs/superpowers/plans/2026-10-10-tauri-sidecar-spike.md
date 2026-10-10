@@ -44,7 +44,7 @@
 | `server/build.gradle.kts` (수정) | `application` 플러그인 |
 | `server/src/test/kotlin/com/xgetsongs/server/sidecar/*Test.kt` (새) | 위 네 파일의 테스트 |
 | `sidecar-host/` (새 Rust 크레이트) | `handshake.rs`, `config.rs`, `sidecar.rs`, `http.rs`, `job.rs`, `lib.rs` |
-| `shell/` (새 Tauri 앱) | `src-tauri/src/lib.rs`(연결), `index.html`, `src/main.ts` |
+| `shell/` (0a가 만든 Tauri 앱에 더함) | `src-tauri/src/lib.rs`(연결, 결과 파일), `spike.html`과 `src/spike.ts`(스파이크 화면), `spike.conf.json`(스파이크 빌드가 그 페이지를 열게 함), `vite.config.ts`(두 페이지 빌드). 0a의 `index.html`과 `src/main.ts`는 건드리지 않는다 |
 | `docs/superpowers/specs/2026-10-10-tauri-sidecar-spike-report.md` (새) | 측정값과 관문 판정 |
 
 ---
@@ -1283,12 +1283,14 @@ git commit -m "feat(sidecar-host): 사이드카를 시작하고 끝내고 HTTP�
 **Files:**
 - Create: `sidecar-host/src/job.rs`
 - Modify: `sidecar-host/src/lib.rs`
-- Create: `shell/` (스캐폴더가 만드는 Tauri 앱)
-- Modify: `shell/src-tauri/Cargo.toml`, `shell/src-tauri/src/lib.rs`, `shell/index.html`, `shell/src/main.ts`
+- Modify: `shell/src-tauri/Cargo.toml`, `shell/src-tauri/src/lib.rs`, `shell/vite.config.ts`
+- Create: `shell/spike.html`, `shell/src/spike.ts`, `shell/spike.conf.json`
+
+`shell/index.html`과 `shell/src/main.ts`(0a의 UI 프로토타입)는 건드리지 않는다. 스파이크 화면은 `spike.html`로 따로 두고, 스파이크 빌드만 `spike.conf.json`으로 그 페이지를 연다.
 
 **Interfaces:**
-- Consumes: `Sidecar::spawn(command, stderr_log, timeout)`, `Sidecar::shutdown(grace)`, `Sidecar.handshake`, `http_get(&handshake, path)`, `SidecarConfig::from_env()`, `command()`, `stderr_log()` (Task 4·5)
-- Produces: `xgs_sidecar::job::kill_children_when_this_process_ends() -> Result<(), String>`. Tauri 명령 `sidecar_probe`가 `Result<Probe, String>`을 돌려준다(`Probe { port, token, readyMs, toolsMs, tools }`, 아직 준비 중이면 오류 문자열 `"starting"`). 빌드 결과 `shell/src-tauri/target/release/shell.exe` — Task 7이 쓴다.
+- Consumes: `Sidecar::spawn(command, stderr_log, timeout)`, `Sidecar::shutdown(grace)`, `Sidecar.handshake`, `http_get(&handshake, path)`, `SidecarConfig::from_env()`, `command()`, `stderr_log()`, `app_data` (Task 4·5)
+- Produces: `xgs_sidecar::job::kill_children_when_this_process_ends() -> Result<(), String>`. Tauri 명령 `sidecar_probe`(`Result<Probe, String>`, `Probe { port, token, readyMs, toolsMs, tools }`, 준비 전에는 오류 문자열 `"starting"`)와 `spike_record(key, value)`. 셸은 앱 데이터 폴더(`XGS_SIDECAR_APPDATA`, 기본 `%TEMP%\xgs-spike-appdata`)에 결과 파일 넷을 남긴다: `spike-job.txt`(Job Object 결과), `spike-ready.json`(사이드카가 준비되면 `port`, `token`, `readyMs`), `spike-failed.txt`(시작에 실패하면 사유), `spike-record.txt`(화면이 보낸 `key=value` 줄: `waitedMs`, `toolsMs`, `directFetch`). 빌드 결과 `shell/src-tauri/target/release/shell.exe` — Task 7이 쓴다.
 
 - [ ] **Step 1: Job Object 모듈**
 
@@ -1324,25 +1326,13 @@ pub fn kill_children_when_this_process_ends() -> Result<(), String> {
 Run: `cd sidecar-host; cargo test`
 Expected: PASS (컴파일 오류 없음, 테스트 수는 그대로).
 
-- [ ] **Step 2: Tauri 앱을 만든다**
+- [ ] **Step 2: `shell/`이 있는지 확인한다**
 
-0a(UI 프로토타입)에서 이미 `shell/`을 만들었으면 이 단계는 건너뛰고 그 `shell/`을 쓴다(`shell/src-tauri/Cargo.toml`이 있으면 된다). 이 경우 Step 5에서 `index.html`과 `src/main.ts`를 덮어쓰기 전에 프로토타입 화면을 `shell/prototype.html`과 `shell/src/prototype/`으로 옮겨 보존한다.
-
-없으면 저장소 루트에서 (프롬프트에는 식별자 `com.xgetsongs.shell`, 패키지 매니저 `npm`으로 답한다):
-
-```powershell
-npm create tauri-app@latest shell -- --template vanilla-ts
-cd shell
-npm install
-cd ..
-git status --short
-```
-
-Expected: `shell/` 아래 `package.json`, `index.html`, `src/main.ts`, `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`가 생긴다. 스캐폴더가 만든 `shell/.gitignore`와 `shell/src-tauri/.gitignore`가 `node_modules`, `dist`, `target`을 무시하는지 `git status --short`로 확인한다. 이 폴더들이 `??`로 나오면 루트 `.gitignore`에 `/shell/node_modules/`, `/shell/dist/`, `/shell/src-tauri/target/`을 추가한다.
+`shell/src-tauri/Cargo.toml`이 있으면 된다(0a 계획서의 Task 1이 만든다). 없으면 0a 계획서의 Task 1을 먼저 한다. `shell`의 Cargo 에디션은 2024이고 라이브러리 이름은 `shell_lib`다.
 
 - [ ] **Step 3: 의존성 추가**
 
-`shell/src-tauri/Cargo.toml`의 `[dependencies]` 아래에 한 줄을 더한다 (이미 있는 `tauri`, `serde`, `serde_json`, 플러그인 줄은 그대로 둔다):
+`shell/src-tauri/Cargo.toml`의 `[dependencies]` 아래에 한 줄을 더한다 (이미 있는 `tauri`, `tauri-plugin-opener`, `serde`, `serde_json`은 그대로 둔다):
 
 ```toml
 xgs-sidecar = { path = "../../sidecar-host" }
@@ -1350,10 +1340,12 @@ xgs-sidecar = { path = "../../sidecar-host" }
 
 - [ ] **Step 4: Rust 쪽을 연결한다**
 
-먼저 스캐폴더가 만든 `shell/src-tauri/src/lib.rs`를 읽어서 `.plugin(...)` 줄이 무엇인지 확인한다(아래 코드는 `tauri_plugin_opener`로 가정한다). 파일 전체를 다음으로 바꾼다. `.plugin(...)` 줄이 다르면 스캐폴더가 만든 줄을 그대로 둔다. `greet` 명령은 지운다.
+`shell/src-tauri/src/lib.rs` 전체를 다음으로 바꾼다. 스캐폴더가 만든 `greet` 명령은 지우고, `tauri_plugin_opener::init()` 줄은 그대로 둔다:
 
 ```rust
 use serde::Serialize;
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, RunEvent};
@@ -1368,6 +1360,9 @@ enum Phase {
 }
 
 struct SidecarState(Mutex<Phase>);
+
+/// The sidecar's app data folder, where the spike leaves its result files for the scripted checks of the plan.
+struct SpikeFolder(PathBuf);
 
 /// What the page shows. The token is here for the spike's own checks (the direct-fetch demo, a curl by hand) only: the real
 /// bridge keeps it in Rust.
@@ -1403,16 +1398,42 @@ fn sidecar_probe(state: tauri::State<'_, SidecarState>) -> Result<Probe, String>
     }
 }
 
+/// The page reports what it measured as one `key=value` line of `spike-record.txt`.
+#[tauri::command]
+fn spike_record(folder: tauri::State<'_, SpikeFolder>, key: String, value: String) -> Result<(), String> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(folder.0.join("spike-record.txt"))
+        .map_err(|error| error.to_string())?;
+    writeln!(file, "{key}={}", value.replace(['\r', '\n'], " ")).map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // First of all: whatever happens to this process, the sidecar and its children go with it.
-    if let Err(reason) = job::kill_children_when_this_process_ends() {
-        eprintln!("job object: {reason}");
+    let job_result = job::kill_children_when_this_process_ends();
+
+    let folder = SidecarConfig::from_env()
+        .map(|config| config.app_data)
+        .unwrap_or_else(|_| std::env::temp_dir().join("xgs-spike-appdata"));
+    let _ = std::fs::create_dir_all(&folder);
+    // The results of an earlier run must not be mistaken for this one.
+    for stale in ["spike-ready.json", "spike-failed.txt", "spike-record.txt"] {
+        let _ = std::fs::remove_file(folder.join(stale));
     }
+    let _ = std::fs::write(
+        folder.join("spike-job.txt"),
+        match &job_result {
+            Ok(()) => "ok".to_string(),
+            Err(reason) => format!("failed: {reason}"),
+        },
+    );
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(SidecarState(Mutex::new(Phase::Starting)))
+        .manage(SpikeFolder(folder))
         .setup(|app| {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -1420,9 +1441,21 @@ pub fn run() {
                 let result = SidecarConfig::from_env().and_then(|config| {
                     Sidecar::spawn(config.command(), &config.stderr_log(), Duration::from_secs(60))
                 });
+                let folder = handle.state::<SpikeFolder>().0.clone();
                 let phase = match result {
-                    Ok(sidecar) => Phase::Ready { sidecar, ready_ms: started.elapsed().as_millis() },
-                    Err(reason) => Phase::Failed(reason),
+                    Ok(sidecar) => {
+                        let ready_ms = started.elapsed().as_millis();
+                        let ready = format!(
+                            r#"{{"port":{},"token":"{}","readyMs":{}}}"#,
+                            sidecar.handshake.port, sidecar.handshake.token, ready_ms
+                        );
+                        let _ = std::fs::write(folder.join("spike-ready.json"), ready);
+                        Phase::Ready { sidecar, ready_ms }
+                    }
+                    Err(reason) => {
+                        let _ = std::fs::write(folder.join("spike-failed.txt"), &reason);
+                        Phase::Failed(reason)
+                    }
                 };
                 if let Ok(mut state) = handle.state::<SidecarState>().0.lock() {
                     *state = phase;
@@ -1430,7 +1463,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![sidecar_probe])
+        .invoke_handler(tauri::generate_handler![sidecar_probe, spike_record])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
@@ -1447,9 +1480,9 @@ pub fn run() {
 }
 ```
 
-- [ ] **Step 5: 화면을 만든다**
+- [ ] **Step 5: 스파이크 화면과 빌드 설정**
 
-`shell/index.html` 전체:
+`shell/spike.html`:
 
 ```html
 <!doctype html>
@@ -1458,7 +1491,7 @@ pub fn run() {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>xGetSongs 사이드카 스파이크</title>
-    <script type="module" src="/src/main.ts" defer></script>
+    <script type="module" src="/src/spike.ts" defer></script>
   </head>
   <body>
     <main>
@@ -1472,7 +1505,7 @@ pub fn run() {
 </html>
 ```
 
-`shell/src/main.ts` 전체:
+`shell/src/spike.ts`:
 
 ```ts
 import { invoke } from "@tauri-apps/api/core";
@@ -1492,6 +1525,7 @@ const directOut = document.querySelector<HTMLPreElement>("#direct-out")!;
 
 const pageStart = performance.now();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const record = (key: string, value: string | number) => invoke("spike_record", { key, value: String(value) });
 
 /** The sidecar takes seconds to start: ask again until Rust says it is ready. */
 async function waitForSidecar(): Promise<Probe> {
@@ -1502,6 +1536,18 @@ async function waitForSidecar(): Promise<Probe> {
       if (reason !== "starting") throw reason;
       await sleep(200);
     }
+  }
+}
+
+/** What a page of the web view gets when it calls the server itself: the Origin header is refused, so it must not get through. */
+async function directFetch(probe: Probe): Promise<string> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${probe.port}/tools`, {
+      headers: { "X-XGS-Token": probe.token },
+    });
+    return `reached the server, status ${response.status}`;
+  } catch (error) {
+    return `blocked: ${error}`;
   }
 }
 
@@ -1523,24 +1569,55 @@ async function main() {
       null,
       2,
     );
+    await record("waitedMs", waitedMs);
+    await record("toolsMs", probe.toolsMs);
+    const result = await directFetch(probe);
+    directOut.textContent = result;
+    await record("directFetch", result);
     direct.disabled = false;
     direct.addEventListener("click", async () => {
-      try {
-        const response = await fetch(`http://127.0.0.1:${probe.port}/tools`, {
-          headers: { "X-XGS-Token": probe.token },
-        });
-        directOut.textContent = `응답 ${response.status} (막혀야 정상)`;
-      } catch (error) {
-        directOut.textContent = `막힘: ${error}`;
-      }
+      directOut.textContent = await directFetch(probe);
     });
   } catch (reason) {
     status.textContent = `실패: ${reason}`;
+    await record("error", String(reason)).catch(() => {});
   }
 }
 
 main();
 ```
+
+`shell/spike.conf.json`:
+
+```json
+{
+  "app": {
+    "windows": [
+      {
+        "title": "xGetSongs 사이드카 스파이크",
+        "width": 1000,
+        "height": 760,
+        "url": "spike.html"
+      }
+    ]
+  }
+}
+```
+
+`shell/vite.config.ts`: 맨 위 import에 `import { fileURLToPath } from "node:url";`를 더하고, `defineConfig(() => ({ ... }))` 안(`clearScreen`과 같은 단계)에 `build` 키를 더해서 빌드가 두 페이지를 만들게 한다(프로토타입 `index.html`과 스파이크 `spike.html`):
+
+```ts
+  build: {
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        spike: fileURLToPath(new URL("./spike.html", import.meta.url)),
+      },
+    },
+  },
+```
+
+(Vite 8이 이 옵션을 다른 이름으로 부르면 경고가 나오니 그 이름에 맞춘다.)
 
 - [ ] **Step 6: 컴파일을 확인한다**
 
@@ -1551,28 +1628,26 @@ cd src-tauri
 cargo check
 ```
 
-Expected: `npm run build`(tsc + vite)가 오류 없이 끝나고, `cargo check`가 통과한다. 첫 `cargo check`는 Tauri 의존성을 컴파일하느라 5~15분 걸린다. Rust 컴파일 오류가 나면 Global Constraints대로 고친다(특히 Step 4의 `.plugin(...)` 줄과 `lib` 이름).
+Expected: `npm run build`(tsc + vite)가 오류 없이 끝나고 `dist/`에 `index.html`과 `spike.html`이 모두 생기며, `cargo check`가 통과한다. Rust 컴파일 오류가 나면 Global Constraints대로 고친다.
 
-- [ ] **Step 7: 빌드하고 한 번 돌려 본다**
+- [ ] **Step 7: 스파이크 빌드를 만들고 한 번 돌려 본다**
 
 ```powershell
 cd C:\Projects\xGetSongs
 .\gradlew.bat :server:installDist --no-daemon
 $env:XGS_SIDECAR_LIB = "C:\Projects\xGetSongs\server\build\install\xgs-server\lib"
 cd shell
-npm run tauri build -- --no-bundle
+npm run tauri build -- --no-bundle --config spike.conf.json
 .\src-tauri\target\release\shell.exe
 ```
 
-실행 파일 이름은 `shell/src-tauri/Cargo.toml`의 `[package] name`이다(스캐폴더가 `shell`로 만든다). 다르면 이 단계와 Task 7의 이름(`shell.exe`, `Get-Process shell`, `Stop-Process -Name shell`)을 그에 맞춘다.
-
-Expected: 창이 뜨고 수 초 뒤 "사이드카 준비됨"과 `port`, `readyMs`, `waitedMs`, `toolsMs`, `/tools`의 JSON이 보인다. 직접 fetch 버튼은 "막힘: …"을 보여 준다. 창을 닫은 뒤 `Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*SidecarMainKt*' }`이 아무것도 돌려주지 않는다.
+Expected: 제목 `xGetSongs 사이드카 스파이크`인 창이 뜨고 수 초 뒤 "사이드카 준비됨"과 JSON이 보인다. `%TEMP%\xgs-spike-appdata\`에 `spike-job.txt`(`ok`), `spike-ready.json`, `spike-record.txt`(`waitedMs=`, `toolsMs=`, `directFetch=blocked: …`)가 생긴다. 창을 닫은 뒤 `Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*SidecarMainKt*' }`이 아무것도 돌려주지 않는다.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add sidecar-host shell .gitignore
-git commit -m "feat(shell): Tauri 셸이 Kotlin 사이드카를 띄우고 /tools를 보여 준다"
+git add sidecar-host shell
+git commit -m "feat(shell): Tauri 셸이 Kotlin 사이드카를 띄우고 /tools를 부르는 스파이크 화면을 추가한다"
 ```
 
 ---
@@ -1583,71 +1658,112 @@ git commit -m "feat(shell): Tauri 셸이 Kotlin 사이드카를 띄우고 /tools
 - Create: `docs/superpowers/specs/2026-10-10-tauri-sidecar-spike-report.md`
 
 **Interfaces:**
-- Consumes: Task 3의 `installDist` 결과, Task 6의 `shell.exe`(환경 변수 `XGS_SIDECAR_LIB` 설정)
+- Consumes: Task 3의 `installDist` 결과, Task 6의 `shell.exe`(`--config spike.conf.json`으로 빌드, 환경 변수 `XGS_SIDECAR_LIB` 설정)과 그것이 남기는 결과 파일(`spike-ready.json`, `spike-record.txt`, `spike-job.txt`)
 - Produces: 관문 판정(설계 §5.1의 M1~M4와 참고 지표). 이후 단계의 계획서가 이 판정을 근거로 쓴다.
 
-- [ ] **Step 1: 사이드카를 찾는 도우미를 정의한다**
+- [ ] **Step 1: 도우미를 정의한다**
 
-새 PowerShell에서:
+셸이 `spike-ready.json`과 `spike-record.txt`에 측정값을 남기므로 화면을 눈으로 읽지 않고 스크립트로 잰다. 새 PowerShell에서:
 
 ```powershell
-function Get-Sidecar { Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*SidecarMainKt*' } }
-$env:XGS_SIDECAR_LIB = "C:\Projects\xGetSongs\server\build\install\xgs-server\lib"
+$app = Join-Path $env:TEMP "xgs-spike-appdata"
 $shell = "C:\Projects\xGetSongs\shell\src-tauri\target\release\shell.exe"
+$env:XGS_SIDECAR_LIB = "C:\Projects\xGetSongs\server\build\install\xgs-server\lib"
+function Get-Sidecar { Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*SidecarMainKt*' } }
+
+# Starts the shell and waits until its page has reported everything; returns what was measured.
+function Start-Spike {
+    $started = Get-Date
+    $process = Start-Process -FilePath $shell -PassThru
+    $windowAfterMs = $null
+    $deadline = (Get-Date).AddSeconds(90)
+    do {
+        Start-Sleep -Milliseconds 100
+        if ($null -eq $windowAfterMs -and (Get-Process -Id $process.Id -ErrorAction SilentlyContinue).MainWindowTitle) {
+            $windowAfterMs = [int]((Get-Date) - $started).TotalMilliseconds
+        }
+        $record = if (Test-Path "$app\spike-record.txt") { Get-Content "$app\spike-record.txt" } else { @() }
+    } while ((Get-Date) -lt $deadline -and -not ($record -match '^(directFetch|error)='))
+    $values = @{}
+    foreach ($line in $record) { $key, $value = $line -split '=', 2; $values[$key] = $value }
+    [pscustomobject]@{
+        Process = $process
+        WindowAfterMs = $windowAfterMs
+        Record = $values
+        Ready = (Get-Content "$app\spike-ready.json" -ErrorAction SilentlyContinue | ConvertFrom-Json)
+    }
+}
+
+# Closes the window like a user does; returns the milliseconds until the shell and the sidecar are both gone.
+function Close-Spike($process) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    [void]$process.CloseMainWindow()
+    while ($watch.Elapsed.TotalSeconds -lt 15 -and ((Get-Sidecar) -or -not $process.HasExited)) { Start-Sleep -Milliseconds 50 }
+    [int]$watch.Elapsed.TotalMilliseconds
+}
+
 Get-Sidecar
 ```
 
-Expected: 아무것도 나오지 않는다(이전 실행의 잔재가 없다). 나오면 `Stop-Process -Id <ProcessId> -Force`로 정리한다.
+Expected: 마지막 `Get-Sidecar`가 아무것도 돌려주지 않는다(이전 실행의 잔재가 없다). 나오면 `Stop-Process -Id <ProcessId> -Force`로 정리한다.
 
-- [ ] **Step 2: M1과 시간을 잰다**
+- [ ] **Step 2: M1·M2·M4와 시간을 3회 잰다**
 
-`& $shell`를 실행해 "사이드카 준비됨"이 뜨면 화면의 `readyMs`와 `waitedMs`를 적는다. 창을 닫고 `Get-Sidecar`가 비는 것을 확인한 뒤 같은 과정을 두 번 더 한다(총 3회).
-기록할 것: 3회의 `readyMs`, `waitedMs`, `toolsMs`와 각 중앙값. M1 = 준비 화면과 `/tools` JSON이 나왔는가.
+```powershell
+$runs = 1..3 | ForEach-Object {
+    $run = Start-Spike
+    $originCode = curl.exe -s -o NUL -w "%{http_code}" -H "Origin: http://tauri.localhost" -H "X-XGS-Token: $($run.Ready.token)" "http://127.0.0.1:$($run.Ready.port)/tools"
+    $closedMs = Close-Spike $run.Process
+    [pscustomobject]@{
+        Run = $_; WindowAfterMs = $run.WindowAfterMs; ReadyMs = $run.Ready.readyMs
+        WaitedMs = [int]$run.Record.waitedMs; ToolsMs = [int]$run.Record.toolsMs
+        DirectFetch = $run.Record.directFetch; OriginCurl = $originCode
+        ClosedMs = $closedMs; SidecarLeft = @(Get-Sidecar).Count; JobObject = (Get-Content "$app\spike-job.txt")
+    }
+}
+$runs | Format-List
+"median waitedMs: " + (($runs.WaitedMs | Sort-Object)[1])
+```
+
+Expected: 세 번 모두
+- **M1:** `ToolsMs`가 있다(화면이 Rust의 `/tools` 호출이 성공한 뒤에만 이 줄을 남긴다).
+- **M2:** `ClosedMs`가 3000 이하이고 `SidecarLeft`가 0이다.
+- **M4:** `DirectFetch`가 `blocked: …`로 시작하고 `OriginCurl`이 `403`이다. (`reached the server`가 나오면 가드가 뚫린 것이니 중단하고 원인을 조사한다.)
+- `JobObject`가 `ok`다.
+
+`WaitedMs` 중앙값이 10000 이하인지도 적는다(악화 한도). `ReadyMs`, `ToolsMs`, `WindowAfterMs`(프로세스 시작에서 창이 보일 때까지)는 기록만 한다.
 
 비교용으로(선택) Compose 앱의 같은 구간을 잰다: `.\run.bat`으로 띄우고 `log\xgetsongs.log`에서 `시작 정보` 줄과 `내장 서버 시작` 줄의 시각 차이를 적는다.
 
-- [ ] **Step 3: M2 — 창 닫기**
+- [ ] **Step 3: M3 — 강제 종료와 자손**
 
-`& $shell`를 실행해 준비가 되면 창을 닫는다.
+자손(`yt-dlp.exe`)을 만들려면 사이드카가 yt-dlp를 찾을 수 있어야 한다. 사이드카는 `<앱 데이터>\bin`을 먼저 보므로 스파이크용 임시 폴더에 복사본을 둔다(사용자의 원본 파일은 건드리지 않는다). 사용자의 `%APPDATA%\xGetSongs\bin\yt-dlp.exe`나 PATH의 `yt-dlp`를 쓰고, 둘 다 없으면 이 확인을 건너뛰고 보고서에 "자손 확인 못 함"으로 적는다.
 
-```powershell
-Start-Sleep -Seconds 3
-Get-Sidecar
-```
-
-Expected(M2 통과): 아무것도 나오지 않는다. `Get-Process shell`도 비어 있다. 결과(걸린 시간 포함)를 적는다.
-
-- [ ] **Step 4: M3 — 강제 종료와 자손**
-
-yt-dlp가 있어야 자손을 확인할 수 있다(`Get-Command yt-dlp`, 또는 `%APPDATA%\xGetSongs\bin\yt-dlp.exe`). 없으면 사용자에게 알리고 허락을 받아 `winget install yt-dlp.yt-dlp`로 설치하거나, 이 확인을 건너뛰고 보고서에 "자손 확인 못 함"으로 적는다.
-
-`& $shell`를 실행해 준비가 되면 화면의 `port`와 `token`으로 큰 재생목록 조회를 시작한다(몇 초 동안 `yt-dlp.exe`가 자손으로 돈다. 공개 재생목록 ID는 직접 고른다):
+영상 하나의 조회(`yt-dlp -J`)는 몇 초 동안 `yt-dlp.exe`를 자손으로 돌리므로, 그 사이에 셸을 강제 종료한다:
 
 ```powershell
-$port = <화면의 port>
-$token = "<화면의 token>"
-$playlist = "<공개 재생목록 ID (PL로 시작, 항목이 많은 것)>"
+New-Item -ItemType Directory -Force "$app\bin" | Out-Null
+$ytdlp = @("$env:APPDATA\xGetSongs\bin\yt-dlp.exe", (Get-Command yt-dlp -ErrorAction SilentlyContinue).Source) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+Copy-Item $ytdlp "$app\bin\yt-dlp.exe" -Force
+
+$run = Start-Spike
 $job = Start-Job -ScriptBlock {
-    param($port, $token, $playlist)
-    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/resolve" -Headers @{ "X-XGS-Token" = $token } -ContentType "application/json" -Body (@{ input = $playlist } | ConvertTo-Json)
-} -ArgumentList $port, $token, $playlist
-Start-Sleep -Seconds 1
-Get-Process yt-dlp -ErrorAction SilentlyContinue | Select-Object Id, StartTime
-Stop-Process -Name shell -Force
+    param($port, $token)
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port/resolve" -Headers @{ "X-XGS-Token" = $token } -ContentType "application/json" -Body (@{ input = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" } | ConvertTo-Json)
+} -ArgumentList $run.Ready.port, $run.Ready.token
+$seen = $false
+$watch = [Diagnostics.Stopwatch]::StartNew()
+while ($watch.Elapsed.TotalSeconds -lt 15 -and -not $seen) { Start-Sleep -Milliseconds 100; $seen = [bool](Get-Process yt-dlp -ErrorAction SilentlyContinue) }
+"yt-dlp seen as a descendant: $seen (after $([int]$watch.Elapsed.TotalMilliseconds) ms)"
+Stop-Process -Id $run.Process.Id -Force
 Start-Sleep -Seconds 5
-"--- 5초 뒤"
-Get-Sidecar
-Get-Process yt-dlp -ErrorAction SilentlyContinue
+"5 s after the force kill: sidecar left = $(@(Get-Sidecar).Count), yt-dlp left = $(@(Get-Process yt-dlp -ErrorAction SilentlyContinue).Count)"
+Remove-Job $job -Force
 ```
 
-Expected(M3 통과): "5초 뒤" 아래에 `java`(사이드카)도 `yt-dlp`도 나오지 않는다. 위쪽에서 `yt-dlp`가 1초 뒤에 실제로 보였는지도 적는다(안 보였다면 조회가 너무 빨리 끝난 것이니 더 큰 재생목록으로 다시 한다). 사이드카만 사라지고 `yt-dlp`가 남으면 Job Object가 동작하지 않은 것이다: `shell\src-tauri`의 `job::kill_children_when_this_process_ends` 결과(`eprintln!`)를 보려면 `cargo run`(개발 빌드, 콘솔 있음)으로 같은 확인을 반복해 "job object:" 줄이 있는지 본다.
+Expected(M3 통과): `yt-dlp seen as a descendant: True`이고 5초 뒤 `sidecar left = 0, yt-dlp left = 0`이다. `seen`이 `False`이면 조회가 너무 빨리 끝났거나 yt-dlp를 못 찾은 것이니 `$app\sidecar-stderr.log`를 보고 다시 한다. 사이드카만 사라지고 `yt-dlp`가 남으면 Job Object가 동작하지 않은 것이다(`$app\spike-job.txt`의 결과도 본다). 이 확인은 셸이 stdin 닫기 신호도 못 보낼 만큼 갑자기 죽는 경우를 다룬다: 사이드카 자신은 stdin 닫힘으로 끝나지만 자손은 Job Object만이 정리한다.
 
-- [ ] **Step 5: M4 — 웹뷰의 직접 fetch**
-
-`& $shell`를 실행해 준비가 되면 "웹뷰에서 서버로 직접 fetch" 버튼을 누르고 결과 문구를 적는다.
-Expected(M4 통과): `막힘: ...`(응답 `200`이 아니다). 이것이 Rust 브리지가 필요하다는 증거이고 `Guard.kt`가 그대로 유지된다는 뜻이다. `응답 200`이 나오면 가드가 뚫린 것이니 중단하고 원인을 조사한다.
-
-- [ ] **Step 6: 크기를 잰다**
+- [ ] **Step 4: 크기를 잰다**
 
 ```powershell
 cd C:\Projects\xGetSongs
@@ -1660,7 +1776,7 @@ Get-ChildItem "$env:USERPROFILE\.gradle\caches\modules-2\files-2.1\org.openjfx" 
 
 Expected: 네 숫자가 나온다. JRE 크기는 두 방식에 공통이라 이 비교에 넣지 않는다(JDK 21의 jpackage가 없어서 앱 이미지는 5단계에서 잰다). 비교의 의미: (사이드카 lib + 셸 exe) 대 Compose 업 jar. JavaFX 웹뷰가 어느 쪽에서도 빠지지 않는다는 점도 보고서에 적는다.
 
-- [ ] **Step 7: 보고서를 쓴다**
+- [ ] **Step 5: 보고서를 쓴다**
 
 `docs/superpowers/specs/2026-10-10-tauri-sidecar-spike-report.md`에 실제 측정값으로 채워서 쓴다. 구조는 다음과 같다(숫자와 판정은 위 단계의 결과를 그대로 적는다):
 
@@ -1705,7 +1821,7 @@ Expected: 네 숫자가 나온다. JRE 크기는 두 방식에 공통이라 이 
 (통과 / 재시도 후 통과 / 중단 중 하나를 쓰고 이유를 적는다. M1~M4가 모두 통과하고 `waitedMs`가 한도 안이면 통과다. `waitedMs`가 한도를 넘으면 대응(시작 중 화면, 사이드카 미리 띄우기)을 적고 사용자가 진행 여부를 정한다. 판정이 통과이면 다음으로 쓸 계획서는 설계 §5의 1단계 "사이드카 완성"이다. UI 관문(U1~U3)의 판정은 0a 보고서에 있다.)
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-10-10-tauri-sidecar-spike-report.md
