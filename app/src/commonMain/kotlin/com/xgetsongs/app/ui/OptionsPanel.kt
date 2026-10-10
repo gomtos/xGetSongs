@@ -132,7 +132,7 @@ fun OptionsPanel(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("동시 다운로드", modifier = Modifier.widthIn(min = 100.dp), maxLines = 1, softWrap = false)
-            Text("코어 수의 70% (자동)", style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false)
+            Text("코어 수만큼 (자동)", style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false)
             if (state.resolved?.kind == InputKind.VIDEO) {
                 OutlinedTextField(
                     value = rankText,
