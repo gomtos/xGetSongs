@@ -1,0 +1,12 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "xGetSongs 사이드카 스파이크",
+        "width": 1000,
+        "height": 760,
+        "url": "spike.html"
+      }
+    ]
+  }
+}

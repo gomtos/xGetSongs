@@ -1,6 +1,7 @@
 pub mod config;
 pub mod handshake;
 pub mod http;
+pub mod job;
 pub mod sidecar;
 
 pub use config::SidecarConfig;
