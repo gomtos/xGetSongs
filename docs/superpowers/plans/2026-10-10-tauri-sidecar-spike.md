@@ -284,10 +284,11 @@ git commit -m "feat(server): 사이드카가 stdin 닫힘으로 부모의 종료
 - Modify: `server/build.gradle.kts` (플러그인 블록과 파일 끝)
 - Test: `server/src/test/kotlin/com/xgetsongs/server/sidecar/SidecarArgsTest.kt`
 - Test: `server/src/test/kotlin/com/xgetsongs/server/sidecar/SidecarMainTest.kt`
+- Test: `server/src/test/kotlin/com/xgetsongs/server/sidecar/SidecarProcessTest.kt`
 
 **Interfaces:**
 - Consumes: `Handshake.line(port, token)` (Task 1), `ParentWatch(input, onGone).start()` (Task 2), 기존 `LocalServer.start(appDataDir: Path): LocalServer` (`port`, `token`, `stop()`), 테스트에서는 기존 `TestServices().services`와 `LocalServer.start(services)`.
-- Produces: `data class SidecarArgs(val appData: Path)` with `SidecarArgs.parse(args: Array<String>): SidecarArgs?`(잘못되면 null)과 `SidecarArgs.USAGE`. `internal fun runSidecar(args, stdin: InputStream, stdout: PrintStream, stderr: PrintStream, startServer: (Path) -> LocalServer, exit: (Int) -> Unit)`. `fun main(args: Array<String>)`. Gradle 결과물 `server/build/install/xgs-server/lib/*.jar`와 메인 클래스 `com.xgetsongs.server.sidecar.SidecarMainKt` — Task 6·7이 이 경로와 이름을 쓴다.
+- Produces: `data class SidecarArgs(val appData: Path)` with `SidecarArgs.parse(args: Array<String>): SidecarArgs?`(잘못되면 null)과 `SidecarArgs.USAGE`. `internal fun runSidecar(args, stdin: InputStream, stdout: PrintStream, stderr: PrintStream, startServer: (Path) -> LocalServer, exit: (Int) -> Unit): Thread?`(부모 감시 스레드, 시작하지 못하면 null; `main`이 그것을 `join`해서 JVM을 붙잡는다). `fun main(args: Array<String>)`. Gradle 결과물 `server/build/install/xgs-server/lib/*.jar`와 메인 클래스 `com.xgetsongs.server.sidecar.SidecarMainKt` — Task 6·7이 이 경로와 이름을 쓴다.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -434,9 +435,65 @@ class SidecarMainTest {
 }
 ```
 
+`server/src/test/kotlin/com/xgetsongs/server/sidecar/SidecarProcessTest.kt` (실제 프로세스를 띄운다. 단위 테스트의 JVM은 테스트 실행기가 살려 두므로, 사이드카 자신이 `main` 직후 종료하지 않는지는 이 테스트만 잡는다. 계획을 쓸 때는 이 테스트가 없었고, Step 5의 실제 프로세스 확인이 그 결함을 먼저 드러냈다):
+
+```kotlin
+package com.xgetsongs.server.sidecar
+
+import com.xgetsongs.shared.api.ApiHeaders
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.concurrent.TimeUnit
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * Starts the real thing in a process of its own. The unit tests of [runSidecar] run in a JVM that the test runner keeps
+ * alive, so they cannot tell whether the sidecar itself stays up: its server's threads are daemons, and a JVM with
+ * nothing else to wait for starts to shut down as soon as main returns (and takes the server with it, a moment later).
+ */
+class SidecarProcessTest {
+    @Test
+    fun theRealProcessKeepsServingUntilItsStdinIsClosedAndThenEndsWithZero() {
+        val appData = Files.createTempDirectory("xgs-sidecar-process").toAbsolutePath()
+        val java = Path.of(System.getProperty("java.home"), "bin", "java").toString()
+        val process = ProcessBuilder(
+            java,
+            "-Dlogback.configurationFile=logback-sidecar.xml",
+            "-cp", System.getProperty("java.class.path"),
+            "com.xgetsongs.server.sidecar.SidecarMainKt",
+            "--app-data", appData.toString(),
+        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        try {
+            val line = process.inputStream.bufferedReader().readLine()
+            assertTrue(line != null && line.startsWith("XGS-READY "), "the handshake line: $line")
+            val (port, token) = line.split(' ').let { it[1] to it[2] }
+
+            // Long enough for a JVM that is shutting down to be gone, which a shorter wait would not show.
+            Thread.sleep(3000)
+            assertTrue(process.isAlive, "the process is still running while its stdin is open")
+            val request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:$port/tools")).header(ApiHeaders.TOKEN, token).build()
+            val response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString())
+            assertEquals(200, response.statusCode(), "the server still answers")
+
+            process.outputStream.close() // the shell goes away
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "the process ends after its stdin is closed")
+            assertEquals(0, process.exitValue())
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+}
+```
+
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.\gradlew.bat :server:test --tests "com.xgetsongs.server.sidecar.SidecarArgsTest" --tests "com.xgetsongs.server.sidecar.SidecarMainTest" --no-daemon`
+Run: `.\gradlew.bat :server:test --tests "com.xgetsongs.server.sidecar.SidecarArgsTest" --tests "com.xgetsongs.server.sidecar.SidecarMainTest" --tests "com.xgetsongs.server.sidecar.SidecarProcessTest" --no-daemon`
 Expected: FAIL — compile errors `Unresolved reference 'SidecarArgs'` and `'runSidecar'`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -489,6 +546,10 @@ import kotlin.system.exitProcess
 /**
  * Starts the server for the shell that owns this process: tells it where the server is on stdout, and stops when
  * [stdin] ends. [exit] ends the process; the tests pass a recorder, so this function returns after it.
+ *
+ * Returns the thread that watches [stdin], or null when the sidecar did not start. The caller has to wait for that thread:
+ * the server's own threads are daemons, so nothing else would keep the JVM from shutting down (and taking the server with
+ * it) as soon as main returns.
  */
 internal fun runSidecar(
     args: Array<String>,
@@ -497,12 +558,12 @@ internal fun runSidecar(
     stderr: PrintStream,
     startServer: (Path) -> LocalServer,
     exit: (Int) -> Unit,
-) {
+): Thread? {
     val parsed = SidecarArgs.parse(args)
     if (parsed == null) {
         stderr.println(SidecarArgs.USAGE)
         exit(2)
-        return
+        return null
     }
     val server = try {
         Files.createDirectories(parsed.appData)
@@ -510,18 +571,19 @@ internal fun runSidecar(
     } catch (e: Exception) {
         stderr.println("사이드카를 시작하지 못했습니다: ${e.javaClass.simpleName}: ${e.message}")
         exit(1)
-        return
+        return null
     }
     stdout.println(Handshake.line(server.port, server.token))
     stdout.flush()
-    ParentWatch(stdin) {
+    return ParentWatch(stdin) {
         server.stop()
         exit(0)
     }.start()
 }
 
 fun main(args: Array<String>) {
-    runSidecar(args, System.`in`, System.out, System.err, { LocalServer.start(it) }, { exitProcess(it) })
+    // Waiting for the watching thread keeps the JVM alive until the parent is gone; that thread ends the process itself.
+    runSidecar(args, System.`in`, System.out, System.err, { LocalServer.start(it) }, { exitProcess(it) })?.join()
 }
 ```
 
@@ -575,7 +637,7 @@ application {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.\gradlew.bat :server:test --no-daemon`
-Expected: PASS — 새 테스트(`SidecarArgsTest` 5, `SidecarMainTest` 3)와 기존 서버 테스트 전부.
+Expected: PASS — 새 테스트(`SidecarArgsTest` 5, `SidecarMainTest` 3, `SidecarProcessTest` 1)와 기존 서버 테스트 전부.
 
 - [ ] **Step 5: Verify the real process by hand**
 
@@ -601,7 +663,7 @@ $p.WaitForExit(5000)
 "exited=$($p.HasExited) code=$($p.ExitCode)"
 ```
 
-Expected: `XGS-READY <port> <token>` 한 줄, `/tools`의 JSON(`ytDlp`, `ffmpeg`, `jsRuntime`), 마지막 줄 `exited=True code=0`.
+Expected: `XGS-READY <port> <token>` 한 줄, `/tools`의 JSON(`ytDlp`, `ffmpeg`, `jsRuntime`), 마지막 줄 `exited=True code=0`. 시작 신호를 읽은 뒤 3초가 지나도 `/tools`가 응답해야 한다(서버가 곧바로 내려가면 `curl`이 연결하지 못한다).
 
 - [ ] **Step 6: Commit**
 

@@ -1,6 +1,14 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
+    application
+}
+
+application {
+    mainClass.set("com.xgetsongs.server.sidecar.SidecarMainKt")
+    applicationName = "xgs-server"
+    // stdout is the handshake channel of the sidecar, so its logs go to stderr (see logback-sidecar.xml).
+    applicationDefaultJvmArgs = listOf("-Dlogback.configurationFile=logback-sidecar.xml")
 }
 
 kotlin {

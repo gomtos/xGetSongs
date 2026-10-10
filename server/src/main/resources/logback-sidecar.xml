@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The sidecar's logging, chosen by -Dlogback.configurationFile=logback-sidecar.xml in the start script. stdout carries the
+  handshake line, so everything goes to stderr. The Compose app has its own logback.xml; this file has another name so
+  that the two never compete on one class path.
+-->
+<configuration>
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <charset>UTF-8</charset>
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="io.netty" level="WARN"/>
+    <logger name="io.ktor" level="INFO"/>
+    <logger name="com.xgetsongs" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>
