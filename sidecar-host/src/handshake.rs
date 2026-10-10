@@ -1,10 +1,17 @@
 /// The first word of the line the sidecar prints when its server listens.
 pub const HANDSHAKE_PREFIX: &str = "XGS-READY";
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Handshake {
     pub port: u16,
     pub token: String,
+}
+
+/// The token is a secret: whatever prints a handshake (a failed `assert_eq!`, a `{:?}` in a log line) must not print it.
+impl std::fmt::Debug for Handshake {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Handshake").field("port", &self.port).field("token", &"<hidden>").finish()
+    }
 }
 
 /// Reads `XGS-READY <port> <token>`, exactly. Anything else (a log line, a JVM warning, a line that only contains the
@@ -32,6 +39,14 @@ mod tests {
             parse_handshake("XGS-READY 51234 abc_DEF-123"),
             Some(Handshake { port: 51234, token: "abc_DEF-123".to_string() })
         );
+    }
+
+    #[test]
+    fn debug_output_never_holds_the_token() {
+        let text = format!("{:?}", Handshake { port: 8080, token: "secret-token".to_string() });
+
+        assert!(!text.contains("secret-token"), "{text}");
+        assert!(text.contains("8080"), "{text}");
     }
 
     #[test]
