@@ -2,9 +2,11 @@
 //! page never sees; what comes back is the server's JSON as it is (the shapes are `shared/.../ApiModels.kt`), and a failure
 //! is one `BridgeError` with a message fit for the user.
 
-use crate::error::{BridgeError, BAD_JOB_ID, UNREADABLE_ANSWER};
+use crate::error::{BridgeError, BAD_JOB_ID, LISTENER_GONE, UNREADABLE_ANSWER, UNREADABLE_EVENT};
 use crate::handshake::Handshake;
+use crate::sse::SseParser;
 use serde_json::{json, Value};
+use std::io::Read;
 use std::time::Duration;
 
 /// Loopback: a server that is there accepts at once.
@@ -59,6 +61,39 @@ impl Bridge {
     pub fn cancel_job(&self, job_id: &str) -> Result<(), BridgeError> {
         check_job_id(job_id)?;
         self.send("DELETE", &format!("/jobs/{job_id}"), None, Limit::Short).map(|_| ())
+    }
+
+    /// `GET /jobs/{id}/events`: calls [on_event] with the data of each event, in order and as soon as it arrives, and returns
+    /// after the `job-done` event. [on_event] returns false when nobody listens any more; the call then stops.
+    ///
+    /// Fails when the server sends an `error` event, when its data cannot be read, and when the stream ends or breaks
+    /// before `job-done`.
+    pub fn watch_job(&self, job_id: &str, mut on_event: impl FnMut(Value) -> bool) -> Result<(), BridgeError> {
+        check_job_id(job_id)?;
+        let response = self.send("GET", &format!("/jobs/{job_id}/events"), None, Limit::None)?;
+        let mut reader = response.into_reader();
+        let mut parser = SseParser::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = match reader.read(&mut buffer) {
+                // The stream ended or broke, and `job-done` (which returns below) did not come: it was cut off.
+                Ok(0) | Err(_) => return Err(BridgeError::lost()),
+                Ok(read) => read,
+            };
+            for event in parser.push(&buffer[..read]) {
+                if event.name == "error" {
+                    return Err(BridgeError::new(error_message(&event.data).unwrap_or_else(|| UNREADABLE_EVENT.to_string())));
+                }
+                let data: Value =
+                    serde_json::from_str(&event.data).map_err(|_| BridgeError::new(UNREADABLE_EVENT))?;
+                if !on_event(data) {
+                    return Err(BridgeError::new(LISTENER_GONE));
+                }
+                if event.name == "job-done" {
+                    return Ok(());
+                }
+            }
+        }
     }
 
     fn json(&self, method: &str, path: &str, body: Option<&Value>, limit: Limit) -> Result<Value, BridgeError> {
@@ -335,5 +370,211 @@ mod tests {
         }
 
         assert!(server.requests().is_empty(), "nothing reached the server: {:?}", server.requests());
+    }
+
+    // ---- the event stream ----
+
+    #[test]
+    fn a_job_id_that_could_reach_another_route_is_refused_for_the_stream_too() {
+        let server = FakeServer::start(Vec::new());
+        let bridge = bridge(&server);
+
+        for bad in BAD_JOB_IDS.into_iter().chain(["a".repeat(65).as_str()]) {
+            assert_eq!(bridge.watch_job(bad, |_| true).unwrap_err().message, BAD_JOB_ID, "watch {bad:?}");
+        }
+
+        assert!(server.requests().is_empty(), "nothing reached the server: {:?}", server.requests());
+    }
+
+    fn collect(bridge: &Bridge, job_id: &str) -> (Vec<Value>, Result<(), BridgeError>) {
+        let mut events = Vec::new();
+        let result = bridge.watch_job(job_id, |event| {
+            events.push(event);
+            true
+        });
+        (events, result)
+    }
+
+    #[test]
+    fn the_events_arrive_in_order_and_the_call_ends_with_job_done() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            sse_event("item-started", r#"{"type":"item-started","rank":1,"videoId":"v1","fileName":"001 가수 - 제목.m4a"}"#),
+            sse_event("progress", r#"{"type":"progress","rank":1,"stage":"DOWNLOADING","percent":42.5}"#),
+            sse_event("item-done", r#"{"type":"item-done","rank":1,"fileName":"001 가수 - 제목.m4a","lyrics":"ONLINE"}"#),
+            sse_event("job-done", r#"{"type":"job-done","status":"COMPLETED","summary":{"succeeded":1,"skipped":0,"failed":0}}"#),
+            last_chunk(),
+        ]);
+
+        let (events, result) = collect(&bridge(&server), "j-1");
+
+        result.unwrap();
+        let types: Vec<&str> = events.iter().map(|event| event["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["item-started", "progress", "item-done", "job-done"]);
+        assert_eq!(events[0]["fileName"], "001 가수 - 제목.m4a");
+        assert_eq!(events[1]["percent"], 42.5);
+        let sent = &server.requests()[0];
+        assert!(sent.head.starts_with("get /jobs/j-1/events http/1.1"), "{}", sent.head);
+        assert!(sent.head.contains("x-xgs-token"), "{}", sent.head);
+    }
+
+    #[test]
+    fn an_event_arrives_when_it_is_sent_not_when_the_stream_ends() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            sse_event("progress", r#"{"type":"progress","rank":1,"stage":"DOWNLOADING","percent":1.0}"#),
+            Step::Pause(Duration::from_millis(1500)),
+            sse_event("job-done", r#"{"type":"job-done","status":"COMPLETED","summary":{"succeeded":0,"skipped":0,"failed":0}}"#),
+            last_chunk(),
+        ]);
+        let started = Instant::now();
+        let mut first_at = None;
+
+        bridge(&server)
+            .watch_job("j-1", |event| {
+                if event["type"] == "progress" {
+                    first_at = Some(started.elapsed());
+                }
+                true
+            })
+            .unwrap();
+
+        assert!(first_at.unwrap() < Duration::from_millis(1000), "first event after {first_at:?}");
+    }
+
+    #[test]
+    fn the_call_ends_at_job_done_without_waiting_for_the_stream_to_close() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            sse_event("job-done", r#"{"type":"job-done","status":"CANCELLED","summary":{"succeeded":0,"skipped":0,"failed":0}}"#),
+            Step::Pause(Duration::from_secs(5)),
+            last_chunk(),
+        ]);
+        let started = Instant::now();
+
+        let (events, result) = collect(&bridge(&server), "j-1");
+
+        result.unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(started.elapsed() < Duration::from_secs(3), "waited {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_korean_character_split_between_two_chunks_is_whole() {
+        let line = "event: item-done\r\ndata: {\"type\":\"item-done\",\"rank\":1,\"fileName\":\"가나다.m4a\"}\r\n\r\n".as_bytes();
+        let cut = line.iter().position(|byte| *byte == 0xEB).unwrap() + 4; // after the first byte of the third character
+        assert!(std::str::from_utf8(&line[..cut]).is_err(), "the cut is inside a character");
+        let server = FakeServer::one(vec![
+            stream_head(),
+            chunk(&line[..cut]),
+            Step::Pause(Duration::from_millis(200)),
+            chunk(&line[cut..]),
+            sse_event("job-done", r#"{"type":"job-done","status":"COMPLETED","summary":{"succeeded":1,"skipped":0,"failed":0}}"#),
+            last_chunk(),
+        ]);
+
+        let (events, result) = collect(&bridge(&server), "j-1");
+
+        result.unwrap();
+        assert_eq!(events[0]["fileName"], "가나다.m4a");
+    }
+
+    #[test]
+    fn keep_alive_comments_and_unknown_events_do_not_disturb_the_stream() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            chunk(b": keep-alive\r\n\r\n"),
+            sse_event("something-new", r#"{"type":"something-new","x":1}"#),
+            sse_event("job-done", r#"{"type":"job-done","status":"COMPLETED","summary":{"succeeded":0,"skipped":0,"failed":0}}"#),
+            last_chunk(),
+        ]);
+
+        let (events, result) = collect(&bridge(&server), "j-1");
+
+        result.unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["type"], "something-new");
+    }
+
+    #[test]
+    fn an_error_event_is_the_error_and_no_event_is_delivered() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            sse_event("error", r#"{"message":"작업을 찾을 수 없습니다."}"#),
+            last_chunk(),
+        ]);
+
+        let (events, result) = collect(&bridge(&server), "nope");
+
+        assert_eq!(result.unwrap_err().message, "작업을 찾을 수 없습니다.");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn a_stream_that_ends_without_job_done_is_a_lost_connection_after_the_events_it_sent() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            sse_event("progress", r#"{"type":"progress","rank":1,"stage":"DOWNLOADING","percent":10.0}"#),
+            last_chunk(),
+        ]);
+
+        let (events, result) = collect(&bridge(&server), "j-1");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(result.unwrap_err().message, LOST);
+    }
+
+    #[test]
+    fn a_connection_that_breaks_in_the_middle_of_the_stream_is_a_lost_connection() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            sse_event("progress", r#"{"type":"progress","rank":1,"stage":"DOWNLOADING","percent":10.0}"#),
+            Step::Write(b"5\r\nevent".to_vec()), // a chunk that is cut off, then the connection closes
+        ]);
+
+        let (events, result) = collect(&bridge(&server), "j-1");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(result.unwrap_err().message, LOST);
+    }
+
+    #[test]
+    fn event_data_that_is_not_json_is_unreadable() {
+        let server = FakeServer::one(vec![stream_head(), sse_event("progress", "not json"), last_chunk()]);
+
+        let (_, result) = collect(&bridge(&server), "j-1");
+
+        assert_eq!(result.unwrap_err().message, UNREADABLE_EVENT);
+    }
+
+    #[test]
+    fn a_stream_that_cannot_be_opened_reports_the_servers_message() {
+        let server =
+            FakeServer::one(json_reply(401, "Unauthorized", r#"{"message":"인증 토큰이 올바르지 않습니다."}"#));
+
+        let (events, result) = collect(&bridge(&server), "j-1");
+
+        assert!(events.is_empty());
+        assert_eq!(result.unwrap_err().message, "인증 토큰이 올바르지 않습니다.");
+    }
+
+    #[test]
+    fn the_call_stops_when_nobody_listens_any_more() {
+        let server = FakeServer::one(vec![
+            stream_head(),
+            sse_event("progress", r#"{"type":"progress","rank":1,"stage":"DOWNLOADING","percent":1.0}"#),
+            sse_event("progress", r#"{"type":"progress","rank":1,"stage":"DOWNLOADING","percent":2.0}"#),
+            sse_event("job-done", r#"{"type":"job-done","status":"COMPLETED","summary":{"succeeded":0,"skipped":0,"failed":0}}"#),
+            last_chunk(),
+        ]);
+        let mut delivered = 0;
+
+        let result = bridge(&server).watch_job("j-1", |_| {
+            delivered += 1;
+            false
+        });
+
+        assert_eq!(result.unwrap_err().message, LISTENER_GONE);
+        assert_eq!(delivered, 1, "no event after the listener said it was gone");
     }
 }
