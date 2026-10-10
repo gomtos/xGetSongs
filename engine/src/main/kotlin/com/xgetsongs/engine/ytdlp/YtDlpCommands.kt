@@ -9,7 +9,6 @@ import java.nio.file.Path
  */
 object YtDlpCommands {
     const val PROGRESS_PREFIX = "XGSP"
-    const val POSTPROCESS_PREFIX = "XGSPP"
 
     private val COMMON = listOf("--ignore-config", "--no-warnings", "--encoding", "utf-8")
 
@@ -29,13 +28,11 @@ object YtDlpCommands {
     fun download(tools: ToolPaths, url: String, outputDir: Path, videoId: String): List<String> {
         val progress = "download:$PROGRESS_PREFIX|%(progress.status)s|%(progress.downloaded_bytes)s|" +
             "%(progress.total_bytes)s|%(progress.total_bytes_estimate)s"
-        val postprocess = "postprocess:$POSTPROCESS_PREFIX|%(progress.status)s|%(progress.postprocessor)s"
         val output = outputDir.resolve("$videoId.%(ext)s").toString()
         val ffmpeg = tools.ffmpeg?.let { listOf("--ffmpeg-location", it.toString()) }.orEmpty()
         return listOf(ytDlp(tools)) + COMMON + jsRuntimeArgs(tools) + ffmpeg + listOf(
             "--no-playlist", "--newline",
             "--progress-template", progress,
-            "--progress-template", postprocess,
             "-x", "--audio-format", "mp3", "--audio-quality", "0",
             "--write-thumbnail", "--convert-thumbnails", "jpg",
             "--write-info-json",

@@ -129,7 +129,7 @@ class ItemDownloader(
             command,
             onStdout = { line ->
                 ProgressParser.parse(line)?.let { update ->
-                    throttle.accept(update)?.let { emit(JobEvent.Progress(rank, it.first, it.second)) }
+                    if (throttle.accept(update)) emit(JobEvent.Progress(rank, Stage.DOWNLOADING, update.percent))
                 }
             },
             onStderr = { line -> synchronized(stderr) { stderr += line } },
@@ -138,6 +138,8 @@ class ItemDownloader(
         if (exitCode != 0) {
             return DownloadResult.Failed(ErrorClassifier.classify(synchronized(stderr) { stderr.toList() }))
         }
+        // From here on the work is ours (tags, cover, lyrics), so we say so ourselves instead of reading yt-dlp's output.
+        emit(JobEvent.Progress(rank, Stage.FINISHING, null))
         val file = workDir.resolve("$videoId.mp3")
         if (!Files.isRegularFile(file)) {
             return DownloadResult.Failed(Failure(FailureKind.OTHER, "변환된 mp3 파일을 찾을 수 없습니다."))
@@ -193,30 +195,17 @@ class ItemDownloader(
         }
     }
 
-    /** Lets a progress update through only when the stage changes or the whole percent advances. */
+    /** Lets a download update through only when it is the first one or the whole percent advances. */
     private class ProgressThrottle {
-        private var stage: Stage? = null
+        private var reported = false
         private var lastPercent = -1
 
-        fun accept(update: ProgressUpdate): Pair<Stage, Double?>? = when (update) {
-            is ProgressUpdate.Converting -> {
-                if (stage == Stage.FINISHING) {
-                    null
-                } else {
-                    stage = Stage.FINISHING
-                    Stage.FINISHING to null
-                }
-            }
-            is ProgressUpdate.Downloading -> {
-                val whole = update.percent?.toInt() ?: -1
-                if (stage == Stage.DOWNLOADING && whole == lastPercent) {
-                    null
-                } else {
-                    stage = Stage.DOWNLOADING
-                    lastPercent = whole
-                    Stage.DOWNLOADING to update.percent
-                }
-            }
+        fun accept(update: ProgressUpdate.Downloading): Boolean {
+            val whole = update.percent?.toInt() ?: -1
+            if (reported && whole == lastPercent) return false
+            reported = true
+            lastPercent = whole
+            return true
         }
     }
 }

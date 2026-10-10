@@ -13,7 +13,7 @@ class ProgressParserTest {
 
     @Test
     fun fallsBackToTheEstimatedTotal() {
-        val update = ProgressParser.parse("XGSP|downloading|250|NA|1000") as ProgressUpdate.Downloading
+        val update = ProgressParser.parse("XGSP|downloading|250|NA|1000")!!
         assertEquals(25.0, update.percent)
     }
 
@@ -32,30 +32,17 @@ class ProgressParserTest {
         assertEquals(ProgressUpdate.Downloading(100.0), ProgressParser.parse("XGSP|finished|1000|1000|NA"))
     }
 
+    // yt-dlp's post-processor lines are not read any more: the downloader reports the finishing stage itself.
     @Test
-    fun postprocessorStartMeansConverting() {
-        assertEquals(ProgressUpdate.Converting, ProgressParser.parse("XGSPP|started|ExtractAudio"))
-    }
-
-    // yt-dlp runs the thumbnail converter (--convert-thumbnails) before the download starts and every post-processor
-    // prints the template, so this one must not switch the UI to "converting" before the download.
-    @Test
-    fun thumbnailConversionIsNotTheAudioConversion() {
-        assertNull(ProgressParser.parse("XGSPP|started|ThumbnailsConvertor"))
+    fun postprocessorLinesAreIgnored() {
+        assertNull(ProgressParser.parse("XGSPP|started|ExtractAudio"))
+        assertNull(ProgressParser.parse("XGSPP|started|MoveFiles"))
         assertNull(ProgressParser.parse("XGSPP|finished|ThumbnailsConvertor"))
-    }
-
-    @Test
-    fun audioExtractionStillMeansConvertingNextToTheThumbnailConvertor() {
-        assertEquals(ProgressUpdate.Converting, ProgressParser.parse("XGSPP|started|ExtractAudio"))
-        assertNull(ProgressParser.parse("XGSPP|started|ThumbnailsConvertor"))
-        assertEquals(ProgressUpdate.Converting, ProgressParser.parse("XGSPP|started|ExtractAudio"))
     }
 
     @Test
     fun otherLinesAreIgnored() {
         assertNull(ProgressParser.parse("[youtube] Extracting URL"))
-        assertNull(ProgressParser.parse("XGSPP|finished|ExtractAudio"))
         assertNull(ProgressParser.parse(""))
     }
 }

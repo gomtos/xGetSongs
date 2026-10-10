@@ -104,7 +104,6 @@ class DefaultDownloadServiceTest {
 
     private val succeeding = downloadRunner { command, onStdout, _ ->
         onStdout("XGSP|downloading|50|100|NA")
-        onStdout("XGSPP|started|ExtractAudio")
         writeFakeMp3(command)
         0
     }
@@ -130,7 +129,7 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun reportsDownloadAndConvertingProgress() = runTest {
+    fun reportsDownloadAndFinishingProgress() = runTest {
         val events = service(succeeding).start(request(item(1))).collect()
 
         val progress = events.filterIsInstance<JobEvent.Progress>()
@@ -148,7 +147,9 @@ class DefaultDownloadServiceTest {
 
         val events = service(noisy).start(request(item(1))).collect()
 
-        assertEquals(100, events.filterIsInstance<JobEvent.Progress>().size)
+        val progress = events.filterIsInstance<JobEvent.Progress>()
+        assertEquals(100, progress.count { it.stage == Stage.DOWNLOADING })
+        assertEquals(1, progress.count { it.stage == Stage.FINISHING })
     }
 
     @Test
@@ -505,13 +506,11 @@ class DefaultDownloadServiceTest {
     }
 
     @Test
-    fun thumbnailConversionBeforeTheDownloadDoesNotShowAsConverting() = runTest {
+    fun finishingIsReportedOnceAfterTheDownloadWhateverYtDlpPrintsAroundIt() = runTest {
         val runner = downloadRunner { command, onStdout, _ ->
-            // yt-dlp converts the thumbnail first, then downloads, then extracts the audio.
-            onStdout("XGSPP|started|ThumbnailsConvertor")
-            onStdout("XGSPP|finished|ThumbnailsConvertor")
+            onStdout("XGSPP|started|ThumbnailsConvertor") // yt-dlp's post-processor lines are not read any more
             onStdout("XGSP|downloading|50|100|NA")
-            onStdout("XGSPP|started|ExtractAudio")
+            onStdout("XGSPP|started|MoveFiles")
             writeFakeMp3(command)
             0
         }
@@ -525,6 +524,13 @@ class DefaultDownloadServiceTest {
             ),
             events.filterIsInstance<JobEvent.Progress>(),
         )
+    }
+
+    @Test
+    fun aFailedDownloadReportsNoFinishingStage() = runTest {
+        val events = service(failingWith("ERROR: something odd")).start(request(item(1))).collect()
+
+        assertEquals(emptyList(), events.filterIsInstance<JobEvent.Progress>())
     }
 
     @Test

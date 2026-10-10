@@ -3,22 +3,16 @@ package com.xgetsongs.engine.ytdlp
 sealed interface ProgressUpdate {
     /** [percent] is null when yt-dlp does not know the total size yet. */
     data class Downloading(val percent: Double?) : ProgressUpdate
-
-    data object Converting : ProgressUpdate
 }
 
-/** Parses the lines produced by the `--progress-template`s in [YtDlpCommands.download]. */
+/** Parses the lines produced by the `--progress-template` in [YtDlpCommands.download]. */
 object ProgressParser {
-    fun parse(line: String): ProgressUpdate? {
+    fun parse(line: String): ProgressUpdate.Downloading? {
         val text = line.trim()
-        return when {
-            text.startsWith("${YtDlpCommands.PROGRESS_PREFIX}|") -> parseDownload(text)
-            text.startsWith("${YtDlpCommands.POSTPROCESS_PREFIX}|") -> parsePostprocess(text)
-            else -> null
-        }
+        return if (text.startsWith("${YtDlpCommands.PROGRESS_PREFIX}|")) parseDownload(text) else null
     }
 
-    private fun parseDownload(text: String): ProgressUpdate? {
+    private fun parseDownload(text: String): ProgressUpdate.Downloading? {
         val parts = text.split('|')
         val status = parts.getOrNull(1) ?: return null
         return when (status) {
@@ -37,16 +31,4 @@ object ProgressParser {
             else -> null
         }
     }
-
-    /**
-     * Only the audio conversion counts as "converting". yt-dlp runs the thumbnail converter (`--convert-thumbnails`)
-     * before the download and every post-processor prints this template, so that one must not switch to converting.
-     */
-    private fun parsePostprocess(text: String): ProgressUpdate? {
-        val parts = text.split('|')
-        val started = parts.getOrNull(1) == "started"
-        return if (started && parts.getOrNull(2) != THUMBNAILS_CONVERTOR) ProgressUpdate.Converting else null
-    }
-
-    private const val THUMBNAILS_CONVERTOR = "ThumbnailsConvertor"
 }

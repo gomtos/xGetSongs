@@ -37,7 +37,8 @@ class YtDlpCommandsTest {
         assertEquals("0", command[command.indexOf("--audio-quality") + 1])
         assertTrue(command[command.indexOf("-o") + 1].endsWith("dQw4w9WgXcQ.%(ext)s"))
         assertEquals(TEST_TOOLS.ffmpeg.toString(), command[command.indexOf("--ffmpeg-location") + 1])
-        assertEquals(2, command.count { it == "--progress-template" })
+        assertEquals(1, command.count { it == "--progress-template" })
+        assertFalse(command.any { it.startsWith("postprocess:") }, "yt-dlp's post-processor lines are not read any more")
         assertEquals(listOf("--", url), command.takeLast(2))
     }
 
