@@ -4,6 +4,7 @@ pub mod error;
 pub mod handshake;
 pub mod job;
 pub mod lifecycle;
+pub mod settings;
 pub mod sidecar;
 pub mod sse;
 
@@ -15,4 +16,5 @@ pub use config::SidecarConfig;
 pub use error::BridgeError;
 pub use handshake::{parse_handshake, Handshake};
 pub use lifecycle::Lifecycle;
+pub use settings::{SettingsFile, UserSettings};
 pub use sidecar::Sidecar;
