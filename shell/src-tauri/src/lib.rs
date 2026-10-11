@@ -89,6 +89,17 @@ fn check_record(key: String, value: String) -> Result<(), String> {
     writeln!(file, "{key}={}", value.replace(['\r', '\n'], " ")).map_err(|error| error.to_string())
 }
 
+/// What the check script told the page to use: an address of a video, an address of a playlist, a folder for the files. Only
+/// these names, and only in check mode.
+#[tauri::command]
+fn check_env(name: String) -> Result<Option<String>, String> {
+    check_file()?;
+    const ALLOWED: [&str; 3] = ["XGS_CHECK_VIDEO_URL", "XGS_CHECK_PLAYLIST_URL", "XGS_CHECK_OUTPUT_DIR"];
+    if !ALLOWED.contains(&name.as_str()) {
+        return Err(format!("{name} is not one of the values of the check"));
+    }
+    Ok(std::env::var(&name).ok())
+}
 /// Does nothing. The check page times how long a round trip to Rust takes while the sidecar starts: a window whose thread is
 /// busy answers late.
 #[tauri::command]
@@ -136,6 +147,7 @@ pub fn run() {
             watch_job,
             check_record,
             check_ping,
+            check_env,
             check_burst
         ])
         .build(tauri::generate_context!())

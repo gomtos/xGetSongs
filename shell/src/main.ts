@@ -333,6 +333,8 @@ async function boot(): Promise<void> {
     defaultOutputDir = await defaultOutputDirectory();
   }
   mount(new AppStateHolder({ api, defaultOutputDir }));
+  // The developer tooling uses the screen like a person does (see check-screen.ts); a normal start has no `?check`.
+  if (params.has("check")) void import("./check-screen.ts").then((module) => module.runScreenChecks());
 }
 
 void boot();

@@ -104,6 +104,16 @@ async function main() {
   await record("burstReceived", received);
   await record("burstOutOfOrder", outOfOrder);
 
+  // With real addresses and a folder from the script, the real screen is used next, as the top-level page (src/check-screen.ts):
+  // it records `screenDone` and `done` itself.
+  const wanted = ["XGS_CHECK_VIDEO_URL", "XGS_CHECK_PLAYLIST_URL", "XGS_CHECK_OUTPUT_DIR"];
+  const given = await Promise.all(wanted.map((name) => invoke<string | null>("check_env", { name })));
+  if (given.every(Boolean)) {
+    await record("bridgeChecksDone", 1);
+    location.href = "/index.html?check";
+    return;
+  }
+
   await record("done", 1);
 }
 
