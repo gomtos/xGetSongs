@@ -315,16 +315,40 @@ progress::-webkit-progress-value {
   margin-right: 4px;
 }
 
-/* ---- the bar that switches the prototype between states (F2 hides it) ---- */
-.dev {
-  position: fixed;
-  right: 8px;
-  bottom: 8px;
-  display: flex;
-  gap: 4px;
-  padding: 6px;
-  border: 1px dashed var(--line);
-  border-radius: 6px;
+.info-line {
+  min-width: 0;
+}
+
+.info-line h2 {
+  flex: 0 1 auto;
+}
+
+.rank-field {
+  width: 120px;
+  margin-left: 8px;
+}
+
+/* ---- the dialog that asks before yt-dlp is downloaded ---- */
+dialog {
+  max-width: 420px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: Canvas;
-  opacity: 0.92;
+  color: CanvasText;
+}
+
+dialog::backdrop {
+  background: color-mix(in srgb, CanvasText 35%, transparent);
+}
+
+dialog h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+  margin-top: 16px;
 }
