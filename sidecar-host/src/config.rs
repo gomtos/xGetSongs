@@ -14,6 +14,21 @@ pub struct SidecarConfig {
     pub log_dir: Option<PathBuf>,
 }
 
+/// Where the app keeps its own files: the yt-dlp it installed, `settings.json`, the temporary download folders. The same folder
+/// the Compose app uses: `%APPDATA%\xGetSongs`, else `.xgetsongs` in the user's folder. `XGS_SIDECAR_APPDATA` names another one
+/// (the checks use a temp folder: the sidecar clears `work` in it when it starts, which must never happen to the real one of a
+/// running app).
+pub fn app_data_dir(get: impl Fn(&str) -> Option<OsString>) -> PathBuf {
+    let given = |name: &str| get(name).filter(|value| !value.is_empty());
+    if let Some(dir) = given("XGS_SIDECAR_APPDATA") {
+        return PathBuf::from(dir);
+    }
+    if let Some(appdata) = given("APPDATA") {
+        return PathBuf::from(appdata).join("xGetSongs");
+    }
+    given("USERPROFILE").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join(".xgetsongs")
+}
+
 impl SidecarConfig {
     pub fn from_env() -> Result<SidecarConfig, String> {
         let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
@@ -26,9 +41,8 @@ impl SidecarConfig {
     /// 2. a sidecar image, a folder with `runtime\bin\java.exe` and `lib`: `XGS_SIDECAR_DIR`, else the `sidecar` folder next
     ///    to the executable ([exe_dir]). A folder that is named but holds no runtime is an error, not a reason to look on.
     ///
-    /// The app data folder is `XGS_SIDECAR_APPDATA`, by default a temp folder, never the user's real app data (the spike
-    /// must not clear the `work` folder of a running copy of the app). The log folder is `XGS_SIDECAR_LOGDIR`, else `log`
-    /// next to the executable, else the sidecar chooses.
+    /// The app data folder is [app_data_dir]. The log folder is `XGS_SIDECAR_LOGDIR`, else `log` next to the executable, else
+    /// the sidecar chooses.
     pub fn from_lookup(
         get: impl Fn(&str) -> Option<OsString>,
         exe_dir: Option<&Path>,
@@ -54,9 +68,7 @@ impl SidecarConfig {
             }
             (java, image.join("lib"))
         };
-        let app_data = get("XGS_SIDECAR_APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir().join("xgs-spike-appdata"));
+        let app_data = app_data_dir(&get);
         let log_dir = get("XGS_SIDECAR_LOGDIR").map(PathBuf::from).or_else(|| exe_dir.map(|dir| dir.join("log")));
         Ok(SidecarConfig { java, lib_dir, app_data, log_dir })
     }
@@ -116,8 +128,29 @@ mod tests {
         let config = SidecarConfig::from_lookup(lookup(&[("XGS_SIDECAR_LIB", r"C:\x\lib")]), None).unwrap();
         assert_eq!(config.java, PathBuf::from("java"));
         assert_eq!(config.lib_dir, PathBuf::from(r"C:\x\lib"));
-        assert_eq!(config.app_data, std::env::temp_dir().join("xgs-spike-appdata"));
+        assert_eq!(config.app_data, std::env::temp_dir().join(".xgetsongs"), "no APPDATA and no user folder: the temp folder");
         assert_eq!(config.log_dir, None);
+    }
+
+    #[test]
+    fn the_app_data_folder_is_the_one_of_the_compose_app_unless_another_is_named() {
+        let appdata = r"C:\Users\me\AppData\Roaming";
+        assert_eq!(app_data_dir(lookup(&[("APPDATA", appdata)])), PathBuf::from(r"C:\Users\me\AppData\Roaming\xGetSongs"));
+        assert_eq!(
+            app_data_dir(lookup(&[("APPDATA", appdata), ("XGS_SIDECAR_APPDATA", r"D:\other")])),
+            PathBuf::from(r"D:\other"),
+            "the variable of the checks wins"
+        );
+        assert_eq!(
+            app_data_dir(lookup(&[("USERPROFILE", r"C:\Users\me")])),
+            PathBuf::from(r"C:\Users\me\.xgetsongs"),
+            "without APPDATA: the folder in the user folder, like the Compose app"
+        );
+        assert_eq!(
+            app_data_dir(lookup(&[("APPDATA", ""), ("XGS_SIDECAR_APPDATA", ""), ("USERPROFILE", r"C:\Users\me")])),
+            PathBuf::from(r"C:\Users\me\.xgetsongs"),
+            "empty values count as not set"
+        );
     }
 
     #[test]
