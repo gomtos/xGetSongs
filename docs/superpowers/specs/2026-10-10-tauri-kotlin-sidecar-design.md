@@ -21,6 +21,8 @@
 | 프로세스 수명 | Windows Job Object(`KILL_ON_JOB_CLOSE`)에 셸을 넣는다. 정상 종료는 stdin 닫기, 느리면 `taskkill /T /F` | Tauri는 사이드카를 감독하지 않고 `kill()`은 직계만 끝낸다. 프로세스 트리는 Tauri → java → yt-dlp → ffmpeg이다 |
 | 사이드카 실행 | `externalBin`을 쓰지 않는다. 번들한 런타임의 `java`를 Rust가 직접 실행한다 | `externalBin`은 `이름-<타깃 트리플>.exe` 단일 파일 규칙이라 JVM에 맞지 않는다 |
 | 데이터 폴더 | 사이드카는 `--app-data <절대 경로>`를 반드시 받고 기본값이 없다 | `createServices`가 시작할 때 `<app-data>\work`를 통째로 지운다. 기본값이 사용자의 실제 폴더를 가리키면 실행 중인 다른 앱의 작업 폴더가 지워진다 |
+| `settings.json`을 쓰는 곳 | **Rust 셸 한 곳**(`sidecar-host`의 `settings` 모듈, 4단계에서 정함). 서버는 이 파일을 만지지 않는다 | 쓰는 곳이 둘이면 충돌한다(§6). 형식은 Compose 앱의 것 그대로다 |
+| 앱 데이터 폴더 | `%APPDATA%\xGetSongs`(없으면 `~\.xgetsongs`), `XGS_SIDECAR_APPDATA`로 바꿀 수 있다(4단계에서 정함) | Compose 앱과 같은 yt-dlp·설정을 쓴다. 사이드카가 시작할 때 `work\`를 지우므로 Compose 앱과 셸을 동시에 실행하면 안 된다 |
 | 가사용 JavaFX 웹뷰 | 1차에서는 그대로 둔다 | 3단계 이후 별도 작업(7단계) |
 | `shared`의 순수 로직 | TS 포팅 + 같은 케이스 표 테스트 + Kotlin 대조 도구(3단계에서 정함. `js(IR)` 타깃은 만들지 않았다) | UI가 `FilenameFormatter`, `InputClassifier`, `ParsedInput`을 직접 쓴다 |
 | UI 방향 | 시스템 글꼴, 시스템 테마(`color-scheme`), 기본 폼 컨트롤, 시맨틱 HTML. 커스텀 디자인 시스템을 만들지 않는다 | 불만이 입력·글꼴과 네이티브 느낌이지 디자인 자유도가 아니다(§5.2) |
@@ -73,7 +75,7 @@
 | 1 | 사이드카 완성: `Diagnostics`(로그, 종료 기록, `last-run.txt`)를 `app`에서 옮기고 파일 로그를 쓴다. 번들한 JRE로 실행한다 | 사이드카만으로 로그·종료 기록이 지금과 같다 ([계획서](../plans/2026-10-10-tauri-sidecar-complete.md), [보고서](2026-10-10-tauri-sidecar-complete-report.md): 통과). 런타임은 JDK 복사본이고 `jlink`로 줄이는 것은 5단계(`jmods`가 있는 JDK가 필요) |
 | 2 | Rust 브리지: 명령 8개와 SSE → 이벤트. 토큰을 Rust 안에 숨긴다 | 브리지 계약 테스트 ([계획서](../plans/2026-10-11-tauri-rust-bridge.md), [보고서](2026-10-11-tauri-rust-bridge-report.md): 통과). 서버 변경 없음 |
 | 3 | 프런트엔드 이식: `AppStateHolder` 논리와 `Labels`, 화면. `shared` 로직 재사용 방식 확정 | 지금의 `AppStateHolderTest` 시나리오가 새 테스트에서 통과 ([계획서](../plans/2026-10-11-tauri-frontend-port.md), [보고서](2026-10-11-tauri-frontend-port-report.md): 통과). 재사용 방식은 TS 포팅과 같은 케이스 표 테스트이고 Kotlin 구현과의 대조 도구가 있다 |
-| 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 ([계획서](../plans/2026-10-11-tauri-desktop-features.md)) |
+| 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 ([계획서](../plans/2026-10-11-tauri-desktop-features.md), [보고서](2026-10-11-tauri-desktop-features-report.md): 통과). 앱 데이터 폴더의 기본값이 `%APPDATA%\xGetSongs`(Compose와 같음)가 됐다 |
 | 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 |
 | 6 | `app/` 삭제, README·설계 문서 갱신 | `gradlew check` 통과 |
 | 7 | (선택) 가사 검색의 JavaFX 웹뷰를 WebView2로 교체 | 구글 가사 통합 테스트 재검증 |
@@ -123,7 +125,7 @@ UI 품질이 동기이므로 사이드카보다 먼저 확인한다. 가짜 데�
 | 단일 exe: Tauri의 `resources`는 exe에 내장되지 않는다. Enigma Virtual Box는 자식 프로세스(`java.exe`)가 가상 파일 시스템을 못 볼 수 있다 | 5단계에서 풀어서 실행하는 SFX를 기본 후보로 두고 측정으로 정한다 |
 | WebView2 런타임: Windows 11에는 있지만 Windows 10은 따로 설치해야 한다 | 5단계에서 "설치 없는 exe" 목표와 조율한다 |
 | 로그 위치: 지금은 `jpackage.app-path`를 기준으로 `log\`를 정한다 | 1단계에서 사이드카용 규칙을 정하고 README를 고친다 |
-| `settings.json`을 쓰는 곳이 둘이 되면 충돌한다 | 4단계에서 쓰는 주체를 한 곳으로 정한다 |
+| `settings.json`을 쓰는 곳이 둘이 되면 충돌한다 | 4단계에서 쓰는 주체를 한 곳으로 정한다 (정함: Rust 셸 한 곳, 4단계) |
 | JavaFX가 JVM을 붙잡아 종료가 안 된다 | 사이드카는 `exitProcess`로 끝내고 `FxWebViewBrowser.close()`는 서버 scope가 끝날 때 불린다 |
 | Rust 코드를 계획 작성 시점에 컴파일해 보지 못했다(이 PC에 Rust가 없음) | 0단계 Task 4에서 처음 컴파일한다. 오류가 나면 계획의 시그니처와 테스트를 기준으로 고친다 |
 
