@@ -4,6 +4,7 @@
 
 import "./app.css";
 import { createDemoApi } from "./demo.ts";
+import { createDemoDesktop, type Desktop } from "./desktop.ts";
 import { trim } from "./logic/text.ts";
 import { AppStateHolder } from "./state/holder.ts";
 import {
@@ -11,6 +12,7 @@ import {
   UPDATE_YT_DLP_LABEL,
   albumNameText,
   destinationLabel,
+  destinationPath,
   rankFromInput,
   rankInputText,
   rankLabel,
@@ -49,7 +51,7 @@ interface RowView {
   bar: HTMLProgressElement;
 }
 
-function mount(holder: AppStateHolder): void {
+function mount(holder: AppStateHolder, desktop: Desktop): void {
   const toolsCard = $<HTMLElement>("#tools");
   const form = $<HTMLFormElement>("#input-form");
   const input = $<HTMLInputElement>("#input");
@@ -61,10 +63,15 @@ function mount(holder: AppStateHolder): void {
   const infoTitle = $<HTMLElement>("#info-title");
   const truncated = $<HTMLElement>("#truncated");
   const videoOnly = $<HTMLButtonElement>("#video-only");
+  // The options are two fieldsets with the line that shows the destination between them: that line's button stays usable while a
+  // job runs (looking at the folder is harmless), which a disabled fieldset would not allow.
   const options = $<HTMLFieldSetElement>("#options");
+  const optionsMore = $<HTMLFieldSetElement>("#options-more");
   const outputDir = $<HTMLInputElement>("#output-dir");
+  const pickFolder = $<HTMLButtonElement>("#pick-folder");
   const destinationRow = $<HTMLElement>("#destination-row");
   const destination = $<HTMLElement>("#destination");
+  const openFolder = $<HTMLButtonElement>("#open-folder");
   const album = $<HTMLInputElement>("#album");
   const optOverwrite = $<HTMLInputElement>("#opt-overwrite");
   const optRank = $<HTMLInputElement>("#opt-rank");
@@ -264,6 +271,7 @@ function mount(holder: AppStateHolder): void {
     }
 
     options.disabled = state.phase === "RUNNING";
+    optionsMore.disabled = state.phase === "RUNNING";
     showText(outputDir, state.outputDir);
     showText(album, albumNameText(state));
     optOverwrite.checked = state.overwrite;
@@ -272,6 +280,7 @@ function mount(holder: AppStateHolder): void {
     const label = destinationLabel(state);
     destinationRow.hidden = label === null;
     setText(destination, label ?? "");
+    openFolder.hidden = destinationPath(state) === null;
     rankField.hidden = resolved?.kind !== "VIDEO";
     // The raw text stays while the user retypes the number (the box may even be empty). Like Compose's `LaunchedEffect(singleRank)`
     // the box is looked at only when the rank itself changed (or the box was just shown), and rewritten only if it says another rank.
@@ -310,6 +319,15 @@ function mount(holder: AppStateHolder): void {
     if (!composing.has(singleRank)) filterRank();
   });
   singleRank.addEventListener("compositionend", filterRank);
+  pickFolder.addEventListener("click", () => {
+    void desktop.pickFolder(holder.getState().outputDir).then((chosen) => {
+      if (chosen !== null) holder.onOutputDir(chosen);
+    });
+  });
+  openFolder.addEventListener("click", () => {
+    const path = destinationPath(holder.getState());
+    if (path !== null) desktop.openFolder(path);
+  });
   videoOnly.addEventListener("click", () => holder.switchToVideoOnly());
   errorClose.addEventListener("click", () => holder.dismissError());
 
@@ -322,6 +340,9 @@ function mount(holder: AppStateHolder): void {
   holder.subscribe(render);
   render(holder.getState());
   holder.refreshTools();
+  // The options that still wait for their quiet period are written before the window closes (Compose: `holder.flushSettings()` in
+  // `onCloseRequest`).
+  void desktop.onClose(() => holder.flushSettings());
 }
 
 // ---- start ----------------------------------------------------------------------------------
@@ -340,16 +361,22 @@ async function boot(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const demo = params.get("demo");
   let api: XgsApi;
+  let desktop: Desktop;
   let defaultOutputDir: string;
   if (demo !== null) {
     // `?demo=broken` has no tools; `&speed=30` makes the made-up downloads 30 times faster.
     api = createDemoApi({ tools: demo === "broken" ? "broken" : "ok", speed: Number(params.get("speed")) || 1 });
+    const demoDesktop = createDemoDesktop();
+    // What the demo desktop was asked to do can be looked at (the browser scenarios of the developer tooling do).
+    (window as unknown as { xgsDemo: unknown }).xgsDemo = demoDesktop;
+    desktop = demoDesktop;
     defaultOutputDir = "C:\\Users\\사용자\\Music\\xGetSongs";
   } else {
     api = (await import("./bridge/tauri.ts")).bridge;
+    desktop = await (await import("./desktop-tauri.ts")).createRealDesktop();
     defaultOutputDir = await defaultOutputDirectory();
   }
-  mount(new AppStateHolder({ api, defaultOutputDir }));
+  mount(new AppStateHolder({ api, defaultOutputDir, settings: desktop.settings }), desktop);
   // The developer tooling uses the screen like a person does (see check-screen.ts); a normal start has no `?check`.
   if (params.has("check")) void import("./check-screen.ts").then((module) => module.runScreenChecks());
 }

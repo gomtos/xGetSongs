@@ -31,38 +31,43 @@
           <button id="video-only" type="button" hidden>이 영상만 받기</button>
         </div>
 
-        <fieldset id="options" class="options">
-          <div class="row-flex align-end">
-            <label class="field grow">
-              <span class="field-label">출력 폴더</span>
-              <input id="output-dir" type="text" spellcheck="false" />
-            </label>
-            <!-- The folder chooser and "show in Explorer" come with stage 4 of the migration. -->
-            <button id="pick-folder" type="button" hidden>폴더 선택</button>
-          </div>
+        <!-- The options: two fieldsets, which a job disables, with the line that shows the destination between them (its button
+             stays usable while a job runs, which a disabled fieldset would not allow). -->
+        <div class="options-group">
+          <fieldset id="options" class="options">
+            <div class="row-flex align-end">
+              <label class="field grow">
+                <span class="field-label">출력 폴더</span>
+                <input id="output-dir" type="text" spellcheck="false" />
+              </label>
+              <button id="pick-folder" type="button">폴더 선택</button>
+            </div>
+          </fieldset>
           <div id="destination-row" class="row-flex" hidden>
             <span id="destination" class="small grow ellipsis"></span>
             <button id="open-folder" type="button" class="small-button" hidden>탐색기에서 보기</button>
           </div>
-          <label class="field">
-            <span class="field-label">앨범명 (폴더명)</span>
-            <input id="album" type="text" spellcheck="false" />
-            <span class="hint">저장 폴더 이름과 앨범 태그가 모두 이 이름입니다. 비우면 재생목록 제목(영상 1개는 폴더 없이 영상 자체의 앨범)</span>
-          </label>
-          <div class="checks">
-            <label class="check"><input id="opt-overwrite" type="checkbox" /> 기존 파일 덮어쓰기</label>
-            <label class="check"><input id="opt-rank" type="checkbox" /> 파일명에 순번 포함</label>
-            <label class="check"><input id="opt-lyrics" type="checkbox" /> 가사가 없으면 인터넷에서 검색</label>
-          </div>
-          <div class="row-flex align-end">
-            <span class="concurrency-label">동시 다운로드</span>
-            <span>코어 수의 70% (자동)</span>
-            <label id="rank-field" class="field rank-field" hidden>
-              <span class="field-label">순위 번호</span>
-              <input id="single-rank" type="text" inputmode="numeric" autocomplete="off" />
+          <fieldset id="options-more" class="options">
+            <label class="field">
+              <span class="field-label">앨범명 (폴더명)</span>
+              <input id="album" type="text" spellcheck="false" />
+              <span class="hint">저장 폴더 이름과 앨범 태그가 모두 이 이름입니다. 비우면 재생목록 제목(영상 1개는 폴더 없이 영상 자체의 앨범)</span>
             </label>
-          </div>
-        </fieldset>
+            <div class="checks">
+              <label class="check"><input id="opt-overwrite" type="checkbox" /> 기존 파일 덮어쓰기</label>
+              <label class="check"><input id="opt-rank" type="checkbox" /> 파일명에 순번 포함</label>
+              <label class="check"><input id="opt-lyrics" type="checkbox" /> 가사가 없으면 인터넷에서 검색</label>
+            </div>
+            <div class="row-flex align-end">
+              <span class="concurrency-label">동시 다운로드</span>
+              <span>코어 수의 70% (자동)</span>
+              <label id="rank-field" class="field rank-field" hidden>
+                <span class="field-label">순위 번호</span>
+                <input id="single-rank" type="text" inputmode="numeric" autocomplete="off" />
+              </label>
+            </div>
+          </fieldset>
+        </div>
 
         <ul id="list" class="list" aria-label="곡 목록"></ul>
         <div id="actions" class="row-flex actions"></div>
