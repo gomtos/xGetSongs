@@ -22,9 +22,9 @@
 | 사이드카 실행 | `externalBin`을 쓰지 않는다. 번들한 런타임의 `java`를 Rust가 직접 실행한다 | `externalBin`은 `이름-<타깃 트리플>.exe` 단일 파일 규칙이라 JVM에 맞지 않는다 |
 | 데이터 폴더 | 사이드카는 `--app-data <절대 경로>`를 반드시 받고 기본값이 없다 | `createServices`가 시작할 때 `<app-data>\work`를 통째로 지운다. 기본값이 사용자의 실제 폴더를 가리키면 실행 중인 다른 앱의 작업 폴더가 지워진다 |
 | 가사용 JavaFX 웹뷰 | 1차에서는 그대로 둔다 | 3단계 이후 별도 작업(7단계) |
-| `shared`의 순수 로직 | 3단계에서 정한다(후보: `js(IR)` 타깃의 얇은 파사드, 안 되면 TS 포팅 + 같은 케이스 표 테스트) | UI가 `FilenameFormatter`, `InputClassifier`, `ParsedInput`을 직접 쓴다 |
+| `shared`의 순수 로직 | TS 포팅 + 같은 케이스 표 테스트 + Kotlin 대조 도구(3단계에서 정함. `js(IR)` 타깃은 만들지 않았다) | UI가 `FilenameFormatter`, `InputClassifier`, `ParsedInput`을 직접 쓴다 |
 | UI 방향 | 시스템 글꼴, 시스템 테마(`color-scheme`), 기본 폼 컨트롤, 시맨틱 HTML. 커스텀 디자인 시스템을 만들지 않는다 | 불만이 입력·글꼴과 네이티브 느낌이지 디자인 자유도가 아니다(§5.2) |
-| 프런트엔드 프레임워크 | 3단계에서 정한다. 0a·0b는 프레임워크 없이 `vanilla-ts` | 화면이 작다(컴포저블 약 560줄) |
+| 프런트엔드 프레임워크 | 없음, `vanilla-ts`(3단계에서 정함. Vue 3도 검토했고 사용자가 지금 방식 유지로 결정했다: 로직 층이 프레임워크와 무관해서 나중에 화면 한 곳만 바꾸면 된다) | 화면이 작다(컴포저블 약 560줄) |
 
 ### 2.1 다른 연동 패턴을 쓰지 않는 이유
 
@@ -37,6 +37,7 @@
 - `Guard.kt`가 `Origin` 헤더가 있는 요청을 모두 403으로 거부한다. Windows의 Tauri 웹뷰는 `fetch`에 항상 `http://tauri.localhost` Origin을 붙인다.
 - 토큰 헤더 때문에 CORS preflight가 필요한데, 서버는 이를 처리하지 않는다. 브라우저의 `EventSource`는 커스텀 헤더를 보낼 수 없어서 SSE도 걸린다.
 - 가드를 풀면(Origin 허용 목록 + CORS) 토큰이 웹뷰의 JS에 노출된다. Rust 브리지는 가드를 그대로 두고 토큰을 Rust 안에만 둔다.
+- Tauri HTTP 플러그인(`@tauri-apps/plugin-http`의 `fetch`)을 쓰는 길도 같은 이유로 쓰지 않는다(2026-10-11 검토, 사용자가 브리지 유지로 결정). 플러그인은 `Origin`을 웹뷰 주소로 항상 붙이므로 가드와 부딪히고(풀려면 Origin 허용 목록이나 `unsafe-headers`가 필요하다), 포트와 토큰이 웹뷰의 JS에 있어야 하며, 허용 범위가 `http://127.0.0.1:*`로 넓어지고, 본문이 청크마다 IPC 한 번이며 SSE를 지원하지 않아 SSE 파서를 TS로 다시 써야 한다. CORS 우회는 Rust 브리지도 같다. 웹 배포가 필요해지면 `XgsApi`를 `fetch`로 구현한 어댑터를 그 자리에 꽂는다.
 
 ## 3. 범위 밖 (YAGNI)
 
@@ -71,7 +72,7 @@
 | 0b | **스파이크:** 사이드카 진입점 + 최소 Tauri 셸. 시작·종료·정리·크기를 잰다 | 보고서 + **기술 관문 판정** ([계획서](../plans/2026-10-10-tauri-sidecar-spike.md)) |
 | 1 | 사이드카 완성: `Diagnostics`(로그, 종료 기록, `last-run.txt`)를 `app`에서 옮기고 파일 로그를 쓴다. 번들한 JRE로 실행한다 | 사이드카만으로 로그·종료 기록이 지금과 같다 ([계획서](../plans/2026-10-10-tauri-sidecar-complete.md), [보고서](2026-10-10-tauri-sidecar-complete-report.md): 통과). 런타임은 JDK 복사본이고 `jlink`로 줄이는 것은 5단계(`jmods`가 있는 JDK가 필요) |
 | 2 | Rust 브리지: 명령 8개와 SSE → 이벤트. 토큰을 Rust 안에 숨긴다 | 브리지 계약 테스트 ([계획서](../plans/2026-10-11-tauri-rust-bridge.md), [보고서](2026-10-11-tauri-rust-bridge-report.md): 통과). 서버 변경 없음 |
-| 3 | 프런트엔드 이식: `AppStateHolder` 논리와 `Labels`, 화면. `shared` 로직 재사용 방식 확정 | 지금의 `AppStateHolderTest` 시나리오가 새 테스트에서 통과 ([계획서](../plans/2026-10-11-tauri-frontend-port.md)) |
+| 3 | 프런트엔드 이식: `AppStateHolder` 논리와 `Labels`, 화면. `shared` 로직 재사용 방식 확정 | 지금의 `AppStateHolderTest` 시나리오가 새 테스트에서 통과 ([계획서](../plans/2026-10-11-tauri-frontend-port.md), [보고서](2026-10-11-tauri-frontend-port-report.md): 통과). 재사용 방식은 TS 포팅과 같은 케이스 표 테스트이고 Kotlin 구현과의 대조 도구가 있다 |
 | 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 |
 | 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 |
 | 6 | `app/` 삭제, README·설계 문서 갱신 | `gradlew check` 통과 |
