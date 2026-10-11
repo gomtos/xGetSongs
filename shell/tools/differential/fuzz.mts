@@ -10,6 +10,8 @@ import { classify } from "../../src/logic/input.ts";
 
 const perKind = Number(process.argv[2] ?? 10000);
 let seed = Number(process.argv[3] ?? 20261011) >>> 0;
+// A run that compares nothing must not look like a pass.
+if (!Number.isInteger(perKind) || perKind <= 0) throw new Error(`the cases per kind must be a positive whole number, not "${process.argv[2]}"`);
 
 function random(): number {
   // mulberry32
@@ -77,10 +79,13 @@ const idOf = (length: number) => Array.from({ length }, () => ID_CHARS[int(0, ID
 const videoId = () => (chance(0.85) ? idOf(11) : idOf(int(0, 14)) + (chance(0.2) ? "é" : ""));
 const playlistId = () => pick(["PL", "UU", "LL", "FL", "OL", "RD", "PL", "XX"]) + idOf(int(8, 36));
 
+// What may surround an address: an ordinary space, a white space of Kotlin's or of JavaScript's only (U+FEFF, U+001C..U+001F), a control.
+const padOf = () => pick([" ", " ", "\t", ...SPACES, ...CONTROL]);
+
 function classifierInput(): string {
   const shape = random();
   if (shape < 0.12) return pick(["", " ", "\t\n", "hello world", "PLshort", "PLabc; rm -rf /", "youtu.be", "a.b", "/", "."]);
-  if (shape < 0.3) return (chance(0.5) ? playlistId() : videoId()) + (chance(0.1) ? " " : "");
+  if (shape < 0.3) return (chance(0.1) ? padOf() : "") + (chance(0.5) ? playlistId() : videoId()) + (chance(0.1) ? padOf() : "");
   const scheme = pick(["https://", "http://", "", "HTTPS://", "ftp://", "//"]);
   const host = pick([
     "www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "WWW.YOUTUBE.COM", "www.youtube.com.evil.com",
@@ -97,8 +102,9 @@ function classifierInput(): string {
   }
   const query = params.length > 0 ? "?" + params.join("&") : "";
   const fragment = chance(0.1) ? "#frag" : "";
-  const padding = chance(0.1) ? " " : "";
-  return padding + scheme + host + path + query + fragment + padding;
+  const leading = chance(0.1) ? padOf() : "";
+  const trailing = chance(0.1) ? padOf() : "";
+  return leading + scheme + host + path + query + fragment + trailing;
 }
 
 // ---- the cases ----
@@ -150,7 +156,11 @@ const run = spawnSync(`${image}/runtime/bin/java.exe`, ["-cp", `${image}/lib/*`,
 });
 if (run.status !== 0) throw new Error(`the oracle failed: ${run.stderr}`);
 const answers = run.stdout.split("\n");
-const decode = (hexText: string) => {
+// One answer per case (and the empty piece after the last newline): a cut-short answer list is a failure, not a pass.
+if (cases.length === 0 || answers.length !== cases.length + 1) {
+  throw new Error(`the oracle answered ${answers.length - 1} of ${cases.length} cases`);
+}
+const decode =(hexText: string) => {
   if (hexText === "-") return "(null)";
   if (hexText === ".") return "(empty)";
   let out = "";

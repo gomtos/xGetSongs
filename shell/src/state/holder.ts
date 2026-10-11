@@ -56,6 +56,8 @@ export class AppStateHolder {
   private jobStart: number | null = null;
   /** Bumped by `reset`: whatever a job that ran before it reports afterwards is ignored. */
   private epoch = 0;
+  /** Counts the jobs started: what an earlier job's watch reports after a later job has begun is ignored too. */
+  private run = 0;
   private saveHandle: unknown = null;
 
   /**
@@ -66,7 +68,8 @@ export class AppStateHolder {
    */
   private lastKnown: UserSettings;
 
-  constructor({ api, defaultOutputDir, settings = noSettingsStore, now = () => Date.now(), scheduler = realScheduler }: HolderOptions) {
+  // The default clock is monotonic like Kotlin's `TimeSource.Monotonic`: a change of the wall clock must not skew "소요".
+  constructor({ api, defaultOutputDir, settings = noSettingsStore, now = () => performance.now(), scheduler = realScheduler }: HolderOptions) {
     this.api = api;
     this.settings = settings;
     this.now = now;
@@ -347,25 +350,29 @@ export class AppStateHolder {
    */
   private runJob(request: JobRequest, before: UiState): void {
     this.jobStart = this.now();
+    // The id of an earlier job is not this job's: until the server answers there is nothing for `cancel` to cancel.
+    this.jobId = null;
     const epoch = this.epoch;
+    const run = ++this.run;
+    const current = () => epoch === this.epoch && run === this.run;
     void (async () => {
       let started = false;
       try {
         const created = await this.api.startJob(request);
         started = true;
-        if (epoch !== this.epoch) return;
+        if (!current()) return;
         this.jobId = created.jobId;
         await this.api.watchJob(created.jobId, (event) => {
-          if (epoch === this.epoch) this.update((state) => this.apply(state, event));
+          if (current()) this.update((state) => this.apply(state, event));
         });
-        if (epoch !== this.epoch) return;
+        if (!current()) return;
         this.update((state) =>
           state.phase === "RUNNING"
             ? { ...state, phase: "FINISHED", error: LOST_CONNECTION, rows: state.rows.map(resetTransient) }
             : state,
         );
       } catch (error) {
-        if (epoch !== this.epoch) return;
+        if (!current()) return;
         this.update((state) =>
           started
             ? { ...state, phase: "FINISHED", error: failureMessage(error), rows: state.rows.map(resetTransient) }

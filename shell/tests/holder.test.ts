@@ -3,7 +3,7 @@
 // `advanceTimeBy` is `timers.advance`, and the test time source is `clock.ms`.
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 import type { JobEvent, JobOptions, JobRequest, JobStatus, LyricsOutcome, ResolvedItem, Stage } from "../src/bridge/types.ts";
 import { AppStateHolder } from "../src/state/holder.ts";
 import { albumNameText, statusLabel, summaryText } from "../src/state/labels.ts";
@@ -1386,4 +1386,80 @@ test("aFailureThatIsNotTheServersMessageSaysThatCommunicationFailed", async () =
   const { holder } = await resolved({ api });
 
   assert.equal(state(holder).error, "서버와 통신 중 오류가 발생했습니다: invoke is not defined");
+});
+
+// ---- what the port adds after the review of stage 3 ------------------------------------------------
+
+test("cancelBeforeTheNewJobHasAnIdDoesNotCancelThePreviousJob", async () => {
+  const { api, holder } = await resolved();
+  holder.startDownload();
+  await flush();
+  api.send(jobDone("COMPLETED", 1, 0, 0));
+  api.closeEvents();
+  await flush();
+  assert.equal(state(holder).phase, "FINISHED");
+
+  api.startGate = new Deferred();
+  holder.startDownload();
+  await flush();
+  assert.equal(state(holder).phase, "RUNNING");
+  holder.cancel();
+  await flush();
+
+  assert.deepEqual(api.cancelled, [], "job-1 is over and job-2 has no id yet: there is nothing to cancel");
+  assert.equal(state(holder).error, null);
+
+  api.startGate.resolve();
+  await flush();
+  holder.cancel();
+  await flush();
+
+  assert.deepEqual(api.cancelled, ["job-2"]);
+});
+
+test("theEndOfAnOldWatchDoesNotMarkTheNewJobAsLost", async () => {
+  const { api, holder } = await resolved();
+  holder.startDownload();
+  await flush();
+  api.send(jobDone("COMPLETED", 1, 0, 0)); // the job has reported its end but its event stream is still open
+  await flush();
+  assert.equal(state(holder).phase, "FINISHED");
+
+  holder.startDownload();
+  await flush();
+  assert.equal(state(holder).phase, "RUNNING");
+  api.closeEventsOf(1); // the old stream ends only now
+  await flush();
+
+  assert.equal(state(holder).phase, "RUNNING", "the new job is still running");
+  assert.equal(state(holder).error, null);
+
+  api.send(jobDone("COMPLETED", 2, 0, 0));
+  api.closeEvents();
+  await flush();
+
+  assert.equal(state(holder).jobStatus, "COMPLETED");
+});
+
+test("theElapsedTimeDoesNotFollowTheWallClock", async () => {
+  mock.timers.enable({ apis: ["Date"], now: 0 });
+  try {
+    const api = new FakeApi();
+    const holder = new AppStateHolder({ api, defaultOutputDir: "C:/Music/xGetSongs", scheduler: new FakeTimers() });
+    holder.onInput(playlistId);
+    holder.resolve();
+    await flush();
+    holder.startDownload();
+    await flush();
+
+    mock.timers.tick(3_600_000); // the wall clock jumps by an hour: a clock change or a time sync
+    api.send(jobDone("COMPLETED", 1, 0, 0));
+    api.closeEvents();
+    await flush();
+
+    const elapsed = state(holder).elapsedMs;
+    assert.ok(elapsed !== null && elapsed < 60_000, `the job ran for well under a minute but the elapsed time is ${elapsed} ms`);
+  } finally {
+    mock.timers.reset();
+  }
 });

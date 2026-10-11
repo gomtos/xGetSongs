@@ -100,6 +100,7 @@ fn check_env(name: String) -> Result<Option<String>, String> {
     }
     Ok(std::env::var(&name).ok())
 }
+
 /// Does nothing. The check page times how long a round trip to Rust takes while the sidecar starts: a window whose thread is
 /// busy answers late.
 #[tauri::command]

@@ -79,6 +79,8 @@ export class FakeApi implements XgsApi {
   resolveError: unknown = null;
   /** When set, `resolve` waits for it before it answers (or fails), so a test can change things while a lookup is held. */
   resolveGate: Deferred | null = null;
+  /** When set, `startJob` waits for it before it answers, so a test can act while the new job has no id yet. */
+  startGate: Deferred | null = null;
   startError: unknown = null;
   toolsError: unknown = null;
   installMessage = "installed";
@@ -89,6 +91,8 @@ export class FakeApi implements XgsApi {
   installCalls = 0;
 
   private events = new EventQueue();
+  /** The event stream of every job so far, the first job's first. */
+  private readonly streams: EventQueue[] = [];
 
   /** Sends `event` to the screen as the running job's next event. */
   send(...events: JobEvent[]): void {
@@ -98,6 +102,11 @@ export class FakeApi implements XgsApi {
   /** Ends the running job's event stream. */
   closeEvents(): void {
     this.events.close();
+  }
+
+  /** Ends the event stream of the [jobNumber]th job (1 is the first), which may be one that is no longer the running job. */
+  closeEventsOf(jobNumber: number): void {
+    this.streams[jobNumber - 1].close();
   }
 
   async tools(): Promise<ToolsStatus> {
@@ -126,7 +135,10 @@ export class FakeApi implements XgsApi {
     if (this.startError !== null) throw this.startError;
     this.jobRequests.push(request);
     this.events = new EventQueue();
-    return { jobId: `job-${this.jobRequests.length}` };
+    this.streams.push(this.events);
+    const jobId = `job-${this.jobRequests.length}`;
+    if (this.startGate !== null) await this.startGate.promise;
+    return { jobId };
   }
 
   watchJob(_jobId: string, onEvent: (event: JobEvent) => void): Promise<void> {

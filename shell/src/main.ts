@@ -85,6 +85,10 @@ function mount(holder: AppStateHolder): void {
   function showText(box: HTMLInputElement, value: string): void {
     if (box.value !== value && !composing.has(box)) box.value = value;
   }
+  /** A text is written only when it changed: a progress event arrives many times a second and a banner (`role="alert"`) must not be announced again each time. */
+  function setText(element: HTMLElement, text: string): void {
+    if (element.textContent !== text) element.textContent = text;
+  }
 
   // ---- tools panel ----
 
@@ -233,11 +237,14 @@ function mount(holder: AppStateHolder): void {
       default:
         break;
     }
-    // The button the user pressed is gone: keep the keyboard where it was.
-    if (hadFocus) actions.querySelector<HTMLButtonElement>("button.primary")?.focus();
+    // The button the user pressed is gone: keep the keyboard where it was (on the main button, or on the first one when there is none).
+    if (hadFocus) (actions.querySelector<HTMLButtonElement>("button.primary") ?? actions.querySelector<HTMLButtonElement>("button"))?.focus();
   }
 
   // ---- everything else ----
+
+  /** The rank the rank box was last brought in line with; null while the box is hidden. */
+  let syncedRank: number | null = null;
 
   function render(state: UiState): void {
     renderTools(state);
@@ -245,13 +252,13 @@ function mount(holder: AppStateHolder): void {
     showText(input, state.input);
     resolveButton.disabled = !canResolve(state) || trim(state.input) === "";
     errorBanner.hidden = state.error === null;
-    errorText.textContent = state.error ?? "";
+    setText(errorText, state.error ?? "");
 
     const resolved = state.resolved;
     resolvedSection.hidden = resolved === null;
     if (resolved !== null) {
       const count = resolved.kind === "PLAYLIST" ? ` · ${resolved.items.length}개` : "";
-      infoTitle.textContent = (resolved.playlistTitle ?? "단일 영상") + count;
+      setText(infoTitle, (resolved.playlistTitle ?? "단일 영상") + count);
       truncated.hidden = !resolved.truncated;
       videoOnly.hidden = resolved.alsoVideoId === null || !canResolve(state);
     }
@@ -264,11 +271,15 @@ function mount(holder: AppStateHolder): void {
     optLyrics.checked = state.searchLyricsOnline;
     const label = destinationLabel(state);
     destinationRow.hidden = label === null;
-    destination.textContent = label ?? "";
+    setText(destination, label ?? "");
     rankField.hidden = resolved?.kind !== "VIDEO";
-    // The raw text stays while the user retypes the number: the box is only rewritten when it says another rank.
-    if (!rankField.hidden && !composing.has(singleRank) && rankFromInput(singleRank.value) !== state.singleRank) {
-      singleRank.value = String(state.singleRank);
+    // The raw text stays while the user retypes the number (the box may even be empty). Like Compose's `LaunchedEffect(singleRank)`
+    // the box is looked at only when the rank itself changed (or the box was just shown), and rewritten only if it says another rank.
+    if (rankField.hidden) {
+      syncedRank = null;
+    } else if (state.singleRank !== syncedRank) {
+      syncedRank = state.singleRank;
+      if (!composing.has(singleRank) && rankFromInput(singleRank.value) !== state.singleRank) singleRank.value = String(state.singleRank);
     }
 
     renderList(state.rows);
@@ -287,12 +298,18 @@ function mount(holder: AppStateHolder): void {
   optOverwrite.addEventListener("change", () => holder.onOverwrite(optOverwrite.checked));
   optRank.addEventListener("change", () => holder.onIncludeRank(optRank.checked));
   optLyrics.addEventListener("change", () => holder.onSearchLyricsOnline(optLyrics.checked));
-  singleRank.addEventListener("input", () => {
+  // Only digits stay in the rank box, but not while an IME composes in it (the box is not written to then): the composition's
+  // end, which comes after the composing mark is removed above, filters what it left.
+  function filterRank(): void {
     const text = rankInputText(singleRank.value);
     if (singleRank.value !== text) singleRank.value = text;
     const rank = rankFromInput(text);
     if (rank !== null) holder.onSingleRank(rank);
+  }
+  singleRank.addEventListener("input", () => {
+    if (!composing.has(singleRank)) filterRank();
   });
+  singleRank.addEventListener("compositionend", filterRank);
   videoOnly.addEventListener("click", () => holder.switchToVideoOnly());
   errorClose.addEventListener("click", () => holder.dismissError());
 

@@ -11,7 +11,7 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // Two pages: the prototype (index.html) and the bridge check page (check.html).
+  // Two pages: the screen (index.html) and the bridge check page (check.html).
   build: {
     rollupOptions: {
       input: {

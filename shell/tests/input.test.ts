@@ -94,3 +94,9 @@ test("theRejectMessagesAreTheOnesTheServerSays", () => {
     UNRECOGNIZED: "재생목록 ID 또는 영상 주소로 인식할 수 없습니다.",
   });
 });
+
+// Not in the Kotlin file: the white space around an address is Kotlin's, not JavaScript's `trim()` (they differ at U+FEFF and U+001C..U+001F).
+test("theWhiteSpaceAroundAnAddressIsKotlinsNotJavaScripts", () => {
+  assert.deepEqual(classify("PLabcdefghijklmnop﻿"), { ok: false, reason: "UNRECOGNIZED" });
+  assert.equal(classify("\u001C\u001FPLabcdefghijklmnop　").ok, true);
+});

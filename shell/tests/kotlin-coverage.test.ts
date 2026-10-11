@@ -19,7 +19,9 @@ const PORTS: ReadonlyArray<readonly [kotlin: string, port: string]> = [
 
 for (const [kotlin, port] of PORTS) {
   const kotlinPath = new URL(kotlin, repository);
-  test(`every test of ${kotlin.split("/").pop()} is ported to ${port}`, { skip: !existsSync(kotlinPath) && "the Kotlin file is not in this checkout" }, () => {
+  // Only the app's suites may be absent (stage 6 deletes `app/`). A missing `shared` file means it was moved or renamed: fail.
+  const skip = kotlin.startsWith("app/") && !existsSync(kotlinPath) && "the Kotlin file is not in this checkout";
+  test(`every test of ${kotlin.split("/").pop()} is ported to ${port}`, { skip }, () => {
     const names = [...readFileSync(kotlinPath, "utf8").matchAll(/@Test\s+fun\s+(\w+)\(/g)].map((match) => match[1]);
     const ported = new Set([...readFileSync(new URL(port, import.meta.url), "utf8").matchAll(/^test\("(\w+)"/gm)].map((match) => match[1]));
 

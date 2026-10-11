@@ -20,6 +20,26 @@ async function given(name: string): Promise<string> {
   return value;
 }
 
+/**
+ * Counts the frames of the page from now on. The function it returns stops the counting and gives the longest wait between two
+ * frames in milliseconds: a screen that stalls while progress events arrive shows a long one.
+ */
+function watchFrames(): () => number {
+  let worst = 0;
+  let last = performance.now();
+  let watching = true;
+  const onFrame = (now: number) => {
+    worst = Math.max(worst, now - last);
+    last = now;
+    if (watching) requestAnimationFrame(onFrame);
+  };
+  requestAnimationFrame(onFrame);
+  return () => {
+    watching = false;
+    return Math.round(worst);
+  };
+}
+
 export async function runScreenChecks(): Promise<void> {
   try {
     await check();
@@ -82,11 +102,13 @@ async function check(): Promise<void> {
   if (!destination.includes(outputDir)) throw new Error(`the destination is not the folder of the check: ${destination}`);
   type("#single-rank", "42");
   await record("screenVideoRankedName", $("#list .file").textContent ?? "");
+  const videoFrames = watchFrames();
   press("다운로드 시작");
   await sleep(300);
   await record("screenVideoRunning", `${buttons().join(",")} | options disabled ${$<HTMLFieldSetElement>("#options").disabled}`);
   const tookMs = await until("the video to be downloaded", () => buttons().includes("다시 다운로드"), 180_000);
   await record("screenVideoResult", `${summary()} | ${labels()[0]} | ${$("#list .file").textContent} | ${tookMs} ms`);
+  await record("screenVideoFrameGapMs", videoFrames());
 
   // A playlist: look it up, start it, cancel it as soon as it reports progress.
   press("새로 시작");
@@ -96,11 +118,13 @@ async function check(): Promise<void> {
   await record("screenPlaylistPreview", `${$("#info-title").textContent} | ${labels().length} rows`);
   type("#output-dir", `${outputDir}\\cancelled`);
   if (!($("#destination").textContent ?? "").includes(outputDir)) throw new Error("the destination is not the folder of the check");
+  const playlistFrames = watchFrames();
   press("다운로드 시작");
   await until("a song to report progress", () => labels().some((label) => label.startsWith("다운로드")), 120_000);
   const started = performance.now();
   press("취소");
   await until("the cancelled job to end", () => buttons().includes("다시 다운로드"), 60_000);
+  await record("screenPlaylistFrameGapMs", playlistFrames());
   await record(
     "screenCancelResult",
     `${summary()} | ready ${count((label) => label === "준비됨")} done ${count((label) => label.startsWith("완료"))} still moving ${count((label) =>

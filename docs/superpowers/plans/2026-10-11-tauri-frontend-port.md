@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **실행 뒤 메모:** 이 계획서의 코드 블록은 실행 직전의 검증본이다. 실행한 뒤 전체 브랜치 리뷰가 지적한 것(`holder`의 경쟁 둘과 시계, 순위 칸의 IME·다시 채움, 바뀌지 않은 글자의 재기록, 작업 뒤 포커스, 대조 도구와 점검 테스트의 공백)은 저장소의 코드에서 고쳤고, 그 내용은 [보고서](../specs/2026-10-11-tauri-frontend-port-report.md)의 "최종 리뷰 뒤 고친 것"에 있다. 코드는 저장소의 것이 기준이다.
+
 **Goal:** 웹뷰의 화면이 지금 Compose 앱과 같은 동작으로 실제 서버(2단계의 브리지)를 쓴다: 조회, 미리보기, 옵션, 다운로드, 진행, 취소, 재시도, yt-dlp 설치·갱신. 앱의 화면 논리(`AppStateHolder`, `Labels`, `UiState`)와 `shared`의 순수 로직(`FilenameFormatter`, `InputClassifier`)을 TypeScript로 옮기고, 원본 Kotlin 테스트의 시나리오를 같은 이름으로 모두 통과시킨다.
 
 **Architecture:** 프레임워크 없이 TypeScript. `src/logic/`(`shared`의 두 로직과 Kotlin의 공백 규칙), `src/state/`(`UiState`, `Labels`, `AppStateHolder`: API와 타이머와 시계를 주입받아 테스트가 즉시 돈다), `src/demo.ts`(`XgsApi`를 가짜로 구현해 `?demo`로 화면만 돌려 볼 수 있다), `src/main.ts`(holder의 상태를 그리고 사용자의 동작을 holder에 알리는 화면). 화면은 `XgsApi`만 알고, 실제로는 2단계의 `bridge`가 그 자리에 들어간다. Kotlin 원본과 같음을 세 겹으로 지킨다: 원본 테스트 1:1(같은 이름), 원본 테스트 이름이 빠지면 실패하는 점검 테스트, 서버가 쓰는 Kotlin 구현과 무작위 입력으로 대조하는 도구. 확인은 데모 서버 위의 브라우저 시나리오, 그리고 실제 셸에서 점검 페이지가 화면을 최상위 페이지로 구동하는 종단 확인이다.
