@@ -226,6 +226,9 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        // Used from Rust only (`pick_folder`); the page is given no `dialog:*` permission. Note that the plugin's init script replaces
+        // `window.alert` and `window.confirm` of every page with calls to a command that this app does not allow: `alert()` does nothing
+        // and `confirm()` returns a promise. The page uses neither; do not start to.
         .plugin(tauri_plugin_dialog::init())
         .manage(CloseGate::default())
         .on_window_event(|window, event| {

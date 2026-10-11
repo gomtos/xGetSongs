@@ -72,10 +72,13 @@ fn read(path: &Path) -> Option<UserSettings> {
     let value: Value = serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()?;
     let object = value.as_object()?;
     let defaults = UserSettings::default();
-    // A key that is missing takes its default; a key of the wrong type makes the whole file unusable. Unknown keys are ignored.
+    // A key that is missing takes its default; a key of the wrong type makes the whole file unusable. Unknown keys are ignored. A boolean
+    // may be quoted (`"true"`), as kotlinx.serialization reads it.
     let flag = |key: &str, default: bool| match object.get(key) {
         None => Some(default),
         Some(Value::Bool(value)) => Some(*value),
+        Some(Value::String(text)) if text == "true" => Some(true),
+        Some(Value::String(text)) if text == "false" => Some(false),
         Some(_) => None,
     };
     let output_dir = match object.get("outputDir") {
@@ -425,6 +428,16 @@ mod tests {
         let loaded = rig.store.load();
         assert!(loaded.output_dir.as_deref().is_some_and(|dir| dir.starts_with("D:/Songs")), "{loaded:?}");
         assert_eq!(rig.files_in(&rig.dir), ["settings.json"]);
+    }
+
+    #[test]
+    fn quoted_booleans_are_read_like_kotlinx_does() {
+        // kotlinx.serialization reads `"overwrite":"true"` as true even without the lenient mode (a hand-edited file); a file like that
+        // must not fall back to the defaults, whose first change would overwrite the stored folder.
+        let rig = Rig::new("quoted-booleans");
+        rig.write(r#"{"outputDir":"D:/x","overwrite":"true","includeRank":"false","searchLyricsOnline":"false"}"#);
+
+        assert_eq!(rig.store.load(), settings(Some("D:/x"), true, false, false));
     }
 
     #[test]

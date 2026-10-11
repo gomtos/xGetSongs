@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **실행 뒤 메모:** 이 계획서의 코드 블록은 실행 직전의 검증본이다. 실행한 뒤 전체 브랜치 리뷰가 지적한 것은 저장소의 코드와 이 계획서의 스크립트 블록에서 고쳤고(내용은 [보고서](../specs/2026-10-11-tauri-desktop-features-report.md)의 "최종 리뷰 뒤 고친 것"), 그 밖의 코드 블록은 저장소의 것이 기준이다: `folder.rs`(쉼표가 든 경로를 `explorer.exe`에 항상 따옴표로 넘긴다, 대화상자의 시작 폴더를 절대 경로로), `settings.rs`(따옴표 친 불리언), `main.ts`(폴더 선택 창을 한 번에 하나만), `kotlin-coverage.test.ts`(`#[test]`가 있고 `#[ignore]`가 아닌 함수만 센다), `rust-names.test.ts`(새), `check.conf.json`(점검용 빌드의 `identifier`를 `com.xgetsongs.shell.check`로: 사용자가 쓰는 앱과 단일 인스턴스 뮤텍스·WebView2 프로필을 나눈다), 확인 스크립트(사이드카 범위를 점검 실행의 것으로 좁히고, 이름으로 `shell`이나 `vite`를 모두 끝내는 명령을 없앴다). 점검용 빌드는 일반 빌드와 같은 `target\release\shell.exe`를 덮어쓰므로 점검 뒤에 일반 빌드를 다시 만든다.
+
 **Goal:** 지금 Compose 앱이 데스크톱 쪽에서 해 주는 일을 Tauri 셸이 한다: 출력 폴더 선택 창, "탐색기에서 보기", 옵션 저장(`settings.json`), 단일 인스턴스, 창을 닫을 때의 정리. 셸이 쓰는 앱 데이터 폴더는 Compose 앱과 같은 `%APPDATA%\xGetSongs`다(지금까지는 임시 폴더였다). 이 단계가 끝나면 3단계의 화면이 Compose 앱의 일을 모두 하고, 일반 빌드를 쓸 수 있다.
 
 **Architecture:** 데스크톱이 하는 일은 Rust에 둔다. 웹뷰에는 우리가 만든 명령 몇 개만 열고 플러그인의 권한은 주지 않는다(2단계의 "웹뷰는 `invoke`와 이벤트만"을 지킨다). Tauri 없이 시험할 수 있는 부분은 `sidecar-host`의 모듈로 둔다: `app_data_dir`, `settings`(원본 `JsonSettingsStoreTest`의 22개를 같은 이름으로 이식), `folder`(`ExplorerOpenerTest`의 10개를 이식), `close_gate`(창 닫기 협의). 셸(`lib.rs`)은 그것을 명령 6개(`load_settings`, `save_settings`, `pick_folder`, `open_folder`, `page_listens_for_close`, `close_window`)와 `on_window_event`로 이어 붙이고, 공식 플러그인 둘을 쓴다(`tauri-plugin-dialog`는 Rust에서만, `tauri-plugin-single-instance`). 화면은 `Desktop`이라는 이음매(`src/desktop.ts`)만 알고, 창에서는 Rust 명령을, `?demo`에서는 가짜 데스크톱을 쓴다. 확인은 단위 시험, 데모 위 브라우저 시나리오, 그리고 실제 셸에서 시스템 대화상자와 파일 관리자까지 조작하는 PowerShell 점검이다.
@@ -2611,7 +2613,7 @@ E(`?demo&speed=40`: 3단계 리뷰가 지적한 화면 문제):
 - [ ] **Step 7: 개발 서버를 끈다**
 
 ```powershell
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*vite*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; "stopped"
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*xGetSongs\shell\node_modules*vite*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }; "stopped"
 ```
 
 - [ ] **Step 8: Commit**
@@ -2843,8 +2845,10 @@ public static class AppWindows {
 }
 "@
 
+# The sidecars of the check runs only: their app data folder is a temp folder named xgs-bridge-check-* (see New-CheckRun). Every java.exe that
+# runs the sidecar would also match the user's own app, which a check must neither wait for nor stop.
 function Get-Sidecar {
-    Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*SidecarMainKt*' }
+    Get-CimInstance Win32_Process -Filter "Name='java.exe'" | Where-Object { $_.CommandLine -like '*SidecarMainKt*' -and $_.CommandLine -like '*--app-data*xgs-bridge-check-*' }
 }
 
 # The window of the app of this process (zero while it does not exist yet).
@@ -3089,7 +3093,12 @@ try {
     $after = Get-Content $file -Raw -Encoding UTF8 | ConvertFrom-Json
     "file after:  outputDir=$($after.outputDir) overwrite=$($after.overwrite) includeRank=$($after.includeRank) searchLyricsOnline=$($after.searchLyricsOnline)"
     "expected:    outputDir=$newFolder overwrite=$(-not $seeded.overwrite) includeRank=$($seeded.includeRank) searchLyricsOnline=$($seeded.searchLyricsOnline)"
-    $ok = ($after.outputDir -eq $newFolder) -and ($after.overwrite -eq (-not $seeded.overwrite)) -and ($after.includeRank -eq $seeded.includeRank) -and ($after.searchLyricsOnline -eq $seeded.searchLyricsOnline)
+    # The close request is answered by the page (it writes what is still waiting and asks for the window to be closed): the shell ends in well
+    # under the 1.5 s after which it would have closed the window by itself (the file would hold the values then too: the save timer of 0.4 s runs
+    # in a page that is alive).
+    $answered = ($exitMs -ne $null) -and ($exitMs -lt 1500)
+    "the page answered the request to close (ended in under 1500 ms): $answered"
+    $ok = $answered -and ($after.outputDir -eq $newFolder) -and ($after.overwrite -eq (-not $seeded.overwrite)) -and ($after.includeRank -eq $seeded.includeRank) -and ($after.searchLyricsOnline -eq $seeded.searchLyricsOnline)
     "keys in the file: $((Get-Content $file -Raw -Encoding UTF8 | ConvertFrom-Json).PSObject.Properties.Name -join ',')"
     "leftover files in the app data folder: " + ((Get-ChildItem $run.AppData -Name | Where-Object { $_ -like 'settings*' }) -join ',')
     "RESULT: " + $(if ($ok) { "PASS" } else { "FAIL" })
@@ -3157,7 +3166,8 @@ function Close-ExplorerFolder([string]$Folder) {
 
 $run = New-CheckRun
 Copy-YtDlp $run
-$files = "$($run.Base)\files"
+# A comma in the name: Explorer splits its command line at commas, so the path has to reach it in quotes.
+$files = "$($run.Base)\files,2020"
 New-Item -ItemType Directory $files | Out-Null
 $env:XGS_CHECK_DESKTOP = "explorer"
 $env:XGS_CHECK_VIDEO_URL = $VideoUrl
@@ -3377,7 +3387,7 @@ foreach ($n in 1..10) {
     $closedMs = Close-CheckShell $process
     $marker = (Get-Content "$($run.LogDir)\last-run.txt" -ErrorAction SilentlyContinue) -join ' | '
     "early close $n : window after $windowMs ms, gone after $closedMs ms, shell running: $(-not $process.HasExited), sidecars left: $(@(Get-Sidecar).Count) :: " + ($marker -replace '\| pid=\d+ \| started=\S+ ', '')
-    if ($closedMs -eq $null) { $bad++; Get-Process shell -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1 }
+    if ($closedMs -eq $null) { $bad++; if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }; Start-Sleep -Seconds 1 }
 }
 "failures: $bad of 10"
 foreach ($n in 1..3) {
@@ -3393,7 +3403,7 @@ foreach ($n in 1..3) {
 
 Expected: 시작 직후 닫기 10번 모두 15,000ms 이하(3.0~3.4초)로 남은 사이드카 0, 마커 `state=exited`와 `reason=user`, `failures: 0 of 10`. 강제 종료 3번 모두 5,000ms 이하(181~197ms), 남은 사이드카 0.
 
-하나라도 어긋나면 **확인 스크립트의 창 찾기를 먼저 의심한다**(창 핸들, 비활성 창은 닫기를 무시한다), 그다음에 제품을 본다. 시작 직후 닫기가 실패하면 남은 셸과 사이드카를 정리한 뒤(`Get-Process shell | Stop-Process -Force`) 다시 돈다.
+하나라도 어긋나면 **확인 스크립트의 창 찾기를 먼저 의심한다**(창 핸들, 비활성 창은 닫기를 무시한다), 그다음에 제품을 본다. 시작 직후 닫기가 실패하면 **그 실행이 띄운 셸만** 끝낸 뒤(`Stop-Process -Id`. 이름으로 `shell`을 모두 끝내지 않는다: 사용자의 앱이 같은 이름이다) 다시 돈다.
 
 - [ ] **Step 11: Commit**
 

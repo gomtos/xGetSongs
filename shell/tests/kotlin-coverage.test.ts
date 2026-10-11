@@ -49,6 +49,16 @@ const RUST_PORTS: ReadonlyArray<readonly [kotlin: string, rust: string]> = [
 ];
 
 /** `aPathBelowARegularFile` is `a_path_below_a_regular_file`; a word of one letter (`A`) is a word. */
+/** The names of the `#[test]` functions of a Rust file that run: not commented out, not `#[ignore]`d, and a `fn` that is a test at all. */
+export function rustTests(source: string): Set<string> {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const names = new Set<string>();
+  for (const match of code.matchAll(/((?:#\[[^\]]*\]\s*)+)fn\s+(\w+)\s*\(/g)) {
+    if (/#\[test\]/.test(match[1]) && !/#\[ignore/.test(match[1])) names.add(match[2]);
+  }
+  return names;
+}
+
 const snakeCase = (name: string) =>
   name
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
@@ -65,7 +75,7 @@ for (const [kotlin, rust] of RUST_PORTS) {
   const skip = !existsSync(kotlinPath) && "the Kotlin file is not in this checkout";
   test(`every test of ${kotlin.split("/").pop()} is ported to ${rust}`, { skip }, () => {
     const names = kotlinTests(kotlinPath);
-    const ported = new Set([...readFileSync(new URL(rust, repository), "utf8").matchAll(/^\s*fn\s+(\w+)\s*\(/gm)].map((match) => match[1]));
+    const ported = rustTests(readFileSync(new URL(rust, repository), "utf8"));
 
     assert.ok(names.length > 0, "the Kotlin file has tests");
     assert.deepEqual(
@@ -82,4 +92,17 @@ test("theNamesOfTheKotlinTestsBecomeTheNamesOfTheRustOnes", () => {
   assert.equal(rustName("aPathBelowARegularFileReturnsTheDirectoryAroundTheFile"), "a_path_below_a_regular_file_returns_the_directory_around_the_file");
   assert.equal(rustName("aBlankPathReturnsNull"), "a_blank_path_returns_none");
   assert.equal(rustName("saveOverADirectoryThatIsNotEmptyDoesNotThrow"), "save_over_a_directory_that_is_not_empty_does_not_panic");
+});
+
+test("onlyTestsThatRunCountAsPortedOnes", () => {
+  const source = [
+    "#[test]\nfn runs() {}",
+    "#[test]\n#[ignore]\nfn ignored() {}",
+    "// #[test]\n// fn commented() {}",
+    "/* #[test]\nfn blocked() {} */",
+    "fn helper() {}",
+    "#[test]\n#[should_panic]\nfn also_runs() {}",
+  ].join("\n");
+
+  assert.deepEqual([...rustTests(source)].sort(), ["also_runs", "runs"]);
 });

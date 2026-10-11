@@ -44,8 +44,24 @@ pub fn existing_directory(path: &str) -> Option<PathBuf> {
     if path.trim().is_empty() {
         return None;
     }
-    let directory = PathBuf::from(path);
+    // Absolute: the system's dialog cannot start in a relative path (Kotlin's `File` resolved it against the working folder).
+    let directory = std::path::absolute(path).ok()?;
     directory.is_dir().then_some(directory)
+}
+
+/// The command line argument that makes Explorer open [folder] and nothing else. Always in quotes: Explorer splits its command line at
+/// commas, and `Command::arg` quotes a path only when it holds a space or a tab (`D:\Music\Hits,2020` would open the Documents folder).
+fn explorer_argument(folder: &Path) -> String {
+    format!("\"{}\"", folder.display())
+}
+
+fn explorer_command(folder: &Path) -> Command {
+    let mut command = Command::new("explorer.exe");
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::raw_arg(&mut command, explorer_argument(folder));
+    #[cfg(not(windows))]
+    command.arg(folder);
+    command
 }
 
 /// Shows [existing_folder_for] of [path] in the system file manager; does nothing when there is no such folder. All of it runs on
@@ -55,7 +71,7 @@ pub fn open_in_explorer(path: &str) {
     let path = path.to_string();
     let _ = std::thread::Builder::new().name("open-in-explorer".into()).spawn(move || {
         if let Some(folder) = existing_folder_for(&path) {
-            let _ = Command::new("explorer.exe").arg(folder).spawn();
+            let _ = explorer_command(&folder).spawn();
         }
     });
 }
@@ -203,5 +219,25 @@ mod tests {
         assert!(is_path_the_platform_takes("D:/음악/내 재생목록"));
         assert!(is_path_the_platform_takes("relative\\folder"));
         assert!(!is_path_the_platform_takes("C:\\a:b"), "a colon anywhere else is not");
+    }
+
+    // ---- not in the Kotlin file: what the review of stage 4 found ----
+
+    #[test]
+    fn the_folder_is_handed_to_explorer_in_quotes_so_a_comma_does_not_split_it() {
+        // `explorer.exe C:\Music\Hits,2020` opens the Documents folder: Explorer splits its command line at commas. A path without a
+        // space is not quoted by `Command::arg`, so the quotes are put on here.
+        assert_eq!(explorer_argument(Path::new(r"C:\Music\Hits,2020")), r#""C:\Music\Hits,2020""#);
+        assert_eq!(explorer_argument(Path::new(r"C:\Music\Hits 2020")), r#""C:\Music\Hits 2020""#);
+        assert_eq!(explorer_argument(Path::new(r"C:\음악\내 재생목록")), r#""C:\음악\내 재생목록""#);
+    }
+
+    #[test]
+    fn a_relative_folder_is_given_to_the_chooser_as_an_absolute_path() {
+        // The dialog cannot start in a relative path; Kotlin's `File` resolved it against the working folder.
+        let found = existing_directory(".").expect("the working folder is a folder");
+
+        assert!(found.is_absolute(), "{found:?}");
+        assert_eq!(found, std::path::absolute(".").unwrap());
     }
 }

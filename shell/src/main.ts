@@ -319,10 +319,20 @@ function mount(holder: AppStateHolder, desktop: Desktop): void {
     if (!composing.has(singleRank)) filterRank();
   });
   singleRank.addEventListener("compositionend", filterRank);
+  // One chooser at a time: the system's dialog takes a moment to appear and locks the window only then, so the second click of a double
+  // click would open a second one on top of it (Compose's chooser blocked it).
+  let choosing = false;
   pickFolder.addEventListener("click", () => {
-    void desktop.pickFolder(holder.getState().outputDir).then((chosen) => {
-      if (chosen !== null) holder.onOutputDir(chosen);
-    });
+    if (choosing) return;
+    choosing = true;
+    void desktop
+      .pickFolder(holder.getState().outputDir)
+      .then((chosen) => {
+        if (chosen !== null) holder.onOutputDir(chosen);
+      })
+      .finally(() => {
+        choosing = false;
+      });
   });
   openFolder.addEventListener("click", () => {
     const path = destinationPath(holder.getState());
