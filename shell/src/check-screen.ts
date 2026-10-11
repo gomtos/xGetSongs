@@ -42,7 +42,10 @@ function watchFrames(): () => number {
 
 export async function runScreenChecks(): Promise<void> {
   try {
-    await check();
+    // One of the checks of the desktop features, or the whole way through a video and a playlist.
+    const desktopCheck = await invoke<string | null>("check_env", { name: "XGS_CHECK_DESKTOP" });
+    if (desktopCheck) await checkDesktop(desktopCheck);
+    else await check();
     await record("screenDone", 1);
   } catch (error) {
     await record("error", errorMessage(error));
@@ -50,11 +53,8 @@ export async function runScreenChecks(): Promise<void> {
   await record("done", 1);
 }
 
-async function check(): Promise<void> {
-  const videoUrl = await given("XGS_CHECK_VIDEO_URL");
-  const playlistUrl = await given("XGS_CHECK_PLAYLIST_URL");
-  const outputDir = await given("XGS_CHECK_OUTPUT_DIR");
-
+/** What a person does on the screen: look at it, type into it, press its buttons. */
+function screen() {
   const $ = <T extends HTMLElement>(selector: string): T => {
     const found = document.querySelector<T>(selector);
     if (!found) throw new Error(`the screen has no ${selector}`);
@@ -84,6 +84,93 @@ async function check(): Promise<void> {
     return Math.round(performance.now() - started);
   };
   const count = (test: (label: string) => boolean) => labels().filter(test).length;
+  return { $, type, buttons, press, labels, errorText, summary, until, count };
+}
+
+/** The checks of what the desktop does for the screen. The script outside the window works the system dialog and the file manager. */
+async function checkDesktop(mode: string): Promise<void> {
+  const { $, type, until, labels } = screen();
+  const outputDir = await given("XGS_CHECK_OUTPUT_DIR");
+  const box = () => $<HTMLInputElement>("#output-dir").value;
+  const lookUpTheVideo = async () => {
+    type("#input", await given("XGS_CHECK_VIDEO_URL"));
+    $<HTMLButtonElement>("#resolve").click();
+    await until("the video to be looked up", () => !$("#resolved").hidden, 90_000);
+    await record("screenVideoPreview", `${$("#info-title").textContent} | ${labels().length} row`);
+  };
+
+  if (mode === "settings") {
+    // The settings file the script prepared was read when the page started; what the screen shows is what it held.
+    await until("the screen", () => $("#tools").innerText.length > 0, 30_000);
+    const options = () => ({
+      outputDir: box(),
+      overwrite: $<HTMLInputElement>("#opt-overwrite").checked,
+      includeRank: $<HTMLInputElement>("#opt-rank").checked,
+      searchLyricsOnline: $<HTMLInputElement>("#opt-lyrics").checked,
+    });
+    const before = options();
+    await record("screenSettingsLoaded", before);
+    // Change two of them and close the window at once, within the quiet period of the save: only the write of the closing can keep them.
+    $<HTMLInputElement>("#opt-overwrite").click();
+    type("#output-dir", outputDir);
+    await record("screenSettingsChanged", options());
+    await invoke("check_close");
+    await sleep(10_000); // the window closes; the script reads the file
+    return;
+  }
+
+  if (mode === "hang") {
+    await until("the screen", () => $("#tools").innerText.length > 0, 30_000);
+    await record("screenHangStarts", 1);
+    // A page that is stuck: it does not answer the request to close. (The Rust side closes the window after 1.5 s all the same.)
+    setTimeout(() => {
+      const end = performance.now() + 8_000;
+      while (performance.now() < end) {
+        // busy
+      }
+    }, 50);
+    await sleep(60_000);
+    return;
+  }
+
+  await lookUpTheVideo();
+  type("#output-dir", outputDir);
+
+  if (mode === "picker") {
+    await record("screenPickerStart", box());
+    // First the chooser is cancelled by the script, then it is used to choose a folder.
+    $<HTMLButtonElement>("#pick-folder").click();
+    await record("screenPickerClicked", 1);
+    await invoke("check_wait", { name: "picker-cancelled" });
+    await sleep(300);
+    await record("screenPickerAfterCancel", box());
+    $<HTMLButtonElement>("#pick-folder").click();
+    await record("screenPickerClickedAgain", 1);
+    await invoke("check_wait", { name: "picker-chosen" });
+    await sleep(300);
+    await record("screenPickerAfterChoice", box());
+    await record("screenPickerDestination", $("#destination").textContent ?? "");
+    return;
+  }
+
+  if (mode === "explorer") {
+    // A folder that does not exist yet: the nearest one that does is shown.
+    type("#output-dir", `${outputDir}\\not\\there\\yet`);
+    await record("screenExplorerDestination", $("#destination").textContent ?? "");
+    $<HTMLButtonElement>("#open-folder").click();
+    await record("screenExplorerClicked", 1);
+    await invoke("check_wait", { name: "explorer-checked" });
+    return;
+  }
+
+  throw new Error(`the check of the desktop has no mode ${mode}`);
+}
+
+async function check(): Promise<void> {
+  const videoUrl = await given("XGS_CHECK_VIDEO_URL");
+  const playlistUrl = await given("XGS_CHECK_PLAYLIST_URL");
+  const outputDir = await given("XGS_CHECK_OUTPUT_DIR");
+  const { $, type, buttons, press, labels, errorText, summary, until, count } = screen();
 
   // The screen starts: the tools are asked for (the sidecar may still be starting) and the default folder is chosen.
   const toolsAfter = await until("the tools", () => $("#tools").innerText.includes("✓"), 90_000);

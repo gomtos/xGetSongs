@@ -108,7 +108,9 @@ async function main() {
   // it records `screenDone` and `done` itself.
   const wanted = ["XGS_CHECK_VIDEO_URL", "XGS_CHECK_PLAYLIST_URL", "XGS_CHECK_OUTPUT_DIR"];
   const given = await Promise.all(wanted.map((name) => invoke<string | null>("check_env", { name })));
-  if (given.every(Boolean)) {
+  // One of the checks of the desktop features (settings, picker, explorer, hang) needs the screen too, without both addresses.
+  const desktopCheck = await invoke<string | null>("check_env", { name: "XGS_CHECK_DESKTOP" });
+  if (given.every(Boolean) || desktopCheck) {
     await record("bridgeChecksDone", 1);
     location.href = "/index.html?check";
     return;
