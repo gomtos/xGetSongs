@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod close_gate;
 pub mod config;
 pub mod error;
 pub mod folder;
@@ -13,7 +14,8 @@ pub mod sse;
 mod fake_server;
 
 pub use bridge::Bridge;
-pub use config::SidecarConfig;
+pub use close_gate::{CloseDecision, CloseGate};
+pub use config::{app_data_dir, SidecarConfig};
 pub use error::BridgeError;
 pub use handshake::{parse_handshake, Handshake};
 pub use lifecycle::Lifecycle;
