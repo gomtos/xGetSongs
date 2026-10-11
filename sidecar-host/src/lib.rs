@@ -1,6 +1,7 @@
 pub mod bridge;
 pub mod config;
 pub mod error;
+pub mod folder;
 pub mod handshake;
 pub mod job;
 pub mod lifecycle;
