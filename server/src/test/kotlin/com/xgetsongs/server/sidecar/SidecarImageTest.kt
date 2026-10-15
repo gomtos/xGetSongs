@@ -32,6 +32,27 @@ class SidecarImageTest {
     }
 
     @Test
+    fun theImageCarriesWhatJavaNeedsOnAPcWithoutTheVisualCRuntime() {
+        val bin = image.resolve("runtime").resolve("bin")
+
+        // java.exe and jvm.dll import these three. The runtime ships them as `*.dll.ortbak`, which no one loads.
+        for (name in listOf("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
+            assertTrue(Files.isRegularFile(bin.resolve(name)), "$name next to java.exe")
+        }
+        val backups = Files.list(bin).use { files -> files.map { it.fileName.toString() }.filter { it.endsWith(".ortbak") }.toList() }
+        assertEquals(emptyList(), backups, "files that are renamed back and no longer there under the old name")
+    }
+
+    @Test
+    fun theImageLeavesOutWhatRunningDoesNotNeed() {
+        val runtime = image.resolve("runtime")
+
+        for (name in listOf("lib/src.zip", "lib/ct.sym", "lib/jvm.lib", "jmods", "include")) {
+            assertTrue(Files.notExists(runtime.resolve(name)), "$name is not needed to run")
+        }
+    }
+
+    @Test
     fun theBundledRuntimeRunsTheSidecarAndStopsOnTheExitLine() {
         val base = Files.createTempDirectory("xgs-image-test").toAbsolutePath()
         val logDir = base.resolve("log")
