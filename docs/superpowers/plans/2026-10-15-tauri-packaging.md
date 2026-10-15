@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **실행 뒤 메모:** 이 계획서의 코드 블록은 실행 직전의 검증본이다. 최종 리뷰(가장 유능한 모델)가 지적한 Important 둘은 실행한 뒤 저장소의 코드에서 고쳤고(내용은 [보고서](../specs/2026-10-15-tauri-packaging-report.md)의 "최종 리뷰"), 그 밖의 코드 블록은 저장소의 것이 기준이다: `sidecar-host/src/payload.rs`(폴더 이름 바꾸기를 20번까지 다시 시도하는 `place`, 풀면서 해시를 계산해 꼬리표와 대조), `sidecar-host/src/config.rs`(풀어 둔 폴더에 `java.exe`가 없으면 한 번 지우고 다시 푼다: `java_of`, `payload::discard`). 이에 따라 관문 P1의 숫자는 `lib` **161개**(152 + 9)이고 변이는 **15개**다(위 `mutate.mjs`는 갱신된 것).
+
 **Goal:** 앱을 **exe 한 파일**(`dist\xGetSongs.exe`)로 건넬 수 있게 한다. 그 파일을 복사해 간 PC에는 Java도 Node도 Rust도 필요 없고(yt-dlp, ffmpeg, Node.js/Deno는 앱이 원래 요구하는 대로), Microsoft Edge WebView2가 없으면 앱이 말없이 사라지는 대신 안내한다.
 
 **Architecture:** Tauri 셸의 exe 뒤에 사이드카 이미지(Kotlin 서버의 jar들과 Java 런타임, 493개 파일)를 **우리 형식으로 압축해 덧붙이고** 맨 끝에 어디서부터가 그것인지 적은 꼬리표(footer)를 둔다. Windows는 구역 뒤에 덧붙은 데이터를 무시하므로 그 파일은 그대로 셸로 실행된다. 셸은 시작하자마자 자기 exe의 꼬리표를 읽고, 있으면 `%LOCALAPPDATA%\xGetSongs\runtime\<해시>`에 한 번 풀어 그 사본에서 사이드카를 시작한다(다음 실행부터는 풀어 둔 폴더를 쓴다). 이 로직은 Tauri 없이 시험할 수 있게 `sidecar-host`에 둔다(`payload`, `SidecarConfig::resolve`, `webview2`, 묶는 도구 `xgs-pack`). 깨끗한 PC에서 `java.exe`가 도는 데 필요한 Visual C++ 런타임 DLL은 이미지에 되살려 넣는다(런타임이 `*.dll.ortbak`으로 이름을 바꿔 놓아 아무도 읽지 않던 것).
@@ -2448,6 +2450,27 @@ const mutations = [
     from: "|key| if key == \"XGS_SIDECAR_DIR\" { Some(image.clone()) } else { get(key) },",
     to: "|key| if key == \"XGS_SIDECAR_DIR\" { Some(image.clone()) } else if key == \"XGS_SIDECAR_LOGDIR\" { Some(OsString::from(\"C:\\\\wrong\")) } else { get(key) },",
     expect: "an_exe_that_carries_a_sidecar_starts_it_from_a_copy_in_the_app_data_folder",
+  },
+  {
+    file: "src/payload.rs",
+    name: "a folder that cannot be renamed at that moment is not tried again",
+    from: "                if attempt >= attempts {",
+    to: "                if true {",
+    expect: "placing_a_folder_waits_for_the_file_open_in_it_to_be_closed",
+  },
+  {
+    file: "src/payload.rs",
+    name: "the checksum of the archive is not compared",
+    from: "            if seen != footer.key {",
+    to: "            if false && seen != footer.key {",
+    expect: "a_damaged_byte_is_found_by_the_checksum_and_is_an_error",
+  },
+  {
+    file: "src/config.rs",
+    name: "a runtime that lost its java.exe is not unpacked again",
+    from: "                if let Some(folder) = image.clone().filter(|folder| !java_of(folder).is_file()) {",
+    to: "                if let Some(folder) = image.clone().filter(|folder| false && !java_of(folder).is_file()) {",
+    expect: "an_unpacked_runtime_that_lost_its_java_is_unpacked_again",
   },
   {
     file: "src/bin/xgs-pack.rs",
