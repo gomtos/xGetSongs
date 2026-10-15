@@ -72,11 +72,11 @@
 |---|---|---|
 | 0a | **UI 프로토타입 (먼저):** 사이드카 없이 Tauri 웹뷰에 실제 화면을 가짜 데이터로 그려서 Compose와 나란히 비교한다. Rust 설치와 `shell/` 스캐폴드만 있으면 된다 | UI 관문 U1~U4 판정(§5.2) ([계획서](../plans/2026-10-10-tauri-ui-prototype.md)) |
 | 0b | **스파이크:** 사이드카 진입점 + 최소 Tauri 셸. 시작·종료·정리·크기를 잰다 | 보고서 + **기술 관문 판정** ([계획서](../plans/2026-10-10-tauri-sidecar-spike.md)) |
-| 1 | 사이드카 완성: `Diagnostics`(로그, 종료 기록, `last-run.txt`)를 `app`에서 옮기고 파일 로그를 쓴다. 번들한 JRE로 실행한다 | 사이드카만으로 로그·종료 기록이 지금과 같다 ([계획서](../plans/2026-10-10-tauri-sidecar-complete.md), [보고서](2026-10-10-tauri-sidecar-complete-report.md): 통과). 런타임은 JDK 복사본이고 `jlink`로 줄이는 것은 5단계(`jmods`가 있는 JDK가 필요) |
+| 1 | 사이드카 완성: `Diagnostics`(로그, 종료 기록, `last-run.txt`)를 `app`에서 옮기고 파일 로그를 쓴다. 번들한 JRE로 실행한다 | 사이드카만으로 로그·종료 기록이 지금과 같다 ([계획서](../plans/2026-10-10-tauri-sidecar-complete.md), [보고서](2026-10-10-tauri-sidecar-complete-report.md): 통과). 런타임은 JDK 복사본이다. `jlink`로 줄이는 것은 5단계에서도 하지 않았다(`jmods`가 있는 JDK를 받아야 한다. [5단계 보고서](2026-10-15-tauri-packaging-report.md)의 "남은 일") |
 | 2 | Rust 브리지: 명령 8개와 SSE → 이벤트. 토큰을 Rust 안에 숨긴다 | 브리지 계약 테스트 ([계획서](../plans/2026-10-11-tauri-rust-bridge.md), [보고서](2026-10-11-tauri-rust-bridge-report.md): 통과). 서버 변경 없음 |
 | 3 | 프런트엔드 이식: `AppStateHolder` 논리와 `Labels`, 화면. `shared` 로직 재사용 방식 확정 | 지금의 `AppStateHolderTest` 시나리오가 새 테스트에서 통과 ([계획서](../plans/2026-10-11-tauri-frontend-port.md), [보고서](2026-10-11-tauri-frontend-port-report.md): 통과). 재사용 방식은 TS 포팅과 같은 케이스 표 테스트이고 Kotlin 구현과의 대조 도구가 있다 |
 | 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 ([계획서](../plans/2026-10-11-tauri-desktop-features.md), [보고서](2026-10-11-tauri-desktop-features-report.md): 통과). 앱 데이터 폴더의 기본값이 `%APPDATA%\xGetSongs`(Compose와 같음)가 됐다 |
-| 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 ([계획서](../plans/2026-10-15-tauri-packaging.md)) |
+| 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 ([계획서](../plans/2026-10-15-tauri-packaging.md), [보고서](2026-10-15-tauri-packaging-report.md): 통과). 방식은 SFX가 아니라 셸 exe 뒤에 이미지를 붙이고 첫 실행에 `%LOCALAPPDATA%\xGetSongs\runtime\<해시>`로 풀어 쓰는 것이다(약 130MB 한 파일, `package-exe.bat`) |
 | 6 | `app/` 삭제, README·설계 문서 갱신 | `gradlew check` 통과 |
 | 7 | (선택) 가사 검색의 JavaFX 웹뷰를 WebView2로 교체 | 구글 가사 통합 테스트 재검증 |
 
@@ -122,8 +122,8 @@ UI 품질이 동기이므로 사이드카보다 먼저 확인한다. 가짜 데�
 | 위험 | 대응 |
 |---|---|
 | 화면이 기대만큼 나아지지 않는다. 이 마이그레이션의 유일한 이득이 UI 품질이므로 이것이 가장 큰 위험이다 | 0a에서 사이드카 없이 먼저 확인한다. 통과하지 못하면 0b 이후를 하지 않는다 |
-| 단일 exe: Tauri의 `resources`는 exe에 내장되지 않는다. Enigma Virtual Box는 자식 프로세스(`java.exe`)가 가상 파일 시스템을 못 볼 수 있다 | 5단계에서 풀어서 실행하는 SFX를 기본 후보로 두고 측정으로 정한다 |
-| WebView2 런타임: Windows 11에는 있지만 Windows 10은 따로 설치해야 한다 | 5단계에서 "설치 없는 exe" 목표와 조율한다 |
+| 단일 exe: Tauri의 `resources`는 exe에 내장되지 않는다. Enigma Virtual Box는 자식 프로세스(`java.exe`)가 가상 파일 시스템을 못 볼 수 있다 | 정함(5단계): SFX 대신 셸 exe 뒤에 이미지를 붙이고 첫 실행에만 풀어 쓴다. 측정과 이유는 5단계 보고서 |
+| WebView2 런타임: Windows 11에는 있지만 Windows 10은 따로 설치해야 한다 | 정함(5단계): 시작할 때 레지스트리로 확인하고, 없으면 안내 상자를 띄워 내려받기 페이지를 연다. 설치 파일을 exe에 넣지 않는다 |
 | 로그 위치: 지금은 `jpackage.app-path`를 기준으로 `log\`를 정한다 | 1단계에서 사이드카용 규칙을 정하고 README를 고친다 |
 | `settings.json`을 쓰는 곳이 둘이 되면 충돌한다 | 4단계에서 쓰는 주체를 한 곳으로 정한다 (정함: Rust 셸 한 곳, 4단계) |
 | JavaFX가 JVM을 붙잡아 종료가 안 된다 | 사이드카는 `exitProcess`로 끝내고 `FxWebViewBrowser.close()`는 서버 scope가 끝날 때 불린다 |

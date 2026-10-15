@@ -2528,7 +2528,7 @@ Expected(계획을 쓸 때, 조용한 PC): 푸는 데 중앙값 약 1.5~1.7초, 
 $env:Path += ";$env:USERPROFILE\.cargo\bin"; node $env:TEMP\xgs-bridge-check\mutate.mjs C:\Projects\xGetSongs\sidecar-host
 ```
 
-Expected: 열두 줄이 모두 `caught`이고 끝이 `all mutations were caught`(몇 분 걸린다: 변이마다 시험을 돌린다. 끝나면 파일이 원래대로 돌아와 있다: `git status`가 깨끗해야 한다).
+Expected: 열두 줄이 모두 `caught`이고 끝이 `all mutations were caught`(몇 분 걸린다: 변이마다 시험을 돌린다. 끝나면 파일이 원래대로 돌아와 있다: `git status`가 깨끗해야 한다. **첫 변이(경로 검사 제거)는 시험이 실패하는 동안 `C:/drive.txt`를 실제로 풀어 `sidecar-host\drive.txt`를 남긴다**(드라이브 상대 경로). 보이면 `[IO.File]::Delete`로 지운다. 실행했을 때 실제로 생겼다).
 
 - [ ] **Step 7: 전체 회귀 (P8)**
 
