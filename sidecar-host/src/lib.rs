@@ -6,6 +6,7 @@ pub mod folder;
 pub mod handshake;
 pub mod job;
 pub mod lifecycle;
+pub mod payload;
 pub mod settings;
 pub mod sidecar;
 pub mod sse;

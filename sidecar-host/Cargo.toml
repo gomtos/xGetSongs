@@ -9,6 +9,9 @@ description = "Starts, talks to and stops the Kotlin sidecar of xGetSongs, and t
 ureq = { version = "2", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+flate2 = "1.1.10"
+sha2 = "0.10.9"
 
 [target.'cfg(windows)'.dependencies]
 win32job = "2"
+winreg = "0.56.0"
