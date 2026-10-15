@@ -4897,10 +4897,13 @@ dependencies = [
 name = "xgs-sidecar"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "serde",
  "serde_json",
+ "sha2",
  "ureq",
  "win32job",
+ "winreg",
 ]
 
 [[package]]

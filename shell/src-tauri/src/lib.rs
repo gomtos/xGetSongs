@@ -5,7 +5,7 @@ use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 use xgs_sidecar::{
-    app_data_dir, folder, job, Bridge, BridgeError, CloseDecision, CloseGate, Lifecycle, SettingsFile, Sidecar, SidecarConfig,
+    app_data_dir, folder, job, webview2, Bridge, BridgeError, CloseDecision, CloseGate, Lifecycle, SettingsFile, Sidecar, SidecarConfig,
     UserSettings,
 };
 
@@ -132,7 +132,7 @@ fn close_window(window: tauri::WebviewWindow) {
 /// Check mode is on when the check script names a file in `XGS_BRIDGE_CHECK_FILE`; a normal run has no such variable and
 /// the two commands below refuse.
 fn check_file() -> Result<std::path::PathBuf, String> {
-    std::env::var_os("XGS_BRIDGE_CHECK_FILE").map(Into::into).ok_or_else(|| "not in check mode".to_string())
+    std::env::var_os("XGS_BRIDGE_CHECK_FILE").filter(|name| !name.is_empty()).map(Into::into).ok_or_else(|| "not in check mode".to_string())
 }
 
 /// The check page (`check.html`) reports what it saw as one `key=value` line of the check file.
@@ -209,11 +209,26 @@ async fn check_burst(count: u32, on_event: Channel<Value>) -> Result<(), String>
     .map_err(|error| error.to_string())?
 }
 
+/// Whether the window cannot open for want of the WebView2 runtime. The check script cannot take the runtime off the PC, so in check
+/// mode `XGS_FAKE_NO_WEBVIEW2` pretends it is not there.
+fn webview2_is_missing() -> bool {
+    let pretend = check_file().is_ok() && std::env::var_os("XGS_FAKE_NO_WEBVIEW2").is_some_and(|value| !value.is_empty());
+    pretend || webview2::installed_version().is_none()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // First of all: whatever happens to this process, the sidecar and its children go with it. (Whether this worked is not
     // recorded anywhere yet; the sidecar also ends by itself when its stdin closes.)
     let _ = job::kill_children_when_this_process_ends();
+
+    // Without WebView2 the window would fail to open and the app would end without a word: say what is missing instead.
+    if webview2_is_missing() {
+        if webview2::ask_to_install() {
+            webview2::open_download_page();
+        }
+        return;
+    }
 
     let app = tauri::Builder::default()
         // First of all: a second copy of the app ends here, while the plugins are set up, and brings the window of the first one to the
@@ -278,9 +293,10 @@ pub fn run() {
     // Only now: a second copy of the app has ended inside `build` (the single-instance plugin), so what starts here is the one sidecar
     // of the one app. (Started before the `Builder`, as it was, a second copy would start a sidecar too, and the sidecar clears the
     // `work` folder of the app data folder when it starts: the downloads of the first copy would fail.)
-    let config = SidecarConfig::from_env();
     app.manage(Lifecycle::start(move || {
-        let config = config?;
+        // Where the sidecar is, and for an exe that carries its runtime the unpacking of it (the first start only, a few seconds),
+        // are settled here: on the thread of the sidecar, with the window already open and showing that the app is starting.
+        let config = SidecarConfig::from_env()?;
         Sidecar::spawn(config.command(), &config.stderr_log(), SIDECAR_START_LIMIT)
     }));
     app.manage(SettingsFile::new(app_data_dir(|key| std::env::var_os(key)).join("settings.json")));
