@@ -30,6 +30,11 @@ pub fn app_data_dir(get: impl Fn(&str) -> Option<OsString>) -> PathBuf {
     given("USERPROFILE").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join(".xgetsongs")
 }
 
+/// The `java.exe` of a sidecar image.
+fn java_of(image: &Path) -> PathBuf {
+    image.join("runtime").join("bin").join("java.exe")
+}
+
 /// Where the runtime that an exe carries is unpacked to (a cache: it can be deleted and is made again). Below the app data folder
 /// when `XGS_SIDECAR_APPDATA` names one (so that a check that moves the app data folder moves this too), else in
 /// `%LOCALAPPDATA%\xGetSongs` (a few hundred MB do not belong in the roaming profile), else below the app data folder.
@@ -60,7 +65,15 @@ impl SidecarConfig {
         let get = |key: &str| get(key).filter(|value| !value.is_empty());
         let carried = match exe {
             Some(exe) if get("XGS_SIDECAR_LIB").is_none() && get("XGS_SIDECAR_DIR").is_none() => {
-                payload::ensure_extracted(exe, &runtime_cache_dir(get))?
+                let cache = runtime_cache_dir(get);
+                let mut image = payload::ensure_extracted(exe, &cache)?;
+                // A copy that lost its java.exe (an antivirus took it, a folder that was cleaned half-way) is unpacked again, once, instead
+                // of failing on every start until someone deletes the folder by hand.
+                if let Some(folder) = image.clone().filter(|folder| !java_of(folder).is_file()) {
+                    payload::discard(&folder);
+                    image = payload::ensure_extracted(exe, &cache)?;
+                }
+                image
             }
             _ => None,
         };
@@ -98,7 +111,7 @@ impl SidecarConfig {
                      XGS_SIDECAR_DIR (an image folder with runtime and lib), or put a sidecar folder next to the executable"
                         .to_string()
                 })?;
-            let java = image.join("runtime").join("bin").join("java.exe");
+            let java = java_of(&image);
             if !java.is_file() {
                 return Err(format!(
                     "no sidecar runtime: {} is missing (set XGS_SIDECAR_LIB for a development build, or XGS_SIDECAR_DIR)",
@@ -459,6 +472,38 @@ mod tests {
 
         assert!(config.java.starts_with(data.join("runtime")), "{:?}", config.java);
         assert_eq!(config.log_dir, None);
+    }
+
+    #[test]
+    fn an_unpacked_runtime_that_lost_its_java_is_unpacked_again() {
+        // E.g. an antivirus took java.exe out after the first unpack: the next start repairs it instead of failing on every start.
+        let scratch = Scratch::new("lost-java");
+        let exe = packed_exe(&scratch);
+        let data = scratch.0.join("data");
+        let names = || lookup(&[("XGS_SIDECAR_APPDATA", data.to_str().unwrap())]);
+        let first = SidecarConfig::resolve(names(), Some(&exe)).unwrap();
+        std::fs::remove_file(&first.java).unwrap();
+
+        let second = SidecarConfig::resolve(names(), Some(&exe)).unwrap();
+
+        assert_eq!(second.java, first.java);
+        assert_eq!(std::fs::read(&second.java).unwrap(), b"fake java");
+    }
+
+    #[test]
+    fn a_runtime_without_a_java_even_when_unpacked_fresh_is_an_error() {
+        let scratch = Scratch::new("no-java");
+        let image = scratch.0.join("image");
+        std::fs::create_dir_all(image.join("lib")).unwrap();
+        std::fs::write(image.join("lib").join("server.jar"), b"fake jar").unwrap();
+        let exe = scratch.0.join("shell.exe");
+        std::fs::write(&exe, b"MZ fake shell").unwrap();
+        let packed = scratch.0.join("xGetSongs.exe");
+        crate::payload::pack(&exe, &image, &packed).unwrap();
+
+        let error = SidecarConfig::resolve(lookup(&[("XGS_SIDECAR_APPDATA", scratch.text())]), Some(&packed)).unwrap_err();
+
+        assert!(error.contains("java.exe"), "{error}");
     }
 
     #[test]

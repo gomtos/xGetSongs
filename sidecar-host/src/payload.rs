@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const MAGIC: &[u8; 8] = b"XGSPAYLD";
 const VERSION: u32 = 1;
@@ -25,6 +26,9 @@ const FOOTER_LEN: u64 = 8 + 4 + 8 + 8 + 32;
 const COMPLETE_MARKER: &str = ".xgs-complete";
 const STORED: u8 = 0;
 const DEFLATED: u8 = 1;
+/// How long placing a finished folder keeps trying (see [place]): 20 tries, 250 ms apart.
+const PLACE_ATTEMPTS: u32 = 20;
+const PLACE_PAUSE: Duration = Duration::from_millis(250);
 /// No path of the sidecar image comes near this; a longer one is a damaged archive, not a reason to allocate.
 const MAX_PATH_LEN: u32 = 4096;
 
@@ -206,14 +210,34 @@ fn safe_relative(name: &str) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-/// Unpacks the archive at [footer] of [source] into the existing folder [target]. Returns how many files it made.
+/// A reader that hashes what is read through it.
+struct Hashing<R: Read> {
+    inner: R,
+    hasher: Sha256,
+}
+
+impl<R: Read> Read for Hashing<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.inner.read(buffer)?;
+        self.hasher.update(&buffer[..count]);
+        Ok(count)
+    }
+}
+
+/// Unpacks the archive at [footer] of [source] into the existing folder [target]. Returns how many files it made. The archive is hashed
+/// while it is read and has to match the hash in the footer once it is all read: a damaged exe (a bad copy, a disk error) is an error
+/// here, not a runtime that is used from then on.
 pub fn extract<R: Read + Seek>(source: &mut R, footer: &Footer, target: &Path) -> io::Result<usize> {
     source.seek(SeekFrom::Start(footer.offset))?;
-    let mut archive = BufReader::with_capacity(1 << 20, source.by_ref().take(footer.length));
+    let mut archive = BufReader::with_capacity(1 << 20, Hashing { inner: source.by_ref().take(footer.length), hasher: Sha256::new() });
     let mut files = 0usize;
     loop {
         let mut method = [0u8; 1];
         if archive.read(&mut method)? == 0 {
+            let seen: [u8; 32] = archive.get_ref().hasher.clone().finalize().into();
+            if seen != footer.key {
+                return Err(invalid("the runtime is damaged (its checksum does not match)"));
+            }
             return Ok(files);
         }
         let mut word = [0u8; 4];
@@ -261,10 +285,38 @@ fn remove_folder(folder: &Path) {
     let _ = fs::remove_dir_all(folder);
 }
 
+/// Removes a runtime folder that [ensure_extracted] returned and that turned out to be unusable, so that the next call unpacks it again.
+pub fn discard(folder: &Path) {
+    remove_folder(folder);
+}
+
 /// A name the cache makes for its own folders: a key (16 hex digits) or a half-made one (`<key>.partial-<pid>`).
 fn is_cache_name(name: &str) -> bool {
     let key = name.split(".partial-").next().unwrap_or(name);
     key.len() == 16 && key.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+}
+
+/// Moves the finished folder [partial] to [ready]. Windows refuses to rename a folder while anything inside it is open, and an antivirus
+/// scanner or an indexer looks at 493 new files for a moment: so a refusal is tried again [attempts] times, [pause] apart. Done as well
+/// when another copy of the app finished the same folder in the meantime (that one is as good; the spare is removed).
+fn place(partial: &Path, ready: &Path, attempts: u32, pause: Duration) -> io::Result<()> {
+    let mut attempt = 1;
+    loop {
+        match fs::rename(partial, ready) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                if is_complete(ready) {
+                    remove_folder(partial);
+                    return Ok(());
+                }
+                if attempt >= attempts {
+                    return Err(error);
+                }
+            }
+        }
+        attempt += 1;
+        std::thread::sleep(pause);
+    }
 }
 
 /// The folder with the runtime of [exe], unpacked into [cache] when it is not there yet. None when [exe] carries no runtime. The
@@ -288,12 +340,9 @@ pub fn ensure_extracted(exe: &Path, cache: &Path) -> Result<Option<PathBuf>, Str
             remove_folder(&partial);
             return Err(describe("풀지 못했습니다", error));
         }
-        if let Err(error) = fs::rename(&partial, &ready) {
+        if let Err(error) = place(&partial, &ready, PLACE_ATTEMPTS, PLACE_PAUSE) {
             remove_folder(&partial);
-            // Another copy of the app may have finished the same folder in the meantime: that one is as good.
-            if !is_complete(&ready) {
-                return Err(describe("자리에 놓지 못했습니다", error));
-            }
+            return Err(describe("자리에 놓지 못했습니다", error));
         }
     }
     if let Ok(entries) = fs::read_dir(cache) {
@@ -632,5 +681,122 @@ mod tests {
         let error = ensure_extracted(Path::new("C:\\no\\such\\shell.exe"), Path::new("C:\\no\\cache")).unwrap_err();
 
         assert!(error.contains("읽지 못했습니다"), "{error}");
+    }
+
+    /// A folder with one file in it, and a thread that keeps that file open for [hold] (an antivirus scanner or an indexer looks at new
+    /// files like this). Returns once the file is open.
+    fn hold_a_file_open_in(folder: &Path, hold: std::time::Duration) -> std::thread::JoinHandle<()> {
+        fs::create_dir_all(folder).unwrap();
+        let path = folder.join("held.txt");
+        fs::write(&path, b"held").unwrap();
+        let (opened, wait_for_open) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _open = File::open(&path).unwrap();
+            opened.send(()).unwrap();
+            std::thread::sleep(hold);
+        });
+        wait_for_open.recv().unwrap();
+        thread
+    }
+
+    #[test]
+    fn a_folder_with_a_file_open_in_it_cannot_be_renamed_at_that_moment() {
+        // The fact that placing a finished folder has to live with (Windows refuses to rename a folder while anything inside it is open).
+        let scratch = Scratch::new("held-fact");
+        let holder = hold_a_file_open_in(&scratch.path("partial"), std::time::Duration::from_millis(300));
+
+        let error = fs::rename(scratch.path("partial"), scratch.path("ready")).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error}");
+        holder.join().unwrap();
+    }
+
+    #[test]
+    fn placing_a_folder_waits_for_the_file_open_in_it_to_be_closed() {
+        let scratch = Scratch::new("place-waits");
+        let holder = hold_a_file_open_in(&scratch.path("partial"), std::time::Duration::from_millis(300));
+
+        place(&scratch.path("partial"), &scratch.path("ready"), 40, std::time::Duration::from_millis(25)).unwrap();
+
+        assert!(scratch.path("ready").join("held.txt").is_file());
+        assert!(!scratch.path("partial").exists());
+        holder.join().unwrap();
+    }
+
+    #[test]
+    fn placing_a_folder_gives_up_with_the_error_when_the_file_stays_open() {
+        let scratch = Scratch::new("place-gives-up");
+        let holder = hold_a_file_open_in(&scratch.path("partial"), std::time::Duration::from_millis(600));
+
+        let error = place(&scratch.path("partial"), &scratch.path("ready"), 3, std::time::Duration::from_millis(10)).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error}");
+        assert!(!scratch.path("ready").exists());
+        holder.join().unwrap();
+    }
+
+    #[test]
+    fn placing_a_folder_is_done_when_another_copy_finished_the_same_one() {
+        let scratch = Scratch::new("place-finished");
+        fs::create_dir_all(scratch.path("partial")).unwrap();
+        fs::create_dir_all(scratch.path("ready")).unwrap();
+        fs::write(scratch.path("ready").join(COMPLETE_MARKER), b"done").unwrap();
+
+        place(&scratch.path("partial"), &scratch.path("ready"), 40, std::time::Duration::from_secs(1)).unwrap();
+
+        assert!(!scratch.path("partial").exists(), "the spare copy is removed");
+        assert!(is_complete(&scratch.path("ready")));
+    }
+
+    /// An exe that carries a runtime whose only archive entry is stored as it is, with the byte at [flip_from_end] (counted from the end
+    /// of the data) changed: the entry's sizes are all still right, only the checksum of the archive is not.
+    fn exe_with_a_damaged_byte(scratch: &Scratch) -> PathBuf {
+        let (mut bytes, _) = archive_of(&[("lib/a.txt", b"the data of a file that is damaged afterwards")]);
+        let last_data_byte = bytes.len() - FOOTER_LEN as usize - 1;
+        bytes[last_data_byte] ^= 0x01;
+        let exe = scratch.path("damaged.exe");
+        fs::write(&exe, bytes).unwrap();
+        exe
+    }
+
+    #[test]
+    fn a_damaged_byte_is_found_by_the_checksum_and_is_an_error() {
+        let scratch = Scratch::new("checksum");
+        let exe = exe_with_a_damaged_byte(&scratch);
+        let mut file = File::open(&exe).unwrap();
+        let footer = read_footer(&mut file).unwrap().expect("a footer");
+        let target = scratch.path("out");
+        fs::create_dir_all(&target).unwrap();
+
+        let error = extract(&mut file, &footer, &target).unwrap_err();
+
+        assert!(error.to_string().contains("checksum"), "{error}");
+    }
+
+    #[test]
+    fn a_damaged_runtime_is_never_made_ready_and_leaves_nothing_in_the_cache() {
+        let scratch = Scratch::new("checksum-cache");
+        let exe = exe_with_a_damaged_byte(&scratch);
+        let cache = scratch.path("cache");
+
+        let error = ensure_extracted(&exe, &cache).unwrap_err();
+
+        assert!(error.contains("풀지 못했습니다") && error.contains("checksum"), "{error}");
+        assert_eq!(names_in(&cache), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_runtime_that_was_packed_right_passes_the_checksum() {
+        // (every round trip above passes it too; this one says so on its own and with a second pack of the same image)
+        let scratch = Scratch::new("checksum-ok");
+        let (exe, image) = (fake_exe(&scratch), image(&scratch));
+        let output = scratch.path("packed.exe");
+        pack(&exe, &image, &output).unwrap();
+        let mut file = File::open(&output).unwrap();
+        let footer = read_footer(&mut file).unwrap().expect("a footer");
+        let target = scratch.path("out");
+        fs::create_dir_all(&target).unwrap();
+
+        assert_eq!(extract(&mut file, &footer, &target).unwrap(), 5);
     }
 }
