@@ -10,6 +10,7 @@ pub mod payload;
 pub mod settings;
 pub mod sidecar;
 pub mod sse;
+pub mod webview2;
 
 #[cfg(test)]
 mod fake_server;
