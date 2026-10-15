@@ -76,7 +76,7 @@
 | 2 | Rust 브리지: 명령 8개와 SSE → 이벤트. 토큰을 Rust 안에 숨긴다 | 브리지 계약 테스트 ([계획서](../plans/2026-10-11-tauri-rust-bridge.md), [보고서](2026-10-11-tauri-rust-bridge-report.md): 통과). 서버 변경 없음 |
 | 3 | 프런트엔드 이식: `AppStateHolder` 논리와 `Labels`, 화면. `shared` 로직 재사용 방식 확정 | 지금의 `AppStateHolderTest` 시나리오가 새 테스트에서 통과 ([계획서](../plans/2026-10-11-tauri-frontend-port.md), [보고서](2026-10-11-tauri-frontend-port-report.md): 통과). 재사용 방식은 TS 포팅과 같은 케이스 표 테스트이고 Kotlin 구현과의 대조 도구가 있다 |
 | 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 ([계획서](../plans/2026-10-11-tauri-desktop-features.md), [보고서](2026-10-11-tauri-desktop-features-report.md): 통과). 앱 데이터 폴더의 기본값이 `%APPDATA%\xGetSongs`(Compose와 같음)가 됐다 |
-| 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 |
+| 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 ([계획서](../plans/2026-10-15-tauri-packaging.md)) |
 | 6 | `app/` 삭제, README·설계 문서 갱신 | `gradlew check` 통과 |
 | 7 | (선택) 가사 검색의 JavaFX 웹뷰를 WebView2로 교체 | 구글 가사 통합 테스트 재검증 |
 
