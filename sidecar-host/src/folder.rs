@@ -1,5 +1,6 @@
-//! Folders for the screen. Ported from `app/src/desktopMain/kotlin/com/xgetsongs/app/ExplorerOpener.kt` and `FolderPicker.kt`: the
-//! tests of this file are the cases of `ExplorerOpenerTest.kt`, one for one and under the same name in snake case.
+//! Folders for the screen. Ported from `app/src/desktopMain/kotlin/com/xgetsongs/app/ExplorerOpener.kt` and `FolderPicker.kt` (the Compose
+//! app, deleted in stage 6 of the migration: `git show f9dbcba:<that path>`): the tests of this file are the cases of
+//! `ExplorerOpenerTest.kt`, one for one and under the same name in snake case.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

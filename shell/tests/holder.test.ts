@@ -1,5 +1,6 @@
-// The scenarios of app/src/commonTest/kotlin/com/xgetsongs/app/state/AppStateHolderTest.kt, one test per Kotlin test and under
-// the same name (tests/kotlin-coverage.test.ts checks that none is missing). Kotlin's `runCurrent()` is `await flush()`,
+// The scenarios of app/src/commonTest/kotlin/com/xgetsongs/app/state/AppStateHolderTest.kt (the Compose app, deleted in stage 6 of the
+// migration: `git show f9dbcba:<that path>`), one test per Kotlin test and under the same name (tests/kotlin-coverage.test.ts checked
+// that none was missing while the file existed). Kotlin's `runCurrent()` is `await flush()`,
 // `advanceTimeBy` is `timers.advance`, and the test time source is `clock.ms`.
 
 import assert from "node:assert/strict";

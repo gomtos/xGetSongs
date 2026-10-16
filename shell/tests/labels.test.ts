@@ -1,5 +1,5 @@
-// The cases of app/src/commonTest/kotlin/com/xgetsongs/app/state/LabelsTest.kt, one test per Kotlin test and under the same
-// name. (Kotlin's `Duration` is milliseconds here.)
+// The cases of app/src/commonTest/kotlin/com/xgetsongs/app/state/LabelsTest.kt (the Compose app, deleted in stage 6 of the migration:
+// `git show f9dbcba:<that path>`), one test per Kotlin test and under the same name. (Kotlin's `Duration` is milliseconds here.)
 
 import assert from "node:assert/strict";
 import test from "node:test";

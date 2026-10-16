@@ -1,4 +1,5 @@
-// Ported from app/src/commonMain/kotlin/com/xgetsongs/app/state/Labels.kt: the texts of the screen.
+// Ported from app/src/commonMain/kotlin/com/xgetsongs/app/state/Labels.kt (the Compose app, deleted in stage 6 of the migration:
+// `git show f9dbcba:<that path>`): the texts of the screen.
 
 import type { LyricsOutcome } from "../bridge/types.ts";
 import { MAX_RANK, MIN_RANK, destinationFolder } from "../logic/filename.ts";

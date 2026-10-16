@@ -1,4 +1,5 @@
-// Ported from app/src/commonMain/kotlin/com/xgetsongs/app/state/UiState.kt and app/.../settings/*.kt.
+// Ported from app/src/commonMain/kotlin/com/xgetsongs/app/state/UiState.kt and app/.../settings/*.kt (the Compose app, deleted in
+// stage 6 of the migration: `git show f9dbcba:<that path>`).
 
 import type {
   ActionResult,

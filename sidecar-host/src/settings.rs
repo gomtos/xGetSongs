@@ -1,7 +1,7 @@
 //! The options the app restores on the next start, kept in `settings.json` in the app data folder. Ported from
 //! `app/src/commonMain/kotlin/com/xgetsongs/app/settings/UserSettings.kt` and `app/src/desktopMain/kotlin/com/xgetsongs/app/JsonSettingsStore.kt`:
 //! the file is the one the Compose app wrote and reads, and the tests of this file are the cases of `JsonSettingsStoreTest.kt`, one for
-//! one and under the same name in snake case.
+//! one and under the same name in snake case. (The Compose app is deleted since stage 6 of the migration: `git show f9dbcba:<that path>`.)
 //!
 //! This is the only writer of the file: the sidecar never touches it.
 

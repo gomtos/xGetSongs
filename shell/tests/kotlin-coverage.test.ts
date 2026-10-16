@@ -1,12 +1,12 @@
-// Guards the port: every test of the Kotlin suites that these files were ported from has a test of the same name here (the Rust
-// ports under the same name in snake case). The Kotlin files are the specification; when one of them gains a test, this fails until
-// the port gains it too.
+// Guards the port: every test of the Kotlin suites of `shared/` that `src/logic` was ported from has a test of the same name here. The
+// Kotlin files are the specification; when one of them gains a test, this fails until the port gains it too.
 //
-// It looks the Kotlin files up in the repository. When `app/` is gone (stage 6 of the migration deletes it) the app's suites are
-// skipped; `shared/` stays, so the two suites of `shared` keep being compared.
+// The suites of the Compose app (`app/`), which `holder.test.ts` and `labels.test.ts` and the Rust ports in `sidecar-host` were ported
+// from, are gone with the app (stage 6 of the migration deleted it): they can be read in the git history (`git show f9dbcba:app/src/...`),
+// and what was ported from them is now tested only by the ports themselves.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const repository = new URL("../../", import.meta.url);
@@ -19,16 +19,12 @@ function kotlinTests(path: URL): string[] {
 const PORTS: ReadonlyArray<readonly [kotlin: string, port: string]> = [
   ["shared/src/commonTest/kotlin/com/xgetsongs/shared/filename/FilenameFormatterTest.kt", "filename.test.ts"],
   ["shared/src/commonTest/kotlin/com/xgetsongs/shared/input/InputClassifierTest.kt", "input.test.ts"],
-  ["app/src/commonTest/kotlin/com/xgetsongs/app/state/LabelsTest.kt", "labels.test.ts"],
-  ["app/src/commonTest/kotlin/com/xgetsongs/app/state/AppStateHolderTest.kt", "holder.test.ts"],
 ];
 
 for (const [kotlin, port] of PORTS) {
-  const kotlinPath = new URL(kotlin, repository);
-  // Only the app's suites may be absent (stage 6 deletes `app/`). A missing `shared` file means it was moved or renamed: fail.
-  const skip = kotlin.startsWith("app/") && !existsSync(kotlinPath) && "the Kotlin file is not in this checkout";
-  test(`every test of ${kotlin.split("/").pop()} is ported to ${port}`, { skip }, () => {
-    const names = kotlinTests(kotlinPath);
+  test(`every test of ${kotlin.split("/").pop()} is ported to ${port}`, () => {
+    // A missing file means it was moved or renamed (readFileSync throws): fail.
+    const names = kotlinTests(new URL(kotlin, repository));
     const ported = new Set([...readFileSync(new URL(port, import.meta.url), "utf8").matchAll(/^test\("(\w+)"/gm)].map((match) => match[1]));
 
     assert.ok(names.length > 0, "the Kotlin file has tests");
@@ -39,70 +35,3 @@ for (const [kotlin, port] of PORTS) {
     );
   });
 }
-
-// The desktop code that moved to Rust (stage 4): the tests of the Kotlin files are ported to `#[test] fn` of the same name in snake
-// case (`aMissingFileGivesTheDefaults` is `a_missing_file_gives_the_defaults`), where Kotlin's `null` is Rust's `None` and what
-// Kotlin does not `throw` Rust does not `panic` at.
-const RUST_PORTS: ReadonlyArray<readonly [kotlin: string, rust: string]> = [
-  ["app/src/desktopTest/kotlin/com/xgetsongs/app/ExplorerOpenerTest.kt", "sidecar-host/src/folder.rs"],
-  ["app/src/desktopTest/kotlin/com/xgetsongs/app/JsonSettingsStoreTest.kt", "sidecar-host/src/settings.rs"],
-];
-
-/** `aPathBelowARegularFile` is `a_path_below_a_regular_file`; a word of one letter (`A`) is a word. */
-/** The names of the `#[test]` functions of a Rust file that run: not commented out, not `#[ignore]`d, and a `fn` that is a test at all. */
-export function rustTests(source: string): Set<string> {
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-  const names = new Set<string>();
-  for (const match of code.matchAll(/((?:#\[[^\]]*\]\s*)+)fn\s+(\w+)\s*\(/g)) {
-    if (/#\[test\]/.test(match[1]) && !/#\[ignore/.test(match[1])) names.add(match[2]);
-  }
-  return names;
-}
-
-const snakeCase = (name: string) =>
-  name
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
-    .toLowerCase();
-const rustName = (name: string) =>
-  snakeCase(name)
-    .split("_")
-    .map((word) => (word === "null" ? "none" : word === "throw" ? "panic" : word))
-    .join("_");
-
-for (const [kotlin, rust] of RUST_PORTS) {
-  const kotlinPath = new URL(kotlin, repository);
-  const skip = !existsSync(kotlinPath) && "the Kotlin file is not in this checkout";
-  test(`every test of ${kotlin.split("/").pop()} is ported to ${rust}`, { skip }, () => {
-    const names = kotlinTests(kotlinPath);
-    const ported = rustTests(readFileSync(new URL(rust, repository), "utf8"));
-
-    assert.ok(names.length > 0, "the Kotlin file has tests");
-    assert.deepEqual(
-      names.filter((name) => !ported.has(rustName(name))),
-      [],
-      `ported ${names.filter((name) => ported.has(rustName(name))).length} of ${names.length}`,
-    );
-  });
-}
-
-test("theNamesOfTheKotlinTestsBecomeTheNamesOfTheRustOnes", () => {
-  assert.equal(rustName("aMissingFileGivesTheDefaults"), "a_missing_file_gives_the_defaults");
-  assert.equal(rustName("aUtf16FileGivesTheDefaults"), "a_utf16_file_gives_the_defaults");
-  assert.equal(rustName("aPathBelowARegularFileReturnsTheDirectoryAroundTheFile"), "a_path_below_a_regular_file_returns_the_directory_around_the_file");
-  assert.equal(rustName("aBlankPathReturnsNull"), "a_blank_path_returns_none");
-  assert.equal(rustName("saveOverADirectoryThatIsNotEmptyDoesNotThrow"), "save_over_a_directory_that_is_not_empty_does_not_panic");
-});
-
-test("onlyTestsThatRunCountAsPortedOnes", () => {
-  const source = [
-    "#[test]\nfn runs() {}",
-    "#[test]\n#[ignore]\nfn ignored() {}",
-    "// #[test]\n// fn commented() {}",
-    "/* #[test]\nfn blocked() {} */",
-    "fn helper() {}",
-    "#[test]\n#[should_panic]\nfn also_runs() {}",
-  ].join("\n");
-
-  assert.deepEqual([...rustTests(source)].sort(), ["also_runs", "runs"]);
-});

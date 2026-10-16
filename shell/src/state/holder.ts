@@ -1,4 +1,5 @@
-// Ported from app/src/commonMain/kotlin/com/xgetsongs/app/state/AppStateHolder.kt: all the screen logic. The DOM code only
+// Ported from app/src/commonMain/kotlin/com/xgetsongs/app/state/AppStateHolder.kt (the Compose app, deleted in stage 6 of the
+// migration: `git show f9dbcba:<that path>`): all the screen logic. The DOM code only
 // renders `getState()` and calls these functions. Coroutines became promises; the 400 ms wait before the options are saved and
 // the clock behind the elapsed time are given in, so that the tests run in no time at all.
 
