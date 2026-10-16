@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use xgs_sidecar::{Bridge, Handshake, Sidecar, SidecarConfig};
 
-fn work_folder() -> PathBuf {
-    let folder = std::env::temp_dir().join(format!("xgs-real-sidecar-test-{}", std::process::id()));
+fn work_folder(name: &str) -> PathBuf {
+    let folder = std::env::temp_dir().join(format!("xgs-real-sidecar-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     folder
 }
@@ -50,7 +50,7 @@ fn read_when_present(path: &Path) -> String {
 #[test]
 #[ignore = "starts the real sidecar: set XGS_SIDECAR_DIR to server/build/sidecar-image"]
 fn the_bridge_speaks_the_contract_of_the_real_server() {
-    let folder = work_folder();
+    let folder = work_folder("contract");
     let mut sidecar = start(&folder);
     let token = sidecar.handshake.token.clone();
     let bridge = Bridge::new(sidecar.handshake.clone());
@@ -116,5 +116,36 @@ fn the_bridge_speaks_the_contract_of_the_real_server() {
         }
     }
     assert!(files >= 2, "the log folder holds the log and the marker, not {files} files");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+#[ignore = "starts the real sidecar: set XGS_SIDECAR_DIR to server/build/sidecar-image"]
+fn the_real_server_answers_an_empty_browser_poll_with_no_content() {
+    let folder = work_folder("empty-poll");
+    let mut sidecar = start(&folder);
+    let bridge = Bridge::new(sidecar.handshake.clone());
+
+    // Nobody asked the hidden browser for anything: the poll ends after its wait with 204, which the bridge reads as "no command".
+    let started = Instant::now();
+    let command = bridge.next_browser_command(Duration::from_millis(200)).expect("the poll");
+
+    assert_eq!(command, None);
+    assert!(started.elapsed() >= Duration::from_millis(150), "it waited: {:?}", started.elapsed());
+    assert!(sidecar.shutdown(Duration::from_secs(10)), "it ended on its own");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+#[ignore = "starts the real sidecar: set XGS_SIDECAR_DIR to server/build/sidecar-image"]
+fn an_answer_nobody_waits_for_is_refused_with_the_servers_message() {
+    let folder = work_folder("unknown-answer");
+    let mut sidecar = start(&folder);
+    let bridge = Bridge::new(sidecar.handshake.clone());
+
+    let refused = bridge.answer_browser_command(&json!({"id": "nobody-asked", "ok": true, "value": null, "error": null}));
+
+    assert_eq!(refused.unwrap_err().message, "기다리는 명령이 없습니다.");
+    assert!(sidecar.shutdown(Duration::from_secs(10)), "it ended on its own");
     let _ = std::fs::remove_dir_all(&folder);
 }

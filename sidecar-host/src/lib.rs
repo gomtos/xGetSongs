@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod browser;
 pub mod close_gate;
 pub mod config;
 pub mod error;

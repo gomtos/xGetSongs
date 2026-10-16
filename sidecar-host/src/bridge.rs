@@ -14,6 +14,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a call that is answered at once may take. The calls that wait for yt-dlp (resolve, install, update) and the
 /// event stream have no limit, as in the app's own client (`requestTimeout = 0`).
 const SHORT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// What a poll for the hidden browser may last beyond the wait it asked the server for.
+const BROWSER_POLL_MARGIN: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct Bridge {
@@ -96,6 +98,24 @@ impl Bridge {
         }
     }
 
+    /// `GET /browser/next?wait=<ms>`: the next command for the shell's hidden browser as the server's JSON (see `browser.rs`), or
+    /// None when none came within [wait] (204). It may last longer than the short limit: [wait] and a margin.
+    pub fn next_browser_command(&self, wait: Duration) -> Result<Option<Value>, BridgeError> {
+        let path = format!("/browser/next?wait={}", wait.as_millis());
+        let response = self.send("GET", &path, None, Limit::Within(wait + BROWSER_POLL_MARGIN))?;
+        if response.status() == 204 {
+            return Ok(None);
+        }
+        let text = response.into_string().map_err(|_| BridgeError::lost())?;
+        serde_json::from_str(&text).map(Some).map_err(|_| BridgeError::new(UNREADABLE_ANSWER))
+    }
+
+    /// `POST /browser/answer`: [answer] is a `BrowserAnswer`, passed on as it is. Fails with the server's message when nobody waits
+    /// for it any more (404).
+    pub fn answer_browser_command(&self, answer: &Value) -> Result<(), BridgeError> {
+        self.send("POST", "/browser/answer", Some(answer), Limit::Short).map(|_| ())
+    }
+
     fn json(&self, method: &str, path: &str, body: Option<&Value>, limit: Limit) -> Result<Value, BridgeError> {
         let text = self.send(method, path, body, limit)?.into_string().map_err(|_| BridgeError::lost())?;
         serde_json::from_str(&text).map_err(|_| BridgeError::new(UNREADABLE_ANSWER))
@@ -103,8 +123,10 @@ impl Bridge {
 
     fn send(&self, method: &str, path: &str, body: Option<&Value>, limit: Limit) -> Result<ureq::Response, BridgeError> {
         let mut agent = ureq::AgentBuilder::new().timeout_connect(CONNECT_TIMEOUT);
-        if let Limit::Short = limit {
-            agent = agent.timeout(self.short_timeout);
+        match limit {
+            Limit::Short => agent = agent.timeout(self.short_timeout),
+            Limit::Within(longest) => agent = agent.timeout(longest),
+            Limit::None => {}
         }
         let url = format!("http://127.0.0.1:{}{}", self.handshake.port, path);
         let request = agent.build().request(method, &url).set("X-XGS-Token", &self.handshake.token);
@@ -124,6 +146,8 @@ impl Bridge {
 #[derive(Clone, Copy)]
 enum Limit {
     Short,
+    /// As long as this, and no longer: a poll that waits for the server on purpose.
+    Within(Duration),
     None,
 }
 
@@ -576,5 +600,65 @@ mod tests {
 
         assert_eq!(result.unwrap_err().message, LISTENER_GONE);
         assert_eq!(delivered, 1, "no event after the listener said it was gone");
+    }
+
+    // ---- the hidden browser of the shell ----
+
+    #[test]
+    fn a_browser_poll_is_a_get_with_the_wait_in_milliseconds_and_the_token() {
+        let server = FakeServer::one(empty_reply(204, "No Content"));
+
+        bridge(&server).next_browser_command(Duration::from_secs(25)).unwrap();
+
+        let sent = &server.requests()[0];
+        assert!(sent.head.starts_with("get /browser/next?wait=25000 http/1.1"), "{}", sent.head);
+        assert!(sent.head.contains(&format!("x-xgs-token: {TOKEN}")), "{}", sent.head);
+    }
+
+    #[test]
+    fn an_empty_browser_poll_answers_none() {
+        let server = FakeServer::one(empty_reply(204, "No Content"));
+
+        assert_eq!(bridge(&server).next_browser_command(Duration::from_millis(100)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_browser_poll_returns_the_command_as_it_is() {
+        let server = FakeServer::one(json_reply(200, "OK", r#"{"type":"load","id":"c-1","url":"https://www.google.com/search?q=한글"}"#));
+
+        let command = bridge(&server).next_browser_command(Duration::from_millis(100)).unwrap().unwrap();
+
+        assert_eq!(command["type"], "load");
+        assert_eq!(command["id"], "c-1");
+        assert_eq!(command["url"], "https://www.google.com/search?q=한글");
+    }
+
+    #[test]
+    fn a_browser_poll_may_last_longer_than_the_short_limit() {
+        let mut script = vec![Step::Pause(Duration::from_millis(600))];
+        script.extend(empty_reply(204, "No Content"));
+        let server = FakeServer::one(script);
+
+        let polled = bridge(&server).with_short_timeout(Duration::from_millis(200)).next_browser_command(Duration::from_secs(1));
+
+        assert_eq!(polled.unwrap(), None, "the limit of a poll is its wait plus a margin, not the short limit");
+    }
+
+    #[test]
+    fn an_answer_is_posted_as_json_and_a_refusal_carries_the_servers_message() {
+        let server = FakeServer::start(vec![
+            empty_reply(204, "No Content"),
+            json_reply(404, "Not Found", r#"{"message":"기다리는 명령이 없습니다."}"#),
+        ]);
+        let answer = json!({"id":"c-1","ok":true,"value":"한글","error":null});
+
+        bridge(&server).answer_browser_command(&answer).unwrap();
+        let refused = bridge(&server).answer_browser_command(&answer).unwrap_err();
+
+        let sent = &server.requests()[0];
+        assert!(sent.head.starts_with("post /browser/answer http/1.1"), "{}", sent.head);
+        assert!(sent.head.contains("content-type: application/json"), "{}", sent.head);
+        assert_eq!(serde_json::from_slice::<Value>(&sent.body).unwrap(), answer);
+        assert_eq!(refused.message, "기다리는 명령이 없습니다.");
     }
 }
