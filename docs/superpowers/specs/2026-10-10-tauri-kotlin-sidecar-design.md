@@ -79,7 +79,7 @@
 | 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 ([계획서](../plans/2026-10-11-tauri-desktop-features.md), [보고서](2026-10-11-tauri-desktop-features-report.md): 통과). 앱 데이터 폴더의 기본값이 `%APPDATA%\xGetSongs`(Compose와 같음)가 됐다 |
 | 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 ([계획서](../plans/2026-10-15-tauri-packaging.md), [보고서](2026-10-15-tauri-packaging-report.md): 통과). 방식은 SFX가 아니라 셸 exe 뒤에 이미지를 붙이고 첫 실행에 `%LOCALAPPDATA%\xGetSongs\runtime\<해시>`로 풀어 쓰는 것이다(약 130MB 한 파일, `package-exe.bat`) |
 | 6 | `app/` 삭제, README·설계 문서 갱신 | `gradlew check` 통과 ([계획서](../plans/2026-10-16-tauri-cleanup.md), [보고서](2026-10-16-tauri-cleanup-report.md): 통과) |
-| 7 | (선택) 가사 검색의 JavaFX 웹뷰를 WebView2로 교체 | 구글 가사 통합 테스트 재검증 |
+| 7 | (선택) 가사 검색의 JavaFX 웹뷰를 WebView2로 교체 | 구글 가사 통합 테스트 재검증 ([계획서](../plans/2026-10-16-tauri-webview2-lyrics.md), [보고서](2026-10-16-tauri-webview2-lyrics-report.md): 구글 없는 점검 통과, exe 129.2→86.2MB; 실제 구글 확인은 사용자의 허락을 기다림) |
 
 각 단계의 계획서는 앞 단계의 관문을 통과한 뒤에 쓴다. 0단계 결과가 1~5단계의 방식을 바꿀 수 있기 때문이다. 0a의 UI 관문이 통과하지 못하면 0b 이후는 하지 않는다(UI가 나아지지 않으면 마이그레이션이 줄 이득이 없다).
 

@@ -2,6 +2,8 @@
 
 작성일: 2026-10-08 (2026-10-09 실측 결과로 개정)
 
+> **2026-10-17:** 이 설계가 말하는 숨은 웹뷰(JavaFX `WebEngine`, `FxWebViewBrowser`)는 Tauri 이식의 7단계에서 셸의 숨은 WebView2 창으로 바뀌었다([계획서](../plans/2026-10-16-tauri-webview2-lyrics.md), [보고서](2026-10-16-tauri-webview2-lyrics-report.md)). 구글에 대한 규칙(곡당 1회, 호출 간격, 차단 시 쉼, 우회하지 않음)과 `GoogleLyricsFetcher`·`PageWatch`·`LyricsCardParser` 같은 순수 논리는 그대로이고, 아래의 JavaFX 서술은 그때의 설계로 읽는다.
+
 ## 1. 목표
 
 가사 검색(스펙 6.4)의 마지막 단계로, 구글 검색 결과의 "가사 카드"에서 가사를 가져온다. 입력은 가수와 제목, 출력은 줄 단위 가사 텍스트(문단 구분 보존)다.
