@@ -61,7 +61,11 @@ val sidecarImage by tasks.registering(Sync::class) {
     }
     into("runtime") {
         from(runtimeHome)
-        exclude("lib/src.zip", "jmods/**", "include/**")
+        // Nothing here is needed to run: the sources, the headers, the import library of jvm.dll, the symbols of javac.
+        exclude("lib/src.zip", "jmods/**", "include/**", "lib/ct.sym", "lib/jvm.lib")
+        // The runtime ships its copies of the Visual C++ runtime as `*.dll.ortbak`, which no one loads; java.exe needs them next to
+        // it on a PC that has no Visual C++ Redistributable.
+        rename("(.*\\.dll)\\.ortbak", "$1")
     }
 }
 

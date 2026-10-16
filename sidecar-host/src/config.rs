@@ -1,3 +1,4 @@
+use crate::payload;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,10 +30,61 @@ pub fn app_data_dir(get: impl Fn(&str) -> Option<OsString>) -> PathBuf {
     given("USERPROFILE").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join(".xgetsongs")
 }
 
+/// The `java.exe` of a sidecar image.
+fn java_of(image: &Path) -> PathBuf {
+    image.join("runtime").join("bin").join("java.exe")
+}
+
+/// Where the runtime that an exe carries is unpacked to (a cache: it can be deleted and is made again). Below the app data folder
+/// when `XGS_SIDECAR_APPDATA` names one (so that a check that moves the app data folder moves this too), else in
+/// `%LOCALAPPDATA%\xGetSongs` (a few hundred MB do not belong in the roaming profile), else below the app data folder.
+pub fn runtime_cache_dir(get: impl Fn(&str) -> Option<OsString>) -> PathBuf {
+    let given = |name: &str| get(name).filter(|value| !value.is_empty());
+    if let Some(dir) = given("XGS_SIDECAR_APPDATA") {
+        return PathBuf::from(dir).join("runtime");
+    }
+    if let Some(local) = given("LOCALAPPDATA") {
+        return PathBuf::from(local).join("xGetSongs").join("runtime");
+    }
+    app_data_dir(&get).join("runtime")
+}
+
 impl SidecarConfig {
     pub fn from_env() -> Result<SidecarConfig, String> {
-        let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
-        SidecarConfig::from_lookup(|key| std::env::var_os(key), exe_dir.as_deref())
+        let exe = std::env::current_exe().ok();
+        SidecarConfig::resolve(|key| std::env::var_os(key), exe.as_deref())
+    }
+
+    /// [from_lookup] for the running program [exe]: when neither `XGS_SIDECAR_LIB` nor `XGS_SIDECAR_DIR` says where the sidecar is
+    /// and [exe] carries one (see [crate::payload]), the sidecar is started from a copy of it unpacked to [runtime_cache_dir] (the
+    /// first start takes a while: that is where the time goes). An exe that carries a runtime but cannot give it up is an error, not
+    /// a reason to look elsewhere. The log folder is then the sidecar's own choice (the app data folder), not `log` next to an exe
+    /// that may lie anywhere; `XGS_SIDECAR_LOGDIR` still names one.
+    pub fn resolve(get: impl Fn(&str) -> Option<OsString>, exe: Option<&Path>) -> Result<SidecarConfig, String> {
+        // A variable that is set to nothing is not set (a shell that "clears" one by setting it to an empty string leaves exactly that).
+        let get = |key: &str| get(key).filter(|value| !value.is_empty());
+        let carried = match exe {
+            Some(exe) if get("XGS_SIDECAR_LIB").is_none() && get("XGS_SIDECAR_DIR").is_none() => {
+                let cache = runtime_cache_dir(get);
+                let mut image = payload::ensure_extracted(exe, &cache)?;
+                // A copy that lost its java.exe (an antivirus took it, a folder that was cleaned half-way) is unpacked again, once, instead
+                // of failing on every start until someone deletes the folder by hand.
+                if let Some(folder) = image.clone().filter(|folder| !java_of(folder).is_file()) {
+                    payload::discard(&folder);
+                    image = payload::ensure_extracted(exe, &cache)?;
+                }
+                image
+            }
+            _ => None,
+        };
+        if let Some(image) = carried {
+            let image = image.into_os_string();
+            return SidecarConfig::from_lookup(
+                |key| if key == "XGS_SIDECAR_DIR" { Some(image.clone()) } else { get(key) },
+                None,
+            );
+        }
+        SidecarConfig::from_lookup(get, exe.and_then(Path::parent))
     }
 
     /// Where java and the jars come from, in this order:
@@ -59,7 +111,7 @@ impl SidecarConfig {
                      XGS_SIDECAR_DIR (an image folder with runtime and lib), or put a sidecar folder next to the executable"
                         .to_string()
                 })?;
-            let java = image.join("runtime").join("bin").join("java.exe");
+            let java = java_of(&image);
             if !java.is_file() {
                 return Err(format!(
                     "no sidecar runtime: {} is missing (set XGS_SIDECAR_LIB for a development build, or XGS_SIDECAR_DIR)",
@@ -247,6 +299,218 @@ mod tests {
         };
         let args: Vec<String> = config.command().get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(!args.iter().any(|a| a == "--log-dir"), "{args:?}");
+    }
+
+    /// A fresh folder in the temp folder, deleted when the test ends.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let dir = std::env::temp_dir().join(format!("xgs-resolve-test-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Scratch(dir)
+        }
+
+        fn text(&self) -> &str {
+            self.0.to_str().unwrap()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// An exe that carries a sidecar image (a fake `java.exe` and a `lib` with one file) as `xgs-pack` makes it.
+    fn packed_exe(scratch: &Scratch) -> PathBuf {
+        let image = scratch.0.join("image");
+        std::fs::create_dir_all(image.join("runtime").join("bin")).unwrap();
+        std::fs::create_dir_all(image.join("lib")).unwrap();
+        std::fs::write(image.join("runtime").join("bin").join("java.exe"), b"fake java").unwrap();
+        std::fs::write(image.join("lib").join("server.jar"), b"fake jar").unwrap();
+        let exe = scratch.0.join("shell.exe");
+        std::fs::write(&exe, b"MZ fake shell").unwrap();
+        let packed = scratch.0.join("xGetSongs.exe");
+        crate::payload::pack(&exe, &image, &packed).unwrap();
+        packed
+    }
+
+    #[test]
+    fn an_exe_that_carries_a_sidecar_starts_it_from_a_copy_in_the_app_data_folder() {
+        let scratch = Scratch::new("carries");
+        let exe = packed_exe(&scratch);
+        let data = scratch.0.join("data");
+
+        let config = SidecarConfig::resolve(lookup(&[("XGS_SIDECAR_APPDATA", data.to_str().unwrap())]), Some(&exe)).unwrap();
+
+        let image = config.lib_dir.parent().unwrap().to_path_buf();
+        assert_eq!(image.parent().unwrap(), data.join("runtime"), "unpacked below the runtime folder of the app data folder");
+        assert_eq!(config.java, image.join("runtime").join("bin").join("java.exe"));
+        assert_eq!(std::fs::read(config.java.as_path()).unwrap(), b"fake java");
+        assert_eq!(std::fs::read(config.lib_dir.join("server.jar")).unwrap(), b"fake jar");
+        assert_eq!(config.app_data, data);
+        assert_eq!(config.log_dir, None, "no log folder next to an exe that may lie anywhere: the sidecar writes to the app data folder");
+    }
+
+    #[test]
+    fn the_unpacked_copy_goes_to_the_local_app_data_folder_when_the_app_data_folder_is_not_named() {
+        let scratch = Scratch::new("local");
+        let exe = packed_exe(&scratch);
+        let local = scratch.0.join("local");
+
+        let config = SidecarConfig::resolve(
+            lookup(&[("APPDATA", scratch.0.join("roaming").to_str().unwrap()), ("LOCALAPPDATA", local.to_str().unwrap())]),
+            Some(&exe),
+        )
+        .unwrap();
+
+        assert!(config.java.starts_with(local.join("xGetSongs").join("runtime")), "{:?}", config.java);
+        assert_eq!(config.app_data, scratch.0.join("roaming").join("xGetSongs"), "the app's own files stay where the Compose app kept them");
+    }
+
+    #[test]
+    fn the_log_folder_variable_is_still_honoured_for_an_exe_that_carries_a_sidecar() {
+        let scratch = Scratch::new("logdir");
+        let exe = packed_exe(&scratch);
+        let data = scratch.0.join("data");
+
+        let config = SidecarConfig::resolve(
+            lookup(&[("XGS_SIDECAR_APPDATA", data.to_str().unwrap()), ("XGS_SIDECAR_LOGDIR", r"C:\logs")]),
+            Some(&exe),
+        )
+        .unwrap();
+
+        assert_eq!(config.log_dir, Some(PathBuf::from(r"C:\logs")));
+    }
+
+    #[test]
+    fn the_variables_for_development_win_over_what_the_exe_carries_and_unpack_nothing() {
+        let scratch = Scratch::new("variables");
+        let exe = packed_exe(&scratch);
+        let data = scratch.0.join("data");
+        let image = fake_image("variables-image");
+
+        let by_lib = SidecarConfig::resolve(
+            lookup(&[("XGS_SIDECAR_APPDATA", data.to_str().unwrap()), ("XGS_SIDECAR_LIB", r"C:\x\lib")]),
+            Some(&exe),
+        )
+        .unwrap();
+        let by_dir = SidecarConfig::resolve(
+            lookup(&[("XGS_SIDECAR_APPDATA", data.to_str().unwrap()), ("XGS_SIDECAR_DIR", image.to_str().unwrap())]),
+            Some(&exe),
+        )
+        .unwrap();
+
+        assert_eq!(by_lib.lib_dir, PathBuf::from(r"C:\x\lib"));
+        assert_eq!(by_dir.lib_dir, image.join("lib"));
+        assert!(!data.join("runtime").exists(), "nothing was unpacked");
+        let _ = std::fs::remove_dir_all(&image);
+    }
+
+    #[test]
+    fn an_exe_that_carries_nothing_falls_back_to_the_sidecar_folder_next_to_it() {
+        let scratch = Scratch::new("plain");
+        let image = scratch.0.join("sidecar");
+        std::fs::create_dir_all(image.join("runtime").join("bin")).unwrap();
+        std::fs::write(image.join("runtime").join("bin").join("java.exe"), b"").unwrap();
+        let exe = scratch.0.join("shell.exe");
+        std::fs::write(&exe, b"MZ plain shell").unwrap();
+
+        let config = SidecarConfig::resolve(lookup(&[("XGS_SIDECAR_APPDATA", scratch.text())]), Some(&exe)).unwrap();
+
+        assert_eq!(config.lib_dir, image.join("lib"));
+        assert_eq!(config.log_dir, Some(scratch.0.join("log")), "as before: the logs go next to the exe");
+    }
+
+    #[test]
+    fn an_exe_that_carries_nothing_and_has_no_sidecar_next_to_it_is_an_error_that_names_the_ways_to_say_where_it_is() {
+        let scratch = Scratch::new("nothing");
+        let exe = scratch.0.join("shell.exe");
+        std::fs::write(&exe, b"MZ plain shell").unwrap();
+
+        let error = SidecarConfig::resolve(lookup(&[("XGS_SIDECAR_APPDATA", scratch.text())]), Some(&exe)).unwrap_err();
+
+        assert!(error.contains("java.exe"), "{error}");
+    }
+
+    #[test]
+    fn a_damaged_runtime_in_the_exe_is_an_error_that_says_so_and_not_a_silent_fallback() {
+        let scratch = Scratch::new("damaged");
+        let exe = packed_exe(&scratch);
+        let mut bytes = std::fs::read(&exe).unwrap();
+        bytes.drain(20..40); // the footer no longer fits the file
+        std::fs::write(&exe, bytes).unwrap();
+        // a sidecar folder next to the exe must not hide that
+        std::fs::create_dir_all(scratch.0.join("sidecar").join("runtime").join("bin")).unwrap();
+        std::fs::write(scratch.0.join("sidecar").join("runtime").join("bin").join("java.exe"), b"").unwrap();
+
+        let error = SidecarConfig::resolve(lookup(&[("XGS_SIDECAR_APPDATA", scratch.text())]), Some(&exe)).unwrap_err();
+
+        assert!(error.contains("런타임"), "{error}");
+    }
+
+    #[test]
+    fn variables_that_are_empty_count_as_not_set() {
+        // A variable that was "cleared" by setting it to nothing (PowerShell does that) must not switch off the exe's own runtime.
+        let scratch = Scratch::new("empty");
+        let exe = packed_exe(&scratch);
+        let data = scratch.0.join("data");
+
+        let config = SidecarConfig::resolve(
+            lookup(&[
+                ("XGS_SIDECAR_APPDATA", data.to_str().unwrap()),
+                ("XGS_SIDECAR_LIB", ""),
+                ("XGS_SIDECAR_DIR", ""),
+                ("XGS_SIDECAR_JAVA", ""),
+                ("XGS_SIDECAR_LOGDIR", ""),
+            ]),
+            Some(&exe),
+        )
+        .unwrap();
+
+        assert!(config.java.starts_with(data.join("runtime")), "{:?}", config.java);
+        assert_eq!(config.log_dir, None);
+    }
+
+    #[test]
+    fn an_unpacked_runtime_that_lost_its_java_is_unpacked_again() {
+        // E.g. an antivirus took java.exe out after the first unpack: the next start repairs it instead of failing on every start.
+        let scratch = Scratch::new("lost-java");
+        let exe = packed_exe(&scratch);
+        let data = scratch.0.join("data");
+        let names = || lookup(&[("XGS_SIDECAR_APPDATA", data.to_str().unwrap())]);
+        let first = SidecarConfig::resolve(names(), Some(&exe)).unwrap();
+        std::fs::remove_file(&first.java).unwrap();
+
+        let second = SidecarConfig::resolve(names(), Some(&exe)).unwrap();
+
+        assert_eq!(second.java, first.java);
+        assert_eq!(std::fs::read(&second.java).unwrap(), b"fake java");
+    }
+
+    #[test]
+    fn a_runtime_without_a_java_even_when_unpacked_fresh_is_an_error() {
+        let scratch = Scratch::new("no-java");
+        let image = scratch.0.join("image");
+        std::fs::create_dir_all(image.join("lib")).unwrap();
+        std::fs::write(image.join("lib").join("server.jar"), b"fake jar").unwrap();
+        let exe = scratch.0.join("shell.exe");
+        std::fs::write(&exe, b"MZ fake shell").unwrap();
+        let packed = scratch.0.join("xGetSongs.exe");
+        crate::payload::pack(&exe, &image, &packed).unwrap();
+
+        let error = SidecarConfig::resolve(lookup(&[("XGS_SIDECAR_APPDATA", scratch.text())]), Some(&packed)).unwrap_err();
+
+        assert!(error.contains("java.exe"), "{error}");
+    }
+
+    #[test]
+    fn without_an_exe_the_old_rules_apply() {
+        let error = SidecarConfig::resolve(lookup(&[]), None).unwrap_err();
+
+        assert!(error.contains("XGS_SIDECAR_LIB"), "{error}");
     }
 
     #[test]

@@ -71,6 +71,20 @@ LRCLIB에도 없으면 구글 검색 결과의 가사 카드에서 가져옵니�
 .\gradlew.bat :engine:integrationTest  # 실제 yt-dlp, YouTube, LRCLIB, 구글 가사 카드를 쓰는 통합 테스트 (도구가 없거나 서비스가 응답하지 않으면 건너뜀)
 ```
 
+## 하나의 exe로 묶기 (Tauri 셸)
+
+```powershell
+.\package-exe.bat
+```
+
+`dist\xGetSongs.exe` 한 파일(약 130MB)이 만들어집니다. Tauri 셸의 exe 뒤에 사이드카 이미지(Kotlin 서버와 그것을 돌리는 Java 런타임)를 붙인 것이라 이 파일만 복사해 가면 됩니다. 만드는 PC에는 JDK 21, Node.js, Rust가 필요하고 받는 PC에는 필요 없습니다.
+
+- 처음 실행하면 런타임을 `%LOCALAPPDATA%\xGetSongs\runtime\<해시>`에 풀기 때문에 사이드카가 준비되기까지 4~5초 걸립니다(창은 바로 열립니다). 다음 실행부터는 그 폴더를 그대로 써서 1초쯤 걸립니다. 이 폴더는 지워도 다시 풀리는 캐시이고(파일이 깨졌거나 `java.exe`가 없어졌으면 스스로 다시 풉니다), exe를 새 빌드로 바꾸면 옛 폴더는 다음 실행에서 지웁니다.
+- 로그는 `%APPDATA%\xGetSongs\logs`에 남습니다(exe 옆에 폴더를 만들지 않습니다).
+- 창을 여는 데 Microsoft Edge WebView2 런타임이 필요합니다. Windows 11과 업데이트된 Windows 10에는 들어 있고, 없으면 안내 상자가 뜨며 [확인]을 누르면 설치 프로그램을 받는 페이지를 엽니다.
+- 서명하지 않은 파일이라 내려받은 뒤 처음 실행할 때 Windows SmartScreen이 경고할 수 있습니다. 아이콘은 Tauri의 기본 아이콘입니다.
+- yt-dlp, ffmpeg, Node.js(또는 Deno)가 필요한 점은 위 "필요한 것"과 같습니다.
+
 ## 문제가 생겼을 때
 
 앱이 갑자기 사라지거나 멈췄다면 원인이 아래 파일에 남아 있을 수 있습니다.

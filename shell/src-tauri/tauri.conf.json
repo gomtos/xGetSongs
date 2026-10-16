@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "shell",
+  "productName": "xGetSongs",
   "version": "0.1.0",
   "identifier": "com.xgetsongs.shell",
   "build": {
