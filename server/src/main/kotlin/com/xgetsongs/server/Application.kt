@@ -7,6 +7,8 @@ import com.xgetsongs.engine.job.DownloadConcurrency
 import com.xgetsongs.engine.output.LocalFolderSink
 import com.xgetsongs.engine.output.OutputSink
 import com.xgetsongs.shared.api.ApiJson
+import com.xgetsongs.shared.api.BrowserAnswer
+import com.xgetsongs.shared.api.BrowserCommand
 import com.xgetsongs.shared.api.ErrorResponse
 import com.xgetsongs.shared.api.InputKind
 import com.xgetsongs.shared.api.JobCreated
@@ -37,6 +39,14 @@ import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+
+/** The longest a poll of `GET /browser/next` may wait (the shell asks for 25 s). */
+internal const val BROWSER_MAX_WAIT_MILLIS = 30_000L
+
+/** The wait a poll asks for (`?wait=<millis>`): none when it is missing, not a number or negative; at most [BROWSER_MAX_WAIT_MILLIS]. */
+internal fun browserWait(raw: String?): Duration = (raw?.toLongOrNull() ?: 0L).coerceIn(0L, BROWSER_MAX_WAIT_MILLIS).milliseconds
 
 /** A client mistake that maps straight to an HTTP status with a user-facing message. */
 class ApiException(val status: HttpStatusCode, message: String) : Exception(message)
@@ -141,6 +151,18 @@ fun Application.module(services: Services, config: ServerConfig, jobs: JobRegist
             }
             // Only reached when the job ended; a dropped connection leaves the job cancellable.
             jobs.remove(id)
+        }
+
+        // The desktop shell's hidden browser (see BrowserChannel) takes its next command here and reports what it did.
+        get("/browser/next") {
+            val command = services.browser.nextCommand(browserWait(call.request.queryParameters["wait"]))
+            if (command == null) call.respond(HttpStatusCode.NoContent) else call.respond<BrowserCommand>(command)
+        }
+
+        post("/browser/answer") {
+            val answer = call.receive<BrowserAnswer>()
+            if (!services.browser.answer(answer)) throw ApiException(HttpStatusCode.NotFound, "기다리는 명령이 없습니다.")
+            call.respond(HttpStatusCode.NoContent)
         }
 
         delete("/jobs/{id}") {

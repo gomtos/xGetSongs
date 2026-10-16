@@ -81,7 +81,8 @@ class BrowserChannel(
         lastContact = timeSource.markNow()
     }
 
-    private fun agentIsPresent(): Boolean = lastContact?.let { it.elapsedNow() < agentFreshness } ?: false
+    /** Whether the agent has been in touch (a poll or an answer) within the freshness time: calls fail with `no-agent` when it has not. */
+    val hasAgent: Boolean get() = lastContact?.let { it.elapsedNow() < agentFreshness } ?: false
 
     /** The next command somebody still waits for; null when the queue is closed. */
     private suspend fun takeLive(): BrowserCommand? {
@@ -93,7 +94,7 @@ class BrowserChannel(
 
     private suspend fun call(command: (id: String) -> BrowserCommand): BrowserAnswer {
         if (closed) throw BrowserUnavailableException("closed")
-        if (!agentIsPresent()) throw BrowserUnavailableException("no-agent")
+        if (!hasAgent) throw BrowserUnavailableException("no-agent")
         val id = UUID.randomUUID().toString()
         val deferred = CompletableDeferred<BrowserAnswer>()
         waiting[id] = deferred

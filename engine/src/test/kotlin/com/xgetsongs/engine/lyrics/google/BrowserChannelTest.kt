@@ -130,7 +130,9 @@ class BrowserChannelTest {
     fun theAgentCountsAsPresentForTheFreshnessTimeOnly() = runTest {
         val time = TestTimeSource()
         val channel = BrowserChannel(time, agentFreshness = 40.seconds)
+        assertFalse(channel.hasAgent, "nobody has been in touch yet")
         assertNull(channel.nextCommand(1.milliseconds))
+        assertTrue(channel.hasAgent)
 
         time += 39.seconds
         val queued = async { runCatching { channel.evaluate("x") } }
@@ -139,6 +141,7 @@ class BrowserChannelTest {
         queued.cancelAndJoin()
 
         time += 2.seconds
+        assertFalse(channel.hasAgent)
         val error = assertFailsWith<BrowserUnavailableException> { channel.evaluate("y") }
         assertEquals("no-agent", error.reason)
     }
