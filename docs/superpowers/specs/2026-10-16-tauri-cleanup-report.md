@@ -13,7 +13,7 @@
 | C5 `opener` 제거 | 통과 | 일반 빌드 4분 2초, 점검용 빌드도 빌드됨. `shell/src-tauri/Cargo.lock` 53줄 삭제(더해진 줄 없음), `package.json` +3 −4, `package-lock.json` +1 −11. 권한 시험 3개는 걷기 전에 모두 실패했고(`'opener:default'`, `'@tauri-apps/plugin-opener'`, `'tauri-plugin-opener'`) 걷은 뒤 통과 |
 | C6 옛 이름과 링크 | 통과 | `git grep`(`docs/` 밖)에 `UiWatchdog`, `postToUi`, `onUiBeat`, `ui-hang`, `UI 스레드`, `UI 응답`, `UI 감시`, `xgs-ui-watchdog`, `:app:` 없음. README·`shell/README.md`·설계 문서 둘의 상대 링크 모두 있음(보고서를 더한 뒤 27개). README에 쓴 일곱 문구는 코드에서 찾아졌다 |
 | C7 종단 점검 | 통과 | 아래 |
-| C8 최종 리뷰 | (아래 "최종 리뷰") | |
+| C8 최종 리뷰 | 통과 | Critical 없음, Important 1(보고서의 계약 설명)은 고침, Minor 11 중 문서의 틀린 문장은 같이 고치고 나머지는 미룸. 아래 "최종 리뷰" |
 
 ### C7: 5단계의 점검이 그대로 통과한다
 
@@ -60,4 +60,30 @@
 
 ## 최종 리뷰
 
-(전체 브랜치 리뷰의 결과를 여기에 적는다.)
+가장 유능한 모델이 전체 브랜치(`38265a7..ac49485`, 커밋 7개)를 네 번에 나눠 읽었다(Gradle과 `.gitignore`, 진단의 이름 정리, 셸과 권한 시험, 문서를 코드에 대조). 사본에서 `node --test`도 돌렸다(239개 통과). **Critical 없음, Important 1, Minor 11, 판정 "고치면 병합 가능"**. 좋다고 한 것: 삭제가 깨끗하다(어느 빌드 파일에도 `:app`이 없고 쓰이는 `libs.*` 별칭이 모두 카탈로그에 있다), `google()`을 걷은 것이 낮은 위험이다(Kotlin Gradle 플러그인의 의존성은 모두 Plugin Portal·Maven Central의 `org.jetbrains.kotlin`이고 JavaFX도 Maven Central이다), `/*/bin/`이 정확하다(`git ls-files -ci --exclude-standard`가 비었고 `xgs-pack.rs`는 추적된다), 이름 정리가 이름과 문구만 바꾼다(시험의 단언은 그대로 강하고 시험 결과 XML의 시각이 커밋보다 앞서 RED→GREEN이 진짜다), 포팅에서 시험 이름이 하나도 빠지지 않았다(`f9dbcba`와 대조: 95/95, 35/35, 10/10, 22/22), 문서의 로그 줄과 오류 문구가 모두 코드에 있다.
+
+### 고친 것
+
+| 지적 | 영향 | 고침 |
+|---|---|---|
+| **Important 1.** 보고서와 계획서가 서버·클라이언트 계약이 `real_sidecar`로 이어진다고 썼다. 그 시험은 도구 상태, 오류 문구, 인증 거부, 토큰 비노출, 종료 기록만 본다. 조회 결과와 작업 이벤트의 필드 모양은 실제 네트워크가 필요한 수동 `real_download`만 실제 서버와 대조하고 이 단계는 그것을 돌리지 않았다. 가짜 서버와 TypeScript 시험의 JSON은 손으로 쓴 것이다 | 읽는 사람이 성공 경로까지 지켜진다고 믿는다 | 보고서의 표와 한계, 계획서의 해당 문장을 사실대로 고쳤고 README의 시험 절에 두 `#[ignore]` 시험의 실행법을 더했다 |
+| README의 문장이 코드와 달랐다(리뷰는 Minor로 매겼으나 이 단계의 산출물이 README이므로 같은 고침에 넣었다) | 문제를 진단하는 사용자가 틀린 설명을 읽는다 | 셸이 갑자기 끝나면 Job Object가 서버를 먼저 끝내므로 종료 줄이 대개 없다(1단계 보고서의 관찰)고 고침, 로그 폴더 규칙을 묶은 exe·개발·`XGS_SIDECAR_LOGDIR`·`XGS_SIDECAR_APPDATA`로 나눠 정확히, `sidecar-stderr.log`는 시작마다 덮어쓰니 복사하라고, 만드는 PC에 Node 22.18 이상과 C++ 빌드 도구·Windows SDK가 필요하다고, `shell/README.md`의 "점검용 명령 모두 거부"에서 `check_ping`을 뺌 |
+
+문서만의 고침이라 먼저 실패할 시험이 없다. 증거는 쓴 문장을 코드(`real_sidecar.rs`, `real_download.rs`의 `assert_wire_shape`, `config.rs`)와 1단계 보고서에 다시 대조한 것과 링크 점검(27개)이고 시험은 그대로다(Kotlin 938, TypeScript 239, `sidecar-host` 161 + 5).
+
+### 내가 고치지 않기로 한 것 (판단, 원장의 `Ruling:`)
+
+- **서버·클라이언트 계약을 자동으로 지키는 시험**(리뷰의 권고: 이벤트 종류마다 JSON 예시 파일을 두고 Kotlin과 TypeScript 시험이 같은 파일을 대조): 두 언어에 걸친 새 시험 장치이고 틈은 6단계 이전부터 있었다(지운 Kotlin 클라이언트도 서버와 같은 직렬화기를 써서 잡지 못했다). **잘못 판단했다면:** `shared/api`의 필드 이름이 바뀌어도 오프라인 시험이 모두 통과하고 `real_download`를 손으로 돌릴 때까지 화면만 깨진다. 위 한계에 적었다.
+
+### 미룬 Minor
+
+- `capabilities.test.ts`는 `capabilities/default.json`만 읽는다. Tauri는 그 폴더의 모든 파일과 `tauri.conf.json`의 인라인 `capabilities`를 켠다(리뷰가 둘째 파일로 시험을 통과시켜 보였다): 폴더에 `default.json`뿐이고 두 설정에 인라인 선언이 없다는 단언을 더한다.
+- `logDirectoryCandidates`와 `applicationDirectory`(`Diagnostics.kt`)는 지운 `app`의 `Main`만 쓰던 것이라 그 시험이 닿을 수 없는 코드를 시험한다.
+- C6 검색이 못 잡는 옛 표현: `diagnostics/build.gradle.kts:22`, `logback-sidecar.xml:5`, `HangWatchdogTest.kt:26`(`uiAnswers`), `config.rs:19`, `real_sidecar.rs:99`, `ExitLogger.kt:26`의 로그 문구 "(콘솔 종료, …)"(사이드카에는 콘솔이 없다), `Diagnostics.kt:54`의 201자 주석 한 줄.
+- `SidecarLogbackConfigTest`(4개)는 옛 `LogbackConfigTest`(12개)보다 얇다: `maxFileSize` 5MB, `totalSizeCap` 50MB, 설정 읽기에 경고 없음, 파일 다음 콘솔의 순서, 콘솔에 DEBUG 없음이 고정되지 않았다.
+- 예전 `ui-hang-*.txt`는 지워지지 않고(옛 상한이면 최대 100MB) "예전 파일은 건드리지 않는다"를 고정한 시험도 없다. 로그 줄의 로거 이름이 `UiWatchdog`에서 `HangWatchdog`로 바뀐 것도 "바뀐 동작"에 없다.
+- `run.bat`: 만들고 나서 실행하는 갈래는 실행해 보지 않았다(점검은 이미 만든 exe로 했다). 더블클릭하면 빌드 실패 때 오류를 읽기 전에 창이 닫힌다(`pause`). 소스를 고친 뒤에는 옛 exe를 실행한다(README에 적었다).
+
+### 권고
+
+- `real_download`를 새 이미지로 한 번 돌려 본다(곡 하나를 받고 작업 하나를 취소한다: 네트워크와 yt-dlp 복사본이 필요하므로 사용자가 허락할 때).
