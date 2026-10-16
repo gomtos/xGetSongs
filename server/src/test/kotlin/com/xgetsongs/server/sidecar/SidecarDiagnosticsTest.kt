@@ -25,7 +25,7 @@ class SidecarDiagnosticsTest {
 
     private fun hangFiles(logDir: Path): List<Path> =
         if (!Files.isDirectory(logDir)) emptyList()
-        else Files.list(logDir).use { files -> files.filter { it.fileName.toString().startsWith("ui-hang-") }.toList() }
+        else Files.list(logDir).use { files -> files.filter { it.fileName.toString().startsWith("hang-") }.toList() }
 
     @Test
     fun aDispatcherThatStopsAnsweringLeavesAThreadDumpInTheLogFolder() = runBlocking {

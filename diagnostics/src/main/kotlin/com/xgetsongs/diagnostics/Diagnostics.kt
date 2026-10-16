@@ -34,7 +34,7 @@ object SystemProcesses : Processes {
 /**
  * Everything that helps to find out afterwards why the app vanished or froze: unhandled exceptions in the log, a record of
  * how the JVM was asked to exit, a marker file that tells the next run whether this one ended properly, and a thread dump
- * when the UI thread stops answering. [start] is called once, first thing in `main` (after [LOG_DIR_PROPERTY] is set).
+ * when the server's threads stop answering. [start] is called once, first thing in `main` (after [LOG_DIR_PROPERTY] is set).
  */
 object Diagnostics {
     /** The marker of the last run, next to the log. */
@@ -49,14 +49,13 @@ object Diagnostics {
     /**
      * Prepares [logDir] (a failure is only reported on stderr), hooks the uncaught-exception handler, writes the startup
      * record, tells what the marker of the previous run says and writes the marker of this one, registers the exit logger
-     * through [registerHook] and starts the watchdog, which posts its heartbeats with [postToUi].
+     * through [registerHook] and starts the watchdog, which posts its heartbeats with [postBeat].
      *
-     * [postToUi] runs a Runnable on the thread whose answers the watchdog waits for (the app: the AWT event queue; the
-     * sidecar: a coroutine dispatcher). [headless] is only written into the startup record; null leaves the line out.
+     * [postBeat] runs a Runnable on the thread whose answers the watchdog waits for (the sidecar: a coroutine dispatcher). [headless] is only written into the startup record; null leaves the line out.
      */
     fun start(
         logDir: Path,
-        postToUi: (Runnable) -> Unit,
+        postBeat: (Runnable) -> Unit,
         registerHook: (Thread) -> Unit = Runtime.getRuntime()::addShutdownHook,
         processes: Processes = SystemProcesses,
         headless: Boolean? = null,
@@ -88,7 +87,7 @@ object Diagnostics {
             onExit = { userRequested -> marker?.markExited(userRequested) },
         )
         exitLogger.register(registerHook)
-        val watchdog = UiWatchdog(logDir, postToUi)
+        val watchdog = HangWatchdog(logDir, postBeat)
         watchdog.start()
         return DiagnosticsHandle(exitLogger, watchdog)
     }
@@ -119,7 +118,7 @@ object Diagnostics {
 }
 
 /** What `main` keeps from [Diagnostics.start]. */
-class DiagnosticsHandle internal constructor(private val exitLogger: ExitLogger, private val watchdog: UiWatchdog) {
+class DiagnosticsHandle internal constructor(private val exitLogger: ExitLogger, private val watchdog: HangWatchdog) {
     private val log = LoggerFactory.getLogger(DiagnosticsHandle::class.java)
 
     /** The number of jobs the server has registered, for the exit record: -1 (unknown) until the server is up and `main` says how to ask it. */

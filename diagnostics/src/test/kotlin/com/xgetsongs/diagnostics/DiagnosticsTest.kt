@@ -404,7 +404,7 @@ class DiagnosticsTest {
     private fun start(
         hooks: MutableList<Thread> = mutableListOf(),
         processes: Processes = FakeProcesses(),
-    ): DiagnosticsHandle = Diagnostics.start(dir.resolve("logs"), postToUi = { it.run() }, registerHook = { hooks += it }, processes = processes)
+    ): DiagnosticsHandle = Diagnostics.start(dir.resolve("logs"), postBeat = { it.run() }, registerHook = { hooks += it }, processes = processes)
 
     @Test
     fun startPreparesTheFolderLogsTheStartupRecordAndHooksTheExceptionHandler() {
@@ -481,7 +481,7 @@ class DiagnosticsTest {
         val threads = java.util.concurrent.ConcurrentLinkedQueue<Thread>()
         val handle = Diagnostics.start(
             dir.resolve("logs"),
-            postToUi = { it.run(); threads += Thread.currentThread() },
+            postBeat = { it.run(); threads += Thread.currentThread() },
             registerHook = { },
             processes = FakeProcesses(),
         )
@@ -494,7 +494,7 @@ class DiagnosticsTest {
         val thread = threads.first()
         thread.join(30_000)
         assertFalse(thread.isAlive)
-        assertEquals("xgs-ui-watchdog", thread.name)
+        assertEquals("xgs-hang-watchdog", thread.name)
     }
 
     // ---- the marker of the last run ---------------------------------------------------------

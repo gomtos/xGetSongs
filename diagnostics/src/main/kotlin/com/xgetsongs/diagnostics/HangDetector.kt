@@ -1,16 +1,16 @@
 package com.xgetsongs.diagnostics
 
-/** What [HangDetector.onTick] has to tell about the UI thread. */
+/** What [HangDetector.onTick] has to tell about the watched thread. */
 internal sealed interface HangEvent {
     /** No beat for [silentMs]; [repeat] is false for the first report of a hang and true for the later ones. */
     data class Hung(val silentMs: Long, val repeat: Boolean) : HangEvent
 
-    /** The UI thread beat again after a reported hang; [totalMs] is the time from its last beat before the hang to the first one after. */
+    /** The watched thread beat again after a reported hang; [totalMs] is the time from its last beat before the hang to the first one after. */
     data class Recovered(val totalMs: Long) : HangEvent
 }
 
 /**
- * Decides from two kinds of calls whether the UI thread has stopped answering. [onUiBeat] is what a task posted to the UI
+ * Decides from two kinds of calls whether the watched thread has stopped answering. [onBeat] is what a task posted to that
  * thread calls when it runs; [onTick] is what the watchdog thread calls once per interval. The detector owns neither a
  * thread nor a clock: every call says what time it is ([startMs] says it for the creation), so it can be tested without
  * waiting. The calls may come from different threads.
@@ -44,7 +44,7 @@ internal class HangDetector(
     private var lastBeatMs = startMs
     private var lastTickMs = startMs
 
-    /** The last beat before the hang that is being reported, or null while the UI thread is not known to be hung. */
+    /** The last beat before the hang that is being reported, or null while the watched thread is not known to be hung. */
     private var hangFromMs: Long? = null
     private var lastReportMs = 0L
 
@@ -63,7 +63,7 @@ internal class HangDetector(
         private set
 
     @Synchronized
-    fun onUiBeat(nowMs: Long) {
+    fun onBeat(nowMs: Long) {
         if (hangFromMs != null && recoveredAtMs == null) recoveredAtMs = nowMs
         lastBeatMs = nowMs
     }

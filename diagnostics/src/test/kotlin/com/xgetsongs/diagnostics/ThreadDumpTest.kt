@@ -19,7 +19,7 @@ class ThreadDumpTest {
         stacks: Map<Thread, Array<StackTraceElement>>,
         states: Map<Thread, Thread.State> = emptyMap(),
         silentMs: Long = 7_200,
-        reason: String = "UI 스레드 무응답",
+        reason: String = "서버 스레드 무응답",
         memory: MemorySnapshot = MemorySnapshot(usedMb = 123, totalMb = 256, maxMb = 2_048),
         gcs: List<GcSnapshot> = listOf(GcSnapshot("G1 Young Generation", count = 12, timeMs = 345)),
     ): String = ThreadDump.render(time, silentMs, reason, stacks, states, memory, gcs)
@@ -99,12 +99,12 @@ class ThreadDumpTest {
 
     @Test
     fun theHeaderHasTheTimeTheSilentDurationAndTheReason() {
-        val dump = render(mapOf(thread("t") to frames(1)), silentMs = 7_200, reason = "UI 스레드 무응답")
+        val dump = render(mapOf(thread("t") to frames(1)), silentMs = 7_200, reason = "서버 스레드 무응답")
 
         val header = dump.lines().first()
         assertTrue("2026-10-07 21:03:11.123" in header, header)
         assertTrue("7200ms" in header, header)
-        assertTrue("UI 스레드 무응답" in header, header)
+        assertTrue("서버 스레드 무응답" in header, header)
     }
 
     @Test

@@ -15,33 +15,32 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Milliseconds from a clock that only goes forward, which is what a duration needs (not the wall clock). */
 internal fun monotonicMillis(): Long = System.nanoTime() / 1_000_000
 
-/** Biggest size of a `ui-hang-*.txt` file: when the next section would make it bigger, the dumps stop. */
+/** Biggest size of a `hang-*.txt` file: when the next section would make it bigger, the dumps stop. */
 internal const val DEFAULT_MAX_DUMP_FILE_BYTES = 5L * 1024 * 1024
 
 /** The last line of a dump file that reached its size limit. */
 internal const val DUMP_LIMIT_NOTICE = "이후 덤프는 생략함(파일 크기 제한)"
 
 /**
- * Notices when the UI thread stops answering and leaves a record of what every thread was doing. Once per [intervalMs] a
- * daemon thread named `xgs-ui-watchdog` posts a heartbeat to the UI thread through [postToUi] (in the app that is
- * `EventQueue::invokeLater`: the Compose Desktop UI runs on the AWT event queue thread) and asks a [HangDetector] what it
- * makes of the beats so far. A new heartbeat is only posted when the previous one has run, so the queue of a blocked UI
- * thread does not grow.
+ * Notices when the watched thread stops answering and leaves a record of what every thread was doing. Once per [intervalMs] a
+ * daemon thread named `xgs-hang-watchdog` posts a heartbeat to the watched thread through [postBeat] (in the sidecar that is
+ * a coroutine on `Dispatchers.Default`) and asks a [HangDetector] what it makes of the beats so far. A new heartbeat is only
+ * posted when the previous one has run, so the queue of a blocked thread does not grow.
  *
- * When the UI thread has not answered for [thresholdMs] the thread dump from [dump] goes to the log as an ERROR and into a
- * new `ui-hang-yyyyMMdd-HHmmss.txt` in [logDir]. While the hang lasts another section is appended to that file after
+ * When the watched thread has not answered for [thresholdMs] the thread dump from [dump] goes to the log as an ERROR and into a
+ * new `hang-yyyyMMdd-HHmmss.txt` in [logDir]. While the hang lasts another section is appended to that file after
  * [repeatMs] and then after twice as long each time, up to [maxRepeatMs] (the log gets a line without the dump, or it
  * would fill up with them). The file takes at most [maxDumpFileBytes] of sections: the section that would go over it is
  * dropped, one notice line ends the file and from then on the hang only gets its log line (the dump is not even made).
- * When the UI thread answers again the log says how long it took. Only the newest [maxDumpFiles] of those files are kept.
+ * When the watched thread answers again the log says how long it took. Only the newest [maxDumpFiles] of those files are kept.
  *
  * All the time-dependent parts are injected, and the loop body is the single function [tick], so tests drive it
  * directly and never wait. [tick] never throws, and an [Error] in it (an out of memory while the dump is built) does not
  * end the thread either.
  */
-internal class UiWatchdog(
+internal class HangWatchdog(
     private val logDir: Path,
-    private val postToUi: (Runnable) -> Unit,
+    private val postBeat: (Runnable) -> Unit,
     private val dump: (silentMs: Long, reason: String) -> String = { silentMs, reason -> ThreadDump.capture(silentMs, reason) },
     private val clockMs: () -> Long = ::monotonicMillis,
     private val wallClock: () -> LocalDateTime = LocalDateTime::now,
@@ -53,10 +52,10 @@ internal class UiWatchdog(
     private val maxDumpFileBytes: Long = DEFAULT_MAX_DUMP_FILE_BYTES,
     maxRepeatMs: Long = 30 * 60_000,
 ) {
-    private val log: Logger = LoggerFactory.getLogger(UiWatchdog::class.java)
+    private val log: Logger = LoggerFactory.getLogger(HangWatchdog::class.java)
     private val detector = HangDetector(clockMs(), thresholdMs, repeatMs, maxTickGapMs, maxRepeatMs)
 
-    /** True from the posting of a heartbeat until it has run on the UI thread. */
+    /** True from the posting of a heartbeat until it has run on the watched thread. */
     private val heartbeatPending = AtomicBoolean(false)
 
     @Volatile
@@ -112,7 +111,7 @@ internal class UiWatchdog(
             val event = detector.onTick(now)
             failedTicks = 0
             if (detector.gapsIgnored != gapsBefore) {
-                log.info("UI 감시: 확인 간격이 크게 벌어져 이번 판정은 건너뜀 (절전이거나 감시 스레드가 지연됨, 누적 {}회)", detector.gapsIgnored)
+                log.info("멈춤 감시: 확인 간격이 크게 벌어져 이번 판정은 건너뜀 (절전이거나 감시 스레드가 지연됨, 누적 {}회)", detector.gapsIgnored)
             }
             when (event) {
                 is HangEvent.Hung -> onHung(event)
@@ -126,7 +125,7 @@ internal class UiWatchdog(
             failedTicks++
             if (failedTicks == 1 || failedTicks % REMINDER_EVERY == 0) {
                 try {
-                    log.warn("UI 감시 중 오류: {}", e.toString())
+                    log.warn("멈춤 감시 중 오류: {}", e.toString())
                 } catch (inner: Throwable) {
                     // Not even the log works: nothing more to do.
                 }
@@ -147,10 +146,10 @@ internal class UiWatchdog(
     private fun postHeartbeat() {
         if (!heartbeatPending.compareAndSet(false, true)) return
         try {
-            postToUi(
+            postBeat(
                 Runnable {
                     try {
-                        detector.onUiBeat(clockMs())
+                        detector.onBeat(clockMs())
                     } finally {
                         heartbeatPending.set(false)
                     }
@@ -171,10 +170,10 @@ internal class UiWatchdog(
         }
         if (event.repeat && dumpFileFull) {
             // The file said so already; the dump is not even made.
-            log.error("UI 스레드가 {}초 동안 응답하지 않음 (계속, 덤프 파일이 크기 제한에 도달해 생략)", seconds)
+            log.error("서버 스레드가 {}초 동안 응답하지 않음 (계속, 덤프 파일이 크기 제한에 도달해 생략)", seconds)
             return
         }
-        val reason = if (event.repeat) "UI 스레드 무응답 계속" else "UI 스레드 무응답"
+        val reason = if (event.repeat) "서버 스레드 무응답 계속" else "서버 스레드 무응답"
         val text = try {
             dump(event.silentMs, reason)
         } catch (e: Throwable) {
@@ -183,17 +182,17 @@ internal class UiWatchdog(
         }
         val file = text?.let { writeDump(it, repeat = event.repeat) }
         when {
-            text == null -> log.error("UI 스레드가 {}초 동안 응답하지 않음 (덤프 없음)", seconds)
-            event.repeat && dumpFileFull -> log.error("UI 스레드가 {}초 동안 응답하지 않음 (계속, 덤프 파일이 크기 제한에 도달해 생략)", seconds)
-            event.repeat -> log.error("UI 스레드가 {}초 동안 응답하지 않음 (계속, 덤프: {})", seconds, file?.fileName ?: "파일 없음")
-            else -> log.error("UI 스레드가 {}초 동안 응답하지 않음\n{}", seconds, text)
+            text == null -> log.error("서버 스레드가 {}초 동안 응답하지 않음 (덤프 없음)", seconds)
+            event.repeat && dumpFileFull -> log.error("서버 스레드가 {}초 동안 응답하지 않음 (계속, 덤프 파일이 크기 제한에 도달해 생략)", seconds)
+            event.repeat -> log.error("서버 스레드가 {}초 동안 응답하지 않음 (계속, 덤프: {})", seconds, file?.fileName ?: "파일 없음")
+            else -> log.error("서버 스레드가 {}초 동안 응답하지 않음\n{}", seconds, text)
         }
     }
 
     private fun onRecovered(event: HangEvent.Recovered) {
         currentFile = null
         dumpFileFull = false
-        log.warn("UI 응답 회복 (총 {}초)", event.totalMs / 1_000)
+        log.warn("서버 스레드 응답 회복 (총 {}초)", event.totalMs / 1_000)
     }
 
     /**
@@ -208,7 +207,7 @@ internal class UiWatchdog(
             dumpFileFull = true
             existing
         } else {
-            val file = existing ?: logDir.resolve("ui-hang-${fileNameTime.format(wallClock())}.txt")
+            val file = existing ?: logDir.resolve("hang-${fileNameTime.format(wallClock())}.txt")
             Files.writeString(file, text, UTF_8, CREATE, APPEND)
             currentFile = file
             deleteOldFiles(keep = file)
@@ -222,7 +221,7 @@ internal class UiWatchdog(
     /** The names carry the time, so by name is by age. */
     private fun deleteOldFiles(keep: Path) {
         try {
-            val dumps = Files.newDirectoryStream(logDir, "ui-hang-*.txt").use { stream -> stream.toList() }
+            val dumps = Files.newDirectoryStream(logDir, "hang-*.txt").use { stream -> stream.toList() }
             for (old in dumps.sortedByDescending { it.fileName.toString() }.drop(maxDumpFiles)) {
                 if (old != keep) Files.deleteIfExists(old)
             }
@@ -232,7 +231,7 @@ internal class UiWatchdog(
     }
 
     private companion object {
-        const val THREAD_NAME = "xgs-ui-watchdog"
+        const val THREAD_NAME = "xgs-hang-watchdog"
         const val JOIN_MS = 500L
         const val REMINDER_EVERY = 60
         val fileNameTime: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")

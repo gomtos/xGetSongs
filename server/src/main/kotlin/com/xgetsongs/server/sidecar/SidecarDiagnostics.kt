@@ -16,12 +16,12 @@ import java.nio.file.Path
 // folder it needs is set by [SidecarDiagnostics.start] first.
 
 /**
- * What the Compose app's `Main` does around its window, for the sidecar: the log folder is chosen and handed to logback,
- * then the diagnostics (startup record, uncaught exceptions, exit record, `last-run.txt`, hang dumps) are started.
+ * What the sidecar does before anything else: the log folder is chosen and handed to logback, then the diagnostics (startup
+ * record, uncaught exceptions, exit record, `last-run.txt`, hang dumps) are started.
  *
- * The sidecar has no UI thread. What can hang here is the work the server does on `Dispatchers.Default` (downloads, the
- * event streams), so the watchdog's heartbeats go there: when every worker of that dispatcher is stuck the heartbeat does
- * not run, and the thread dump of the stuck workers is written the way the app's UI hang dump is.
+ * What can hang here is the work the server does on `Dispatchers.Default` (downloads, the event streams), so the watchdog's
+ * heartbeats go there: when every worker of that dispatcher is stuck the heartbeat does not run, and the thread dump of the
+ * stuck workers is written to `hang-*.txt`.
  */
 internal object SidecarDiagnostics {
     private val heartbeats = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -37,7 +37,7 @@ internal object SidecarDiagnostics {
         System.setProperty(LOG_DIR_PROPERTY, logDir.toString())
         return Diagnostics.start(
             logDir,
-            postToUi = { heartbeat -> heartbeats.launch { heartbeat.run() } },
+            postBeat = { heartbeat -> heartbeats.launch { heartbeat.run() } },
             registerHook = registerHook,
             processes = processes,
         )

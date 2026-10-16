@@ -35,7 +35,7 @@ class HangDetectorTest {
         val detector = detector()
 
         for (now in 1_000L..120_000L step 1_000L) {
-            detector.onUiBeat(now)
+            detector.onBeat(now)
             assertNull(detector.onTick(now), "at $now")
         }
         assertEquals(0, detector.gapsIgnored)
@@ -46,7 +46,7 @@ class HangDetectorTest {
         val detector = detector()
 
         for (now in 1_000L..60_000L step 1_000L) {
-            if (now % 4_000L == 0L) detector.onUiBeat(now) // silent for 3 s in between
+            if (now % 4_000L == 0L) detector.onBeat(now) // silent for 3 s in between
             assertNull(detector.onTick(now), "at $now")
         }
     }
@@ -105,7 +105,7 @@ class HangDetectorTest {
         val before = detector.reportTimesUntil(1_000_000) // well into the 480 s steps
         assertTrue(before.size >= 6, before.toString())
 
-        detector.onUiBeat(1_000_500)
+        detector.onBeat(1_000_500)
         assertEquals(Recovered(1_000_500), detector.onTick(1_001_000))
 
         // The new hang counts from the beat at 1000.5 s: reported at 1006 s, then 30 s later, then 60 s later.
@@ -147,7 +147,7 @@ class HangDetectorTest {
     fun theEndOfATickMovesTheGapBaselineOnly() {
         val detector = detector()
         detector.tickEverySecond(1_000, 3_000)
-        detector.onUiBeat(3_000)
+        detector.onBeat(3_000)
 
         detector.onTickFinished(3_500)
 
@@ -170,14 +170,14 @@ class HangDetectorTest {
     @Test
     fun aLateBeatIsReportedOnceWithTheWholeSilentTime() {
         val detector = detector()
-        detector.onUiBeat(1_000)
+        detector.onBeat(1_000)
         val hung = detector.tickEverySecond(2_000, 8_000)
         assertEquals(listOf<Pair<Long, HangEvent>>(7_000L to Hung(6_000, repeat = false)), hung)
 
-        detector.onUiBeat(8_500) // the UI thread came back after 7.5 s without a beat
+        detector.onBeat(8_500) // the thread came back after 7.5 s without a beat
         assertEquals(Recovered(7_500), detector.onTick(9_000))
         for (now in 10_000L..60_000L step 1_000L) {
-            detector.onUiBeat(now)
+            detector.onBeat(now)
             assertNull(detector.onTick(now), "nothing more once it is over (at $now)")
         }
     }
@@ -186,7 +186,7 @@ class HangDetectorTest {
     fun aNewHangAfterTheRecoveryIsAFirstReportAgain() {
         val detector = detector()
         detector.tickEverySecond(1_000, 6_000)
-        detector.onUiBeat(7_000)
+        detector.onBeat(7_000)
         assertEquals(Recovered(7_000), detector.onTick(7_000))
 
         val events = detector.tickEverySecond(8_000, 13_000)
@@ -198,7 +198,7 @@ class HangDetectorTest {
     fun aBeatBeforeTheReportMeansNoRecoveryEvent() {
         val detector = detector()
         detector.tickEverySecond(1_000, 4_000)
-        detector.onUiBeat(4_500) // late, but not late enough to have been reported
+        detector.onBeat(4_500) // late, but not late enough to have been reported
 
         assertEquals(emptyList(), detector.tickEverySecond(5_000, 9_000))
     }
@@ -208,7 +208,7 @@ class HangDetectorTest {
         val detector = detector()
         detector.tickEverySecond(1_000, 5_000)
 
-        detector.onUiBeat(5_001)
+        detector.onBeat(5_001)
 
         assertNull(detector.onTick(5_001))
         assertEquals(emptyList(), detector.tickEverySecond(6_001, 10_000))
@@ -220,7 +220,7 @@ class HangDetectorTest {
         detector.tickEverySecond(1_000, 5_000)
         assertEquals(Hung(5_001, repeat = false), detector.onTick(5_001))
 
-        detector.onUiBeat(5_001)
+        detector.onBeat(5_001)
 
         assertEquals(Recovered(5_001), detector.onTick(6_001))
     }
@@ -229,7 +229,7 @@ class HangDetectorTest {
     fun aGapBetweenTicksResetsTheBaselineAndReportsNothing() {
         val detector = detector()
         detector.tickEverySecond(1_000, 3_000)
-        detector.onUiBeat(3_000)
+        detector.onBeat(3_000)
 
         // The machine slept: without the reset this would be 17 s without a beat.
         assertNull(detector.onTick(20_000))
@@ -281,7 +281,7 @@ class HangDetectorTest {
         assertEquals(listOf<Pair<Long, HangEvent>>(6_000L to Hung(6_000, repeat = false)), detector.tickEverySecond(1_000, 6_000))
 
         assertNull(detector.onTick(60_000)) // asleep while it hung
-        detector.onUiBeat(60_500)
+        detector.onBeat(60_500)
 
         assertNull(detector.onTick(61_000), "no Recovered: the hang was dropped by the reset, not ended")
         assertEquals(emptyList(), detector.tickEverySecond(62_000, 65_000))

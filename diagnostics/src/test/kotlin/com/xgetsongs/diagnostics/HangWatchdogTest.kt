@@ -15,11 +15,11 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-// Time is a variable here and the heartbeat is a queue the test empties when it wants the "UI thread" to answer, so the
+// Time is a variable here and the heartbeat is a queue the test empties when it wants the watched thread to answer, so the
 // loop body (tick) is called directly and nothing sleeps. Only the last tests start the real thread.
-class UiWatchdogTest {
+class HangWatchdogTest {
     private val dir: Path = Files.createTempDirectory("xgs-watchdog")
-    private val capture = LogCapture(UiWatchdog::class.java)
+    private val capture = LogCapture(HangWatchdog::class.java)
 
     private var now = 0L
     private var wallTime = LocalDateTime.of(2026, 10, 7, 21, 3, 11)
@@ -48,9 +48,9 @@ class UiWatchdogTest {
         maxDumpFiles: Int = 20,
         maxDumpFileBytes: Long = 5L * 1024 * 1024,
         dump: (Long, String) -> String = { silentMs, reason -> syntheticDump(silentMs, reason).also { dumps += it } },
-    ) = UiWatchdog(
+    ) = HangWatchdog(
         logDir = logDir,
-        postToUi = { heartbeat ->
+        postBeat = { heartbeat ->
             posts++
             if (uiAnswers) heartbeat.run() else queuedHeartbeats += heartbeat
         },
@@ -62,24 +62,24 @@ class UiWatchdogTest {
     )
 
     /** One second passes, then the watchdog thread's loop body runs; [count] times. */
-    private fun UiWatchdog.ticks(count: Int) = repeat(count) {
+    private fun HangWatchdog.ticks(count: Int) = repeat(count) {
         now += 1_000
         tick()
     }
 
-    /** The UI thread gets to its queue: every heartbeat posted so far runs, at the current time. */
+    /** The watched thread gets to its queue: every heartbeat posted so far runs, at the current time. */
     private fun answerQueuedHeartbeats() {
         queuedHeartbeats.toList().forEach { it.run() }
         queuedHeartbeats.clear()
     }
 
     private fun dumpFiles(): List<String> =
-        Files.newDirectoryStream(dir, "ui-hang-*.txt").use { stream -> stream.map { it.fileName.toString() }.sorted() }
+        Files.newDirectoryStream(dir, "hang-*.txt").use { stream -> stream.map { it.fileName.toString() }.sorted() }
 
     private fun messages(level: Level) = capture.at(level).map { it.formattedMessage }
 
     @Test
-    fun aFrozenUiGetsOneDumpFileAndOneErrorRecord() {
+    fun aFrozenThreadGetsOneDumpFileAndOneErrorRecord() {
         val watchdog = watchdog()
 
         watchdog.ticks(5)
@@ -89,15 +89,15 @@ class UiWatchdogTest {
         watchdog.ticks(5)
 
         assertEquals(1, dumps.size, "one dump, not one per tick")
-        assertEquals(listOf("ui-hang-20261007-210311.txt"), dumpFiles())
-        val text = Files.readString(dir.resolve("ui-hang-20261007-210311.txt"))
+        assertEquals(listOf("hang-20261007-210311.txt"), dumpFiles())
+        val text = Files.readString(dir.resolve("hang-20261007-210311.txt"))
         assertEquals(dumps.single(), text, "the file holds the dump")
         assertTrue(text.indexOf("AWT-EventQueue-0") in 0 until text.indexOf("\"main\""), "the event queue thread comes first")
         val errors = messages(Level.ERROR)
         assertEquals(1, errors.size)
-        assertTrue("UI 스레드가 6초 동안 응답하지 않음" in errors.single(), errors.single())
+        assertTrue("서버 스레드가 6초 동안 응답하지 않음" in errors.single(), errors.single())
         assertTrue(dumps.single() in errors.single(), "the log record holds the dump too")
-        assertEquals(1, queuedHeartbeats.size, "only one heartbeat waits in the queue of the blocked UI thread")
+        assertEquals(1, queuedHeartbeats.size, "only one heartbeat waits in the queue of the blocked thread")
     }
 
     @Test
@@ -133,9 +133,9 @@ class UiWatchdogTest {
     fun aHeartbeatThatCouldNotBePostedIsNotLeftPendingForever() {
         var failNext = true
         val delivered = mutableListOf<Runnable>()
-        val watchdog = UiWatchdog(
+        val watchdog = HangWatchdog(
             logDir = dir,
-            postToUi = { heartbeat ->
+            postBeat = { heartbeat ->
                 if (failNext) throw IllegalStateException("no queue")
                 delivered += heartbeat
             },
@@ -150,19 +150,19 @@ class UiWatchdogTest {
     }
 
     @Test
-    fun theLogSaysWhenTheUiAnswersAgain() {
+    fun theLogSaysWhenTheThreadAnswersAgain() {
         val watchdog = watchdog()
         watchdog.ticks(6)
         assertEquals(1, messages(Level.ERROR).size)
         assertEquals(emptyList(), messages(Level.WARN))
 
         now += 2_000
-        answerQueuedHeartbeats() // the UI thread was blocked until now, 8 s after its last answer
+        answerQueuedHeartbeats() // the thread was blocked until now, 8 s after its last answer
         uiAnswers = true
         watchdog.ticks(1)
 
         assertEquals(1, messages(Level.WARN).size)
-        assertEquals("UI 응답 회복 (총 8초)", messages(Level.WARN).single())
+        assertEquals("서버 스레드 응답 회복 (총 8초)", messages(Level.WARN).single())
         watchdog.ticks(60)
         assertEquals(1, messages(Level.ERROR).size, "no new report once it answers")
         assertEquals(1, messages(Level.WARN).size, "the recovery is reported once")
@@ -170,7 +170,7 @@ class UiWatchdogTest {
     }
 
     @Test
-    fun aUiThatAnswersImmediatelyNeverGetsADump() {
+    fun aThreadThatAnswersImmediatelyNeverGetsADump() {
         uiAnswers = true
         val watchdog = watchdog()
 
@@ -190,13 +190,13 @@ class UiWatchdogTest {
         watchdog.ticks(36)
 
         assertEquals(2, dumps.size)
-        assertEquals(listOf("ui-hang-20261007-210311.txt"), dumpFiles())
-        val text = Files.readString(dir.resolve("ui-hang-20261007-210311.txt"))
+        assertEquals(listOf("hang-20261007-210311.txt"), dumpFiles())
+        val text = Files.readString(dir.resolve("hang-20261007-210311.txt"))
         assertEquals(2, Regex("스레드 덤프").findAll(text).count(), "two sections")
         assertTrue("무응답 6000ms" in dumps[0] && "무응답 36000ms" in dumps[1], "the sections tell how long it has lasted")
         val errors = messages(Level.ERROR)
         assertEquals(2, errors.size)
-        assertTrue("UI 스레드가 36초 동안 응답하지 않음" in errors[1] && "계속" in errors[1] && "ui-hang-20261007-210311.txt" in errors[1], errors[1])
+        assertTrue("서버 스레드가 36초 동안 응답하지 않음" in errors[1] && "계속" in errors[1] && "hang-20261007-210311.txt" in errors[1], errors[1])
         assertFalse(dumps[1] in errors[1], "a repeat puts the dump in the file only: the log would fill up")
     }
 
@@ -211,16 +211,16 @@ class UiWatchdogTest {
         wallTime = LocalDateTime.of(2026, 10, 7, 21, 10, 0)
         watchdog.ticks(8) // nobody answers the new heartbeats
 
-        assertEquals(listOf("ui-hang-20261007-210311.txt", "ui-hang-20261007-211000.txt"), dumpFiles())
+        assertEquals(listOf("hang-20261007-210311.txt", "hang-20261007-211000.txt"), dumpFiles())
         assertEquals(2, dumps.size)
-        assertEquals(1, Regex("스레드 덤프").findAll(Files.readString(dir.resolve("ui-hang-20261007-210311.txt"))).count())
-        assertEquals(1, Regex("스레드 덤프").findAll(Files.readString(dir.resolve("ui-hang-20261007-211000.txt"))).count())
+        assertEquals(1, Regex("스레드 덤프").findAll(Files.readString(dir.resolve("hang-20261007-210311.txt"))).count())
+        assertEquals(1, Regex("스레드 덤프").findAll(Files.readString(dir.resolve("hang-20261007-211000.txt"))).count())
         assertEquals(2, messages(Level.ERROR).size)
     }
 
     @Test
     fun onlyTheNewestTwentyDumpFilesAreKept() {
-        for (i in 0 until 25) Files.writeString(dir.resolve("ui-hang-20260101-0000%02d.txt".format(i)), "old $i")
+        for (i in 0 until 25) Files.writeString(dir.resolve("hang-20260101-0000%02d.txt".format(i)), "old $i")
         Files.writeString(dir.resolve("xgetsongs.log"), "the log")
         Files.writeString(dir.resolve("notes.txt"), "not a dump")
         val watchdog = watchdog()
@@ -229,20 +229,20 @@ class UiWatchdogTest {
 
         val kept = dumpFiles()
         assertEquals(20, kept.size, kept.toString())
-        assertTrue("ui-hang-20261007-210311.txt" in kept, "the new dump is never the one that goes")
-        assertEquals((6 until 25).map { "ui-hang-20260101-0000%02d.txt".format(it) }, kept - "ui-hang-20261007-210311.txt", "the six oldest went")
+        assertTrue("hang-20261007-210311.txt" in kept, "the new dump is never the one that goes")
+        assertEquals((6 until 25).map { "hang-20260101-0000%02d.txt".format(it) }, kept - "hang-20261007-210311.txt", "the six oldest went")
         assertTrue(Files.exists(dir.resolve("xgetsongs.log")))
         assertTrue(Files.exists(dir.resolve("notes.txt")))
     }
 
     @Test
     fun theNumberOfKeptFilesCanBeChosen() {
-        for (i in 0 until 5) Files.writeString(dir.resolve("ui-hang-20260101-0000%02d.txt".format(i)), "old $i")
+        for (i in 0 until 5) Files.writeString(dir.resolve("hang-20260101-0000%02d.txt".format(i)), "old $i")
         val watchdog = watchdog(maxDumpFiles = 3)
 
         watchdog.ticks(6)
 
-        assertEquals(listOf("ui-hang-20260101-000003.txt", "ui-hang-20260101-000004.txt", "ui-hang-20261007-210311.txt"), dumpFiles())
+        assertEquals(listOf("hang-20260101-000003.txt", "hang-20260101-000004.txt", "hang-20261007-210311.txt"), dumpFiles())
     }
 
     @Test
@@ -268,14 +268,14 @@ class UiWatchdogTest {
 
         assertEquals(1, attempts)
         assertEquals(1, messages(Level.ERROR).size)
-        assertTrue("UI 스레드가 6초 동안 응답하지 않음" in messages(Level.ERROR).single())
+        assertTrue("서버 스레드가 6초 동안 응답하지 않음" in messages(Level.ERROR).single())
         assertTrue(messages(Level.WARN).any { "IllegalStateException" in it }, messages(Level.WARN).toString())
         assertEquals(emptyList(), dumpFiles())
     }
 
     @Test
     fun aHeartbeatThatCannotBePostedDoesNotKillTheTick() {
-        val watchdog = UiWatchdog(logDir = dir, postToUi = { throw IllegalStateException("no queue") }, clockMs = { now })
+        val watchdog = HangWatchdog(logDir = dir, postBeat = { throw IllegalStateException("no queue") }, clockMs = { now })
 
         watchdog.ticks(3) // must not throw
 
@@ -284,7 +284,7 @@ class UiWatchdogTest {
 
     @Test
     fun aFailureThatKeepsComingIsLoggedOnceInAWhileNotEverySecond() {
-        val watchdog = UiWatchdog(logDir = dir, postToUi = { throw IllegalStateException("no queue") }, clockMs = { now })
+        val watchdog = HangWatchdog(logDir = dir, postBeat = { throw IllegalStateException("no queue") }, clockMs = { now })
 
         watchdog.ticks(59)
         assertEquals(1, messages(Level.WARN).size, "the first one is logged, the 58 after it are not")
@@ -312,10 +312,10 @@ class UiWatchdogTest {
     fun theThreadIsADaemonAndStopEndsIt() {
         val threads = ConcurrentLinkedQueue<Thread>()
         val ticked = CountDownLatch(3)
-        val watchdog = UiWatchdog(
+        val watchdog = HangWatchdog(
             logDir = dir,
-            postToUi = { heartbeat ->
-                heartbeat.run() // the "UI" answers at once, so the real clock never sees a hang
+            postBeat = { heartbeat ->
+                heartbeat.run() // the thread answers at once, so the real clock never sees a hang
                 threads += Thread.currentThread()
                 ticked.countDown()
             },
@@ -327,7 +327,7 @@ class UiWatchdogTest {
         watchdog.stop()
 
         val thread = threads.first()
-        assertEquals("xgs-ui-watchdog", thread.name)
+        assertEquals("xgs-hang-watchdog", thread.name)
         assertTrue(thread.isDaemon)
         thread.join(30_000)
         assertFalse(thread.isAlive, "stop() ended the thread")
@@ -336,7 +336,7 @@ class UiWatchdogTest {
 
     @Test
     fun startingTwiceIsRejectedAndStoppingWithoutAStartIsFine() {
-        val watchdog = UiWatchdog(logDir = dir, postToUi = { it.run() }, intervalMs = 5)
+        val watchdog = HangWatchdog(logDir = dir, postBeat = { it.run() }, intervalMs = 5)
         watchdog.stop()
 
         watchdog.start()
@@ -365,7 +365,7 @@ class UiWatchdogTest {
 
     @Test
     fun anErrorFromThePostIsSurvivedToo() {
-        val watchdog = UiWatchdog(logDir = dir, postToUi = { throw NoClassDefFoundError("java/awt/EventQueue") }, clockMs = { now })
+        val watchdog = HangWatchdog(logDir = dir, postBeat = { throw NoClassDefFoundError("java/awt/EventQueue") }, clockMs = { now })
 
         watchdog.ticks(3) // must not throw
 
@@ -376,9 +376,9 @@ class UiWatchdogTest {
     fun theThreadKeepsRunningAfterErrors() {
         val calls = AtomicInteger()
         val answered = CountDownLatch(3)
-        val watchdog = UiWatchdog(
+        val watchdog = HangWatchdog(
             logDir = dir,
-            postToUi = { heartbeat ->
+            postBeat = { heartbeat ->
                 if (calls.incrementAndGet() <= 3) throw OutOfMemoryError("simulated")
                 heartbeat.run()
                 answered.countDown()
@@ -434,7 +434,7 @@ class UiWatchdogTest {
     /** A dump of exactly [bytes] bytes, whatever the clock says. */
     private fun fixedDump(bytes: Int = 100) = "X".repeat(bytes - 1) + "\n"
 
-    private fun dumpText(file: String = "ui-hang-20261007-210311.txt") = Files.readString(dir.resolve(file))
+    private fun dumpText(file: String = "hang-20261007-210311.txt") = Files.readString(dir.resolve(file))
 
     @Test
     fun theDumpFileStopsGrowingAtTheSizeLimitWithOneNoticeAndTheLogGetsOneLines() {
@@ -447,11 +447,11 @@ class UiWatchdogTest {
         assertEquals(3, calls, "once the file is full the dump is not even made")
         val errors = messages(Level.ERROR)
         assertEquals(5, errors.size)
-        assertTrue("계속" in errors[1] && "ui-hang-20261007-210311.txt" in errors[1], errors[1])
+        assertTrue("계속" in errors[1] && "hang-20261007-210311.txt" in errors[1], errors[1])
         for (i in 2..4) {
-            assertTrue("크기 제한" in errors[i] && "ui-hang" !in errors[i] && "XXXX" !in errors[i], errors[i])
+            assertTrue("크기 제한" in errors[i] && "hang-" !in errors[i] && "XXXX" !in errors[i], errors[i])
         }
-        assertEquals(listOf("ui-hang-20261007-210311.txt"), dumpFiles())
+        assertEquals(listOf("hang-20261007-210311.txt"), dumpFiles())
     }
 
     @Test
@@ -490,7 +490,7 @@ class UiWatchdogTest {
         watchdog.ticks(8) // nobody answers: a new hang
 
         assertEquals(3, calls)
-        assertEquals(fixedDump(), dumpText("ui-hang-20261007-211000.txt"), "its first section is written and has no notice")
+        assertEquals(fixedDump(), dumpText("hang-20261007-211000.txt"), "its first section is written and has no notice")
         assertEquals(fixedDump() + notice + "\n", dumpText(), "the first file is left as it was")
     }
 }

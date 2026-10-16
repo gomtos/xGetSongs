@@ -11,7 +11,7 @@ internal data class MemorySnapshot(val usedMb: Long, val totalMb: Long, val maxM
 internal data class GcSnapshot(val name: String, val count: Long, val timeMs: Long)
 
 /**
- * The text that goes into the log and into `ui-hang-*.txt` when the UI thread stops answering: when and why, the heap and
+ * The text that goes into the log and into `hang-*.txt` when the watched thread stops answering: when and why, the heap and
  * the garbage collectors, then every thread with its stack. Nothing else about the machine is written (no environment
  * variables, no system properties): the startup record already holds the few that matter.
  */
