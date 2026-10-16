@@ -175,3 +175,35 @@ data class ActionResult(val message: String)
 
 @Serializable
 data class ErrorResponse(val message: String)
+
+/**
+ * What the server asks of the desktop shell's hidden browser (the web view that reads Google's lyrics card). The shell fetches the
+ * next command with `GET /browser/next` and reports with `POST /browser/answer`; [id] ties an answer to its command.
+ * The examples in `contract/browser-protocol.json` are what both sides are tested against.
+ */
+@Serializable
+sealed interface BrowserCommand {
+    val id: String
+
+    /** Opens [url] (making the window when there is none) and returns once the load has started. */
+    @Serializable
+    @SerialName("load")
+    data class Load(override val id: String, val url: String) : BrowserCommand
+
+    /** Runs [script] in the page. */
+    @Serializable
+    @SerialName("evaluate")
+    data class Evaluate(override val id: String, val script: String) : BrowserCommand
+
+    /** Back to `about:blank`; the window stays. */
+    @Serializable
+    @SerialName("reset")
+    data class Reset(override val id: String) : BrowserCommand
+}
+
+/**
+ * The shell's report on one [BrowserCommand]. For `evaluate`, [value] is what the script gave as text (null when it gave
+ * nothing). When [ok] is false, [error] is a short English name of what went wrong.
+ */
+@Serializable
+data class BrowserAnswer(val id: String, val ok: Boolean, val value: String? = null, val error: String? = null)

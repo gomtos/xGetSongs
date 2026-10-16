@@ -1,0 +1,12 @@
+{
+  "commands": [
+    {"type": "load", "id": "c-1", "url": "https://www.google.com/search?q=IU+Love+poem+lyrics&hl=en"},
+    {"type": "evaluate", "id": "c-2", "script": "document.title"},
+    {"type": "reset", "id": "c-3"}
+  ],
+  "answers": [
+    {"id": "c-1", "ok": true, "value": null, "error": null},
+    {"id": "c-2", "ok": true, "value": "한글 \"title\"\n", "error": null},
+    {"id": "c-3", "ok": false, "value": null, "error": "window gone"}
+  ]
+}
