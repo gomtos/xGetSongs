@@ -100,7 +100,9 @@
 `%TEMP%\xgs-bridge-check\count-tests.mjs`:
 
 ```javascript
-// Sums the JUnit XML results that `gradlew check` left in a checkout, per module and per test task.
+// Sums the JUnit XML results that `gradlew check` left in a checkout, per module and per test task. TOTAL counts only the tasks that
+// `check` runs (test, desktopTest, jvmTest); the results of other test tasks (integrationTest, sidecarImageTest) that someone ran in the
+// same checkout earlier are listed but not added.
 //   node count-tests.mjs <repository folder>
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -132,12 +134,16 @@ function walk(dir) {
 }
 
 walk(root);
+const CHECK_TASKS = ["test", "desktopTest", "jvmTest"];
 let all = 0;
 let skipped = 0;
 for (const [key, total] of [...totals].sort()) {
-  console.log(`${key.padEnd(28)} tests ${String(total.tests).padStart(4)}  failures ${total.failures}  errors ${total.errors}  skipped ${total.skipped}`);
-  all += total.tests;
-  skipped += total.skipped;
+  const counted = CHECK_TASKS.includes(key.split(":")[1]);
+  console.log(`${key.padEnd(28)} tests ${String(total.tests).padStart(4)}  failures ${total.failures}  errors ${total.errors}  skipped ${total.skipped}${counted ? "" : "  (not part of check)"}`);
+  if (counted) {
+    all += total.tests;
+    skipped += total.skipped;
+  }
 }
 console.log(`${"TOTAL".padEnd(28)} tests ${String(all).padStart(4)}  skipped ${skipped}`);
 ```
@@ -293,7 +299,7 @@ Expected: `exit=0`, `BUILD SUCCESSFUL`, 개수: `diagnostics:test 158`, `engine:
 - [ ] **Step 5: 커밋한다**
 
 ```powershell
-Set-Location C:\Projects\xGetSongs; git add -A app settings.gradle.kts build.gradle.kts gradle/libs.versions.toml run.bat .gitignore; git status --short; git commit -m "chore: Compose 앱(app/)을 지운다
+Set-Location C:\Projects\xGetSongs; git add settings.gradle.kts build.gradle.kts gradle/libs.versions.toml run.bat .gitignore; git status --short; git commit -m "chore: Compose 앱(app/)을 지운다
 
 마이그레이션의 마지막 단계다. 화면은 Tauri 셸로 옮겨졌고 app/의 시험이 맡던 일은 TypeScript와 Rust의 시험으로 옮겨져 있다(마지막으로 app/이 있던 커밋은 f9dbcba). settings.gradle.kts의 :app, 루트의 Compose 플러그인, 버전 카탈로그의 Compose·swing·ktor-client-core·ktor-client-mock, google() 저장소를 걷는다. run.bat은 dist\xGetSongs.exe를 실행한다. gradlew check: 1,125개에서 938개.
 
