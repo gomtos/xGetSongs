@@ -3,6 +3,7 @@ package com.xgetsongs.server
 import com.xgetsongs.engine.DownloadService
 import com.xgetsongs.engine.Resolver
 import com.xgetsongs.engine.ToolManager
+import com.xgetsongs.engine.lyrics.google.BrowserChannel
 
 /**
  * LOCAL: the desktop app's embedded server. Clients may choose the output folder.
@@ -20,4 +21,6 @@ class Services(
     val resolver: Resolver,
     val downloads: DownloadService,
     val tools: ToolManager,
+    /** Where the desktop shell's hidden browser takes its commands from (the Google lyrics lookup renders pages through it). */
+    val browser: BrowserChannel = BrowserChannel(),
 )

@@ -32,6 +32,14 @@ class SidecarImageTest {
     }
 
     @Test
+    fun theImageHasNoJavaFx() {
+        val names = Files.list(image.resolve("lib")).use { files -> files.map { it.fileName.toString() }.toList() }
+
+        // The hidden browser of the Google lyrics lookup is the shell's WebView2 now; JavaFX was 44 MB of the image.
+        assertTrue(names.none { "javafx" in it.lowercase() }, "JavaFX jars: $names")
+    }
+
+    @Test
     fun theImageCarriesWhatJavaNeedsOnAPcWithoutTheVisualCRuntime() {
         val bin = image.resolve("runtime").resolve("bin")
 

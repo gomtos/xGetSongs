@@ -2,6 +2,7 @@ package com.xgetsongs.engine.lyrics.google
 
 import com.xgetsongs.engine.lyrics.LyricsQuery
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -57,5 +58,21 @@ class GoogleLyricsProviderTest {
         provider(FakeBrowser()) { closed = true }.close()
 
         assertTrue(closed)
+    }
+
+    @Test
+    fun closingTheProviderClosesTheChannel() = runTest {
+        val channel = BrowserChannel(TestTimeSource())
+
+        GoogleLyricsProvider(channel).close()
+
+        assertEquals("closed", assertFailsWith<BrowserUnavailableException> { channel.load("https://example.test/") }.reason)
+    }
+
+    @Test
+    fun aLookupWithNoAgentIsNullAtOnce() = runTest {
+        assertNull(GoogleLyricsProvider(BrowserChannel(TestTimeSource())).find(query))
+
+        assertEquals(0L, currentTime, "nothing was waited for")
     }
 }

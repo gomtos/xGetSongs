@@ -26,7 +26,7 @@ internal sealed interface GoogleLyricsResult {
     /** The page did not settle in time. */
     data object Timeout : GoogleLyricsResult
 
-    /** The web view cannot be used (JavaFX is missing or failed to start). [reason] is the name of what went wrong. */
+    /** The browser cannot be used (no shell answers, its window did not open, ...). [reason] is the name of what went wrong. */
     class BrowserUnavailable(val reason: String) : GoogleLyricsResult {
         override fun toString() = "BrowserUnavailable($reason)"
     }

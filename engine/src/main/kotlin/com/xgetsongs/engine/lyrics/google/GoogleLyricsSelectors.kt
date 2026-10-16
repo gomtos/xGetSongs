@@ -2,8 +2,8 @@ package com.xgetsongs.engine.lyrics.google
 
 /**
  * Everything that depends on how Google writes its result page, in one place. Google changes these obfuscated attributes
- * from time to time; when it does, this is the only file to touch (the smoke test `RealGoogleLyricsIntegrationTest`
- * is what notices).
+ * from time to time; when it does, this is the only file to touch (what notices is a real lookup: the log line
+ * "구글 가사 카드: 카드는 있으나 줄을 읽지 못함" or "카드 없음" for songs that are known to have a card).
  */
 internal object GoogleLyricsSelectors {
     /** Where the lyrics card is, outermost first: the first one that matches limits the search for lines. */

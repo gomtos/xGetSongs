@@ -4,6 +4,7 @@ import com.xgetsongs.engine.job.DefaultDownloadService
 import com.xgetsongs.engine.job.ItemDownloader
 import com.xgetsongs.engine.lyrics.FallbackLyricsProvider
 import com.xgetsongs.engine.lyrics.LrclibLyricsProvider
+import com.xgetsongs.engine.lyrics.google.BrowserChannel
 import com.xgetsongs.engine.lyrics.google.GoogleLyricsLog
 import com.xgetsongs.engine.lyrics.google.GoogleLyricsProvider
 import com.xgetsongs.engine.process.SystemProcessRunner
@@ -48,16 +49,19 @@ fun createServices(appDataDir: Path, scope: CoroutineScope): Services {
     val runner = SystemProcessRunner()
     val locator = ToolLocator(appBinDir = binDir)
     val resolver = YtDlpResolver(runner, locator)
-    // Lyrics are looked up on lrclib.net and then, for what it does not have, in Google's lyrics card (a web view that is
-    // never shown), but only for the jobs whose options allow it (JobOptions.searchLyricsOnline).
-    val googleLyrics = GoogleLyricsProvider(googleLyricsLog)
-    // The web view's runtime keeps the JVM alive until it is shut down, so it goes down with the server's scope.
+    // Lyrics are looked up on lrclib.net and then, for what it does not have, in Google's lyrics card, but only for the jobs whose
+    // options allow it (JobOptions.searchLyricsOnline). The card is read by a browser window of the desktop shell that never shows:
+    // the shell fetches its commands from [browser] through the routes /browser/next and /browser/answer.
+    val browser = BrowserChannel()
+    val googleLyrics = GoogleLyricsProvider(browser, googleLyricsLog)
+    // Closing the provider closes the channel: the shell's polls end and nothing waits for a browser any more.
     scope.coroutineContext.job.invokeOnCompletion { googleLyrics.close() }
     val downloader = ItemDownloader(runner, locator, resolver, FallbackLyricsProvider(LrclibLyricsProvider(), googleLyrics))
     return Services(
         resolver = resolver,
         downloads = DefaultDownloadService(downloader, workDir, scope),
         tools = DefaultToolManager(locator, runner, binDir),
+        browser = browser,
     )
 }
 
