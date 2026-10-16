@@ -1,5 +1,7 @@
 # xGetSongs 설계
 
+> **2026-10-16:** 이 문서는 화면이 Compose Desktop이던 때의 설계다. 화면은 그 뒤 Tauri(웹뷰)로 옮겼고 `app/` 모듈은 지웠다. 로직(`shared`, `engine`, `server`)의 설계는 그대로이고, 화면·실행·포장에 관한 부분은 [Tauri 마이그레이션 설계](2026-10-10-tauri-kotlin-sidecar-design.md)가 이어받는다.
+
 작성일: 2026-10-04
 
 ## 1. 목표

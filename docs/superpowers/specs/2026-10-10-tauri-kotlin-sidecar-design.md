@@ -64,7 +64,8 @@
 | `shared/`, `engine/`, `server/` | 그대로. 사이드카 진입점(`main`, 시작 신호, 부모 감시)은 `server/`의 `sidecar` 패키지에 둔다(설계 문서 §10.1 2단계 "main()만 분리") |
 | `sidecar-host/` (새) | Rust 라이브러리 크레이트. 시작 신호 해석, 사이드카 시작·종료, Job Object, 서버 호출 6개와 이벤트 스트림(`Bridge`), 시작 대기·종료(`Lifecycle`). **Tauri에 의존하지 않는다.** Tauri 크레이트는 첫 컴파일이 수 분 걸려서 이 로직의 테스트 루프를 느리게 하기 때문이다 |
 | `shell/` (새) | Tauri 앱(프런트엔드 + `src-tauri`). `sidecar-host`를 경로 의존성으로 쓴다 |
-| `app/` | Compose 앱. 6단계까지 남겨 두고 `run.bat`으로 계속 쓸 수 있다 |
+| `diagnostics/` | 로그 설정, 종료 기록, 멈춤 감시(앱과 사이드카가 같이 쓰던 것을 1단계에서 옮겼다) |
+| `app/` | (6단계에서 지웠다) 마지막으로 있던 커밋은 `f9dbcba`: `git show f9dbcba:app/...`로 읽을 수 있다 |
 
 ## 5. 단계와 관문
 
@@ -77,7 +78,7 @@
 | 3 | 프런트엔드 이식: `AppStateHolder` 논리와 `Labels`, 화면. `shared` 로직 재사용 방식 확정 | 지금의 `AppStateHolderTest` 시나리오가 새 테스트에서 통과 ([계획서](../plans/2026-10-11-tauri-frontend-port.md), [보고서](2026-10-11-tauri-frontend-port-report.md): 통과). 재사용 방식은 TS 포팅과 같은 케이스 표 테스트이고 Kotlin 구현과의 대조 도구가 있다 |
 | 4 | 데스크톱 기능: 폴더 선택, 탐색기 열기, `settings.json`, 단일 인스턴스, 종료 연동 | README의 "알려진 제한" 항목과 동작이 같다 ([계획서](../plans/2026-10-11-tauri-desktop-features.md), [보고서](2026-10-11-tauri-desktop-features-report.md): 통과). 앱 데이터 폴더의 기본값이 `%APPDATA%\xGetSongs`(Compose와 같음)가 됐다 |
 | 5 | 포장과 단일 exe: 번들 JRE + 셸. 이전 설계(§6.4)의 SFX 판정 방식 재사용 | 깨끗한 PC 흉내 검증 ([계획서](../plans/2026-10-15-tauri-packaging.md), [보고서](2026-10-15-tauri-packaging-report.md): 통과). 방식은 SFX가 아니라 셸 exe 뒤에 이미지를 붙이고 첫 실행에 `%LOCALAPPDATA%\xGetSongs\runtime\<해시>`로 풀어 쓰는 것이다(약 130MB 한 파일, `package-exe.bat`) |
-| 6 | `app/` 삭제, README·설계 문서 갱신 | `gradlew check` 통과 |
+| 6 | `app/` 삭제, README·설계 문서 갱신 | `gradlew check` 통과 ([계획서](../plans/2026-10-16-tauri-cleanup.md)) |
 | 7 | (선택) 가사 검색의 JavaFX 웹뷰를 WebView2로 교체 | 구글 가사 통합 테스트 재검증 |
 
 각 단계의 계획서는 앞 단계의 관문을 통과한 뒤에 쓴다. 0단계 결과가 1~5단계의 방식을 바꿀 수 있기 때문이다. 0a의 UI 관문이 통과하지 못하면 0b 이후는 하지 않는다(UI가 나아지지 않으면 마이그레이션이 줄 이득이 없다).

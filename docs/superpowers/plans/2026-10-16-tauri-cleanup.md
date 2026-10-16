@@ -1265,7 +1265,7 @@ index 4df6517..0b19fd2 100644
 
 ```powershell
 Set-Location C:\Projects\xGetSongs
-git grep -n -F -e "서버를 시작하지 못했습니다" -e "런타임을 풀지 못했습니다" -e "자리에 놓지 못했습니다" -e "사용자가 창 닫기를 요청함" -e "내장 서버 정지" -e "JVM 종료 시작: 사용자가 창을 닫음" -e "서버 스레드 응답 회복" -e "sidecar-stderr.log" -- "*.rs" "*.kt" "*.ts"
+git grep -n -F -e "서버를 시작하지 못했습니다" -e "든 런타임을" -e "풀지 못했습니다" -e "자리에 놓지 못했습니다" -e "사용자가 창 닫기를 요청함" -e "내장 서버 정지" -e "JVM 종료 시작: 사용자가 창을 닫음" -e "서버 스레드 응답 회복" -e "sidecar-stderr.log" -- "*.rs" "*.kt" "*.ts"
 ```
 
 Expected: 일곱 문구 모두 코드에서 찾아진다(`서버를 시작하지 못했습니다`는 `shell/src-tauri/src/…`가 아니라 `sidecar-host/src/lifecycle.rs`, `런타임을 풀지 못했습니다`·`자리에 놓지 못했습니다`는 `payload.rs`, 로그 줄들은 `diagnostics/`와 `server/`, `서버 스레드 응답 회복`은 `HangWatchdog.kt`, `sidecar-stderr.log`는 `config.rs`). 하나라도 안 찾아지면 README의 그 문구를 코드의 것으로 고친다.
@@ -1275,7 +1275,7 @@ Expected: 일곱 문구 모두 코드에서 찾아진다(`서버를 시작하지
 ```powershell
 Set-Location C:\Projects\xGetSongs
 node $env:TEMP\xgs-bridge-check\links.mjs README.md shell/README.md docs/superpowers/specs/2026-10-10-tauri-kotlin-sidecar-design.md docs/superpowers/specs/2026-10-04-xgetsongs-design.md
-git grep -n -E "UiWatchdog|postToUi|onUiBeat|ui-hang|UI 스레드|UI 응답|UI 감시|xgs-ui-watchdog|:app" -- . ':!docs' ; "grep exit=$LASTEXITCODE (1 = nothing found)"
+git grep -n -E "UiWatchdog|postToUi|onUiBeat|ui-hang|UI 스레드|UI 응답|UI 감시|xgs-ui-watchdog|:app:" -- . ':!docs' ; "grep exit=$LASTEXITCODE (1 = nothing found)"
 ```
 
 Expected: `all … links exist`(설계 문서의 새 링크 둘 중 보고서는 Task 6에서 만든다: 지금은 `2026-10-16-tauri-cleanup-report.md`가 **없다고 한 줄 나올 수 있다**. 그 한 줄만 있고 나머지가 모두 있으면 정상이다), `git grep`은 아무것도 찾지 못한다(`grep exit=1`).
@@ -1383,7 +1383,7 @@ Expected: `package exit=0`, `started: True`, `window after … ms`(1초 이내),
 Set-Location C:\Projects\xGetSongs
 "app exists: $(Test-Path app); tracked: $(@(git ls-files app).Count)"
 git status --short
-git grep -n -E "UiWatchdog|postToUi|onUiBeat|ui-hang|UI 스레드|UI 응답|UI 감시|xgs-ui-watchdog|:app" -- . ':!docs' ; "grep exit=$LASTEXITCODE"
+git grep -n -E "UiWatchdog|postToUi|onUiBeat|ui-hang|UI 스레드|UI 응답|UI 감시|xgs-ui-watchdog|:app:" -- . ':!docs' ; "grep exit=$LASTEXITCODE"
 "left: " + @(Get-ChildItem $env:TEMP -Directory | Where-Object { $_.Name -match '^xgs-bridge-check-' }).Count + " check folders, " + @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -like "$env:TEMP\xgs-bridge-check-*" }).Count + " processes"
 ```
 
