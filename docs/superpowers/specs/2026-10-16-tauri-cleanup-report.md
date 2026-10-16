@@ -34,7 +34,7 @@
 | `JsonSettingsStoreTest` | 22 | `sidecar-host/src/settings.rs` 24(원본 22 + 포트가 더한 2) |
 | `ExplorerOpenerTest` | 10 | `sidecar-host/src/folder.rs` 12(원본 10 + 2) |
 | `LogbackConfigTest` | 12 | `app`의 `logback.xml`을 시험한 것: 사이드카의 `SidecarLogbackConfigTest`가 맡는다 |
-| `HttpXgsApiTest` + `EndToEndTest` | 13 | 서버와 그 클라이언트 사이의 계약. 클라이언트는 이제 Rust 브리지라서 `bridge.rs`의 가짜 서버 시험(28개)과 **`real_sidecar`**(실제 이미지, `#[ignore]`)가 맡는다. `gradlew check`에는 클라이언트 쪽 시험이 없다 |
+| `HttpXgsApiTest` + `EndToEndTest` | 13 | 서버와 그 클라이언트 사이의 계약. 클라이언트는 이제 Rust 브리지다. **부분적으로만 이어진다**(아래 "한계"): 도구 상태, 서버의 오류 문구, 인증 거부, 토큰 비노출, 종료 기록은 실제 이미지를 상대로 하는 `real_sidecar`(`#[ignore]`)가 확인하고(이 실행에서 통과), 조회 결과와 작업 이벤트(`item-started`, `progress`, `item-done`, `job-done` …)의 필드 모양은 실제 yt-dlp·네트워크가 필요한 `real_download`(`#[ignore]`, 수동)만 실제 서버와 대조한다. 이 단계는 `real_download`를 돌리지 않았다. `bridge.rs`의 가짜 서버(28개)와 TypeScript 시험의 JSON은 손으로 쓴 것이라 서버의 직렬화와 묶여 있지 않다 |
 
 이 중 앞의 넷은 "원본의 이름이 포트에 모두 있다"를 지키는 점검(`kotlin-coverage.test.ts`)이 있었는데 원본이 없어져 `shared`의 둘만 남겼다. 지운 원본은 `git show f9dbcba:app/...`로 읽을 수 있고 포팅한 파일 일곱 곳의 머리 주석이 그렇게 적는다.
 
@@ -49,6 +49,8 @@
 원장(`.superpowers/sdd/2026-10-16-tauri-cleanup/progress.md`)의 `Ruling:`이 기준이다. 모두 계획서의 도구·명령의 결함을 고친 것이고 결과의 숫자는 계획과 같다: 개수 도구가 `check`에 속하지 않는 시험 과제(이전 실행이 남긴 `integrationTest`, `sidecarImageTest`)의 결과까지 더하던 것, 폴더를 지운 뒤의 `git add -A app`가 실패하던 것, `:app` 검색이 `git show f9dbcba:app/...` 주석에 걸리던 것(`:app:`으로), 코드가 이어 붙이는 문구 하나를 통째로 검색하던 것.
 
 ## 한계와 남은 일
+
+- **서버와 클라이언트 사이의 성공 경로 계약은 자동으로 지켜지지 않는다.** `shared/api`의 필드 이름이 바뀌어도 `gradlew check`, `cargo test`, `real_sidecar`, `node --test`가 모두 통과하고 화면만 깨질 수 있다. 지운 Kotlin 클라이언트의 시험은 서버와 같은 직렬화기를 써서 이것을 잡지 못했으니 이 단계가 새로 만든 틈은 아니지만, 이 단계가 메우지도 않았다. 싸게 막는 길(보고서를 쓴 뒤 검토에서 나온 제안): 이벤트 종류마다 JSON 예시 파일을 저장소에 두고, Kotlin 시험이 서버의 직렬화 결과가 그 파일과 같은지, TypeScript 시험이 같은 파일의 필드 집합을 `bridge/types.ts`와 대조하게 한다.
 
 - **빈 Gradle 캐시에서 처음 내려받는 것은 확인하지 않았다**(네트워크가 필요하고 이 단계는 내려받지 않는다). `google()`과 카탈로그 항목을 걷은 것이 그때 문제가 될 수 있다. 걷은 것은 `app`만 쓰던 것임을 모듈별로 대조했다.
 - 예전 `ui-hang-*.txt`는 남는다(20개 보관 규칙이 새 이름만 센다).
