@@ -1,9 +1,14 @@
+mod browser_check;
+mod browser_window;
+
+use browser_window::BrowserWindow;
 use serde_json::{json, Value};
 use std::io::Write;
 use std::time::Duration;
 use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
+use xgs_sidecar::browser::{self, AgentSettings};
 use xgs_sidecar::{
     app_data_dir, folder, job, webview2, Bridge, BridgeError, CloseDecision, CloseGate, Lifecycle, SettingsFile, Sidecar, SidecarConfig,
     UserSettings,
@@ -151,7 +156,14 @@ fn check_record(key: String, value: String) -> Result<(), String> {
 #[tauri::command]
 fn check_env(name: String) -> Result<Option<String>, String> {
     check_file()?;
-    const ALLOWED: [&str; 4] = ["XGS_CHECK_VIDEO_URL", "XGS_CHECK_PLAYLIST_URL", "XGS_CHECK_OUTPUT_DIR", "XGS_CHECK_DESKTOP"];
+    const ALLOWED: [&str; 6] = [
+        "XGS_CHECK_VIDEO_URL",
+        "XGS_CHECK_PLAYLIST_URL",
+        "XGS_CHECK_OUTPUT_DIR",
+        "XGS_CHECK_DESKTOP",
+        "XGS_CHECK_BROWSER_URL",
+        "XGS_CHECK_BROWSER_KEEP",
+    ];
     if !ALLOWED.contains(&name.as_str()) {
         return Err(format!("{name} is not one of the values of the check"));
     }
@@ -186,6 +198,14 @@ async fn check_wait(name: String) -> Result<(), String> {
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Runs the hidden browser window against the fixed pages served at [base_url] (an origin) and returns one line per step, `name=ok …` or
+/// `name=FAIL …` (browser_check.rs). With [keep_open] a window is left behind. Check mode only.
+#[tauri::command]
+async fn check_browser(app: tauri::AppHandle, base_url: String, keep_open: bool) -> Result<Vec<String>, String> {
+    check_file()?;
+    tauri::async_runtime::spawn_blocking(move || browser_check::run(&app, &base_url, keep_open)).await.map_err(|error| error.to_string())
 }
 
 /// Does nothing. The check page times how long a round trip to Rust takes while the sidecar starts: a window whose thread is
@@ -246,6 +266,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(CloseGate::default())
         .on_window_event(|window, event| {
+            // The hidden browser window of the lyrics lookup (browser_window.rs) is a window too, and an app ends only when its last window
+            // is gone: without this, closing the app while a lookup uses it would leave a process nobody can see.
+            if let WindowEvent::Destroyed = event
+                && window.label() == "main"
+            {
+                window.app_handle().exit(0);
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 match window.state::<CloseGate>().on_close_requested() {
                     CloseDecision::Close => {}
@@ -284,7 +311,8 @@ pub fn run() {
             check_env,
             check_close,
             check_wait,
-            check_burst
+            check_burst,
+            check_browser
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -292,12 +320,20 @@ pub fn run() {
     // Only now: a second copy of the app has ended inside `build` (the single-instance plugin), so what starts here is the one sidecar
     // of the one app. (Started before the `Builder`, as it was, a second copy would start a sidecar too, and the sidecar clears the
     // `work` folder of the app data folder when it starts: the downloads of the first copy would fail.)
-    app.manage(Lifecycle::start(move || {
+    let lifecycle = Lifecycle::start(move || {
         // Where the sidecar is, and for an exe that carries its runtime the unpacking of it (the first start only, a few seconds),
         // are settled here: on the thread of the sidecar, with the window already open and showing that the app is starting.
         let config = SidecarConfig::from_env()?;
         Sidecar::spawn(config.command(), &config.stderr_log(), SIDECAR_START_LIMIT)
-    }));
+    });
+    app.manage(lifecycle.clone());
+
+    // The hidden browser of the Google lyrics lookup: takes the server's commands (open an address, run a script) and carries them out in
+    // a WebView2 window nobody sees. It waits for the sidecar like every call and ends when the app does.
+    let handle = app.handle().clone();
+    std::thread::spawn(move || {
+        browser::serve(|| lifecycle.wait_ready(READY_WAIT), &mut BrowserWindow::new(handle), &AgentSettings::default());
+    });
     app.manage(SettingsFile::new(app_data_dir(|key| std::env::var_os(key)).join("settings.json")));
 
     app.run(|handle, event| {

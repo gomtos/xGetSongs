@@ -104,6 +104,22 @@ async function main() {
   await record("burstReceived", received);
   await record("burstOutOfOrder", outOfOrder);
 
+  // The hidden browser window of the Google lyrics lookup, against the fixed pages of tools/browser-check/fixture.mjs (no Google).
+  const browserBase = await invoke<string | null>("check_env", { name: "XGS_CHECK_BROWSER_URL" });
+  if (browserBase) {
+    const keepOpen = Boolean(await invoke<string | null>("check_env", { name: "XGS_CHECK_BROWSER_KEEP" }));
+    for (const line of await invoke<string[]>("check_browser", { baseUrl: browserBase, keepOpen })) {
+      const split = line.indexOf("=");
+      await record(`browser.${line.slice(0, split)}`, line.slice(split + 1));
+    }
+    if (keepOpen) {
+      // The window of the app is closed with the browser window still open: the app must end all the same (the script times it).
+      await record("done", 1);
+      await invoke("check_close");
+      return;
+    }
+  }
+
   // With real addresses and a folder from the script, the real screen is used next, as the top-level page (src/check-screen.ts):
   // it records `screenDone` and `done` itself.
   const wanted = ["XGS_CHECK_VIDEO_URL", "XGS_CHECK_PLAYLIST_URL", "XGS_CHECK_OUTPUT_DIR"];
