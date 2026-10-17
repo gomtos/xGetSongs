@@ -6,14 +6,14 @@
 
 | 관문 | 결과 |
 |---|---|
-| G1 `gradlew check` | **971개** 통과(938 + engine 21 + server 12), 실패 0, 건너뜀 0. `:server:sidecarImageTest` **5개**(4 + `theImageHasNoJavaFx`) |
+| G1 `gradlew check` | **975개** 통과(938 + engine 25 + server 12; 리뷰 반영 전 971개), 실패 0, 건너뜀 0. `:server:sidecarImageTest` **5개**(4 + `theImageHasNoJavaFx`) |
 | G2 TS | **241개**(239 + 권한 시험 2), `tsc` 종료 코드 0 |
-| G3 `sidecar-host` | `lib` **186개**(161 + 브리지 5 + `browser` 20), `pack_cli` 5개, `real_sidecar`(`--ignored`, 새 이미지) 3개 통과(새 시험 2개 포함) |
+| G3 `sidecar-host` | `lib` **187개**(161 + 브리지 5 + `browser` 20 + `close_gate` 1), `pack_cli` 5개, `real_sidecar`(`--ignored`, 새 이미지) 3개 통과(새 시험 2개 포함) |
 | G4 셸 빌드 | 일반 빌드와 점검용 빌드 모두 통과. `Cargo.lock`은 두 줄만 늘었다(셸의 의존성 목록: `webview2-com`, `windows-core 0.62.2`), 새로 컴파일되는 크레이트 없음 |
 | G5 숨은 창 점검(`shell/tools/browser-check/check.ps1`, 구글 없음) | `ALL OK`: 창 생성 137~168ms·숨겨짐, 숨은 창에서 타이머 500ms에 10번, 창 재사용, 새 창은 쿠키가 없음, 다운로드 거부(파일이 남지 않음), 응답 없는 페이지는 5.0초에 포기하고 다음 창이 정상, 숨은 창이 열려 있어도 주 창을 닫으면 0.7초 안에 앱과 사이드카가 끝남 |
 | G6 크기와 종단 | `dist\xGetSongs.exe` **90,381,205바이트 = 86.2MB**(129.2MB에서 43.0MB 줄었다; 사용자가 `package-exe.bat`으로 만들어 90MB 이하임을 확인했다). 묶인 이미지 103.7MB(485파일, 147.9MB에서 줄었다). 깨끗한 PC 점검 7개 시나리오 `ALL OK`(`ok` 38줄, `FAIL` 0). 시간(5회 중앙값): 푸는 데 2.0초, 첫 실행 사이드카 대기 3.7초(6단계 4.9초), 두 번째 1.2초(1.4초). **포장한 exe의 화면 점검은 돌리지 못했다**: 사용자의 `xGetSongs.exe`가 떠 있어 단일 인스턴스가 두 번째 실행을 막았다(사용자의 앱을 끌 수는 없다). 깨끗한 PC 점검이 같은 코드 경로를 점검용 페이지로 이미 확인한다 |
 | G7 실제 구글 | **미실행.** 사용자의 허락이 있어야 한다 |
-| G8 전체 리뷰 | 아래 "최종 리뷰" |
+| G8 전체 리뷰 | 아래 "최종 리뷰": Critical 0, Important 2는 고쳤고 Minor는 미뤘다 |
 
 ## 계획과 다르게 한 것 (원장의 Ruling)
 
@@ -39,4 +39,16 @@
 
 ## 최종 리뷰
 
-(아직 하지 않았다.)
+가장 유능한 모델(opus)이 `a524de5..faa69ae` 전체를 새 맥락에서 읽었다. Critical 0, Important 2, Minor 6.
+
+**고친 것** (둘 다 시험이 먼저 실패하는 것을 봤다):
+
+- **Important 1: 숨은 창에 닿은 닫기 요청이 주 창의 닫기 문턱을 써 버린다.** `on_window_event`의 `CloseRequested` 가지가 창 라벨을 보지 않았다. 창을 닫는 도구(점검 도우미의 `Get-AppWindow`는 클래스 `Tauri Window`의 첫 창을 고르고 숨은 창도 같은 클래스다)나 떠도는 WM_CLOSE가 숨은 창에 닿으면 문턱(`CloseGate`)이 "물어봄" 상태가 되어 앱이 닫히거나(페이지가 `close_window`로 답함) 주 창이 닫히지 않게 된다(다음 닫기마다 "기다림"). 점검 단계 `closeRequestOnTheHiddenWindowIsHarmless`가 고치기 전 코드에서 그대로 재현했고(숨은 창이 살아남고 앱과 사이드카가 남음), `window.label() == "main"` 조건으로 통과했다. 점검이 문턱을 쓰지 않고 보도록 `CloseGate::was_asked`를 더했다(단위 시험 포함).
+- **Important 2: 스크립트를 실행하지 못했을 때 구글 시간 초과로 센다.** 에이전트는 `evaluate`가 실패하면 창을 닫는데, `BrowserChannel.evaluate`가 `ok:false`를 `null`("아직 준비 안 됨")로 바꿔서 그 뒤 모든 조회가 20초 한도까지 닫힌 창을 들여다보다가 `Timeout`으로 끝나고 5~60분 쉼이 시작되며 로그에는 구글이 응답하지 않은 것처럼 남는다. 이제 실행하지 못한 스크립트는 `BrowserUnavailableException`이고 그 곡의 구글 조회는 바로 "브라우저를 쓸 수 없음"으로 끝난다(쉼 없음). `outerHTML` 읽기 실패와 값 없음도 같은 길이다(빈 페이지로 읽혀 "카드 없음"으로 세션 내내 기억되던 문제, Minor 3).
+
+**미룬 Minor:**
+- 에이전트 스레드는 `wait_ready` 실패가 한 번이면(준비 대기 90초 초과 포함) 세션 내내 끝난다. 그러면 가사 조회가 모두 `no-agent`다. 풀기와 JVM 시작은 합쳐 약 6초라서 지금은 닿지 않는다.
+- 제품 빌드에서도 `http://` 루프백 이동이 허용된다(점검에만 필요). 개발 빌드의 `localhost:1420`은 Tauri의 로컬 출처다. 문서의 "https만 연다"는 문장은 고쳤다.
+- 권한 시험은 `webviews` 키와 `tauri.conf.json`의 인라인 권한을 보지 않고, 숨은 창 시험은 실제 라벨(`xgs-browser-1`) 대신 접두사를 본다.
+
+**알려 둘 것:** 사용자가 직접 돌리는 `packed-screen-check.ps1`은 실제 영상을 기본 옵션으로 받는다. "가사가 없으면 인터넷에서 검색"이 기본으로 켜져 있어서, 영상 설명과 LRCLIB에 가사가 없으면 **실제 구글 요청이 나간다**(G7의 허락 없이도).
