@@ -60,7 +60,10 @@ class BrowserChannel(
 
     override suspend fun evaluate(script: String): String? {
         val answer = call { BrowserCommand.Evaluate(it, script) }
-        return if (answer.ok) answer.value else null
+        // A script the browser could not run (its window is gone, the page does not answer) is not "nothing": waiting on that page
+        // for the rest of the time limit would end as a timeout, which is held against Google.
+        if (!answer.ok) throw BrowserUnavailableException(answer.error ?: "failed")
+        return answer.value
     }
 
     override suspend fun reset() {

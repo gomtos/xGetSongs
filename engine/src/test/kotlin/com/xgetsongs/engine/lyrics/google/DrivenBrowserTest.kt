@@ -21,9 +21,15 @@ class DrivenBrowserTest {
     private val time = TestTimeSource()
 
     /** Answers the probe from [probes] (the last one repeats) and the page's HTML with [html]; every look takes half a second. */
-    private inner class FakeDriver(private vararg val probes: String?, private val html: String = "<html>page</html>") : PageDriver {
+    private inner class FakeDriver(private vararg val probes: String?, private val html: String? = "<html>page</html>") : PageDriver {
         val calls = mutableListOf<String>()
         var loadFailure: Exception? = null
+
+        /** Thrown by the look at the page (the probe) when set. */
+        var probeFailure: Exception? = null
+
+        /** Thrown by the read of the page's HTML when set. */
+        var htmlFailure: Exception? = null
         private var looks = 0
 
         override suspend fun load(url: String) {
@@ -34,10 +40,12 @@ class DrivenBrowserTest {
         override suspend fun evaluate(script: String): String? {
             if ("outerHTML" in script) {
                 calls += "html"
+                htmlFailure?.let { throw it }
                 return html
             }
             calls += "probe"
             time += 500.milliseconds
+            probeFailure?.let { throw it }
             return probes[minOf(looks++, probes.size - 1)]
         }
 
@@ -107,6 +115,35 @@ class DrivenBrowserTest {
 
         assertEquals("no-agent", assertIs<RenderResult.Unavailable>(render(noAgent)).reason)
         assertEquals("IllegalStateException", assertIs<RenderResult.Unavailable>(render(broken)).reason)
+    }
+
+    @Test
+    fun aLookAtThePageThatFailsEndsTheRenderAsUnavailableAtOnce() = runTest {
+        // The browser could not run the script (its window is gone, the page does not answer): waiting on it for the rest of the time
+        // limit would end as a timeout, which is held against Google.
+        val driver = FakeDriver(probe()).apply { probeFailure = BrowserUnavailableException("script timed out") }
+
+        val result = render(driver)
+
+        assertEquals("script timed out", assertIs<RenderResult.Unavailable>(result).reason)
+        assertEquals(1, driver.calls.count { it == "probe" }, "no second look: ${driver.calls}")
+    }
+
+    @Test
+    fun aReadOfThePagesHtmlThatFailsIsNotAnEmptyPage() = runTest {
+        // An empty page would be read as "no lyrics card" and remembered for the song, although the page had shown its card.
+        val driver = FakeDriver(probe(hasCard = true)).apply { htmlFailure = BrowserUnavailableException("script timed out") }
+
+        val result = render(driver)
+
+        assertEquals("script timed out", assertIs<RenderResult.Unavailable>(result).reason)
+    }
+
+    @Test
+    fun aPageThatGivesNoHtmlIsUnavailableNotAnEmptyPage() = runTest {
+        val driver = FakeDriver(probe(hasCard = true), html = null)
+
+        assertEquals("no-html", assertIs<RenderResult.Unavailable>(render(driver)).reason)
     }
 
     @Test

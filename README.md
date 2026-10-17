@@ -98,7 +98,7 @@ cargo test --manifest-path sidecar-host\Cargo.toml --test real_sidecar -- --igno
 .\package-exe.bat
 ```
 
-`dist\xGetSongs.exe` 한 파일(약 130MB)이 만들어집니다. Tauri 셸의 exe 뒤에 사이드카 이미지(Kotlin 서버와 그것을 돌리는 Java 런타임)를 붙인 것이라 이 파일만 복사해 가면 됩니다. 만드는 PC에는 JDK 21, Node.js, Rust가 필요하고 받는 PC에는 필요 없습니다.
+`dist\xGetSongs.exe` 한 파일(약 86MB)이 만들어집니다. Tauri 셸의 exe 뒤에 사이드카 이미지(Kotlin 서버와 그것을 돌리는 Java 런타임)를 붙인 것이라 이 파일만 복사해 가면 됩니다. 만드는 PC에는 JDK 21, Node.js, Rust가 필요하고 받는 PC에는 필요 없습니다.
 
 - 처음 실행하면 런타임을 `%LOCALAPPDATA%\xGetSongs\runtime\<해시>`에 풀기 때문에 사이드카가 준비되기까지 4~5초 걸립니다(창은 바로 열립니다). 다음 실행부터는 그 폴더를 그대로 써서 1초쯤 걸립니다. 이 폴더는 지워도 다시 풀리는 캐시이고(파일이 깨졌거나 `java.exe`가 없어졌으면 스스로 다시 풉니다), exe를 새 빌드로 바꾸면 옛 폴더는 다음 실행에서 지웁니다.
 - 로그는 `%APPDATA%\xGetSongs\logs`에 남습니다(exe 옆에 폴더를 만들지 않습니다).

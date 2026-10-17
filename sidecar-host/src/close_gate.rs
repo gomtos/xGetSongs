@@ -27,6 +27,11 @@ impl CloseGate {
         self.listening.store(true, Ordering::SeqCst);
     }
 
+    /// Whether the page has been asked to finish up already. Looking does not ask. (The checks use it.)
+    pub fn was_asked(&self) -> bool {
+        self.asked.load(Ordering::SeqCst)
+    }
+
     pub fn on_close_requested(&self) -> CloseDecision {
         if !self.listening.load(Ordering::SeqCst) {
             return CloseDecision::Close;
@@ -49,6 +54,18 @@ mod tests {
 
         assert_eq!(gate.on_close_requested(), CloseDecision::Close);
         assert_eq!(gate.on_close_requested(), CloseDecision::Close, "every time, there is nothing to wait for");
+    }
+
+    #[test]
+    fn the_gate_says_whether_the_page_was_asked_without_asking_it() {
+        let gate = CloseGate::default();
+        gate.page_listens();
+        assert!(!gate.was_asked());
+        assert!(!gate.was_asked(), "looking does not ask");
+
+        assert_eq!(gate.on_close_requested(), CloseDecision::Ask);
+
+        assert!(gate.was_asked());
     }
 
     #[test]

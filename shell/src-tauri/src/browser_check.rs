@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use xgs_sidecar::browser::{decode_script_result, Page};
+use xgs_sidecar::CloseGate;
 
 /// One look at the page: whether the card shows, the counter of its timer (-1: the page has none) and the start of its text.
 const LOOK: &str = "JSON.stringify({ card: !!document.querySelector('div[data-lyricid]'), ticks: window.__ticks === undefined ? -1 : window.__ticks, text: (document.body ? document.body.innerText : '').substring(0, 300) })";
@@ -111,6 +112,29 @@ fn hung_page_is_replaced(window: &mut BrowserWindow, hang_url: &str, first_url: 
     Ok(format!("gave up after {waited} ms, the next window works"))
 }
 
+/// A close request that reaches the hidden window (a tool that closes windows, a stray WM_CLOSE) is not a request to close the app: the
+/// window just goes, and the question to the page that the close gate keeps for the main window stays unasked. Leaves the gate listening,
+/// as the real page does, so a gate that was used up shows (the page was asked although the user closed nothing).
+fn close_request_on_the_hidden_window_is_harmless(app: &AppHandle, window: &mut BrowserWindow) -> Result<String, String> {
+    let label = window.label().ok_or_else(|| "no window".to_string())?;
+    let gate = app.state::<CloseGate>();
+    gate.page_listens();
+    window.request_close()?;
+    std::thread::sleep(Duration::from_millis(500));
+    let still_there = app.get_webview_window(&label).is_some();
+    window.close(); // forget the handle (and finish the window off if it is still there)
+    if still_there {
+        return Err("the hidden window did not close when asked to".to_string());
+    }
+    if app.get_webview_window("main").is_none() {
+        return Err("the main window is gone".to_string());
+    }
+    if gate.was_asked() {
+        return Err("the close gate of the main window was used up: the page was asked to close the app".to_string());
+    }
+    Ok("the hidden window closed and the page of the main window was not asked anything".to_string())
+}
+
 fn verdict(name: &str, result: Result<String, String>) -> String {
     match result {
         Ok(detail) => format!("{name}=ok {detail}"),
@@ -131,6 +155,7 @@ pub fn run(app: &AppHandle, base: &str, keep_open: bool) -> Vec<String> {
         verdict("cookieDoesNotSurviveTheWindow", cookie_does_not_survive_the_window(&mut window, &second)),
         verdict("popupAndDownloadAreRefused", popup_and_download_are_refused(app, &mut window, &format!("{base}/popup"))),
         verdict("hungPageIsReplaced", hung_page_is_replaced(&mut window, &format!("{base}/hang"), &first)),
+        verdict("closeRequestOnTheHiddenWindowIsHarmless", close_request_on_the_hidden_window_is_harmless(app, &mut window)),
     ];
     if keep_open {
         // The window is not closed: it stays, as when the app is closed while the lookup uses it.

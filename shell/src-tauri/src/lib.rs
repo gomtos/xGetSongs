@@ -273,7 +273,11 @@ pub fn run() {
             {
                 window.app_handle().exit(0);
             }
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            // The question to the page and its time limit are for the main window. A close request that reaches the hidden browser window
+            // (a tool that closes windows, a stray WM_CLOSE) must neither use up the gate nor ask the page to close the app.
+            if let WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
+            {
                 match window.state::<CloseGate>().on_close_requested() {
                     CloseDecision::Close => {}
                     CloseDecision::Wait => api.prevent_close(),

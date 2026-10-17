@@ -9,7 +9,7 @@ interface PageDriver {
     /** Opens [url] (making the window when there is none) and returns once the load has started. */
     suspend fun load(url: String)
 
-    /** The text [script] gave, or null when it gave nothing or could not run (there is no document yet, say). */
+    /** The text [script] gave, or null when it gave nothing. Throws [BrowserUnavailableException] when the browser could not run it. */
     suspend fun evaluate(script: String): String?
 
     /** Back to `about:blank`, so that nothing of the last page stays loaded. The window stays. */

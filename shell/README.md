@@ -32,7 +32,7 @@ npx tsc --noEmit                # 타입 검사
 
 ## 점검 페이지 (개발자용)
 
-`check.html`은 제품이 아니다. 브리지의 명령을 실제 사이드카에 부르고 화면이 본 것을 `XGS_BRIDGE_CHECK_FILE`이 가리키는 파일에 `key=value` 줄로 적는다. `npm run tauri build -- --no-bundle --config check.conf.json`으로 만든 점검용 빌드(식별자가 `com.xgetsongs.shell.check`라 사용자가 쓰는 앱과 섞이지 않는다)만 연다. 점검 스크립트(창을 닫고, 두 번째 실행을 하고, 풀다 죽이는 것 등)는 저장소에 없고 각 단계의 계획서(`docs/superpowers/plans`)에 들어 있다. 점검용 빌드는 일반 빌드와 같은 `target\release\shell.exe`를 덮어쓰므로 점검 뒤에는 일반 빌드를 다시 만든다.
+`check.html`은 제품이 아니다. 브리지의 명령을 실제 사이드카에 부르고 화면이 본 것을 `XGS_BRIDGE_CHECK_FILE`이 가리키는 파일에 `key=value` 줄로 적는다. `npm run tauri build -- --no-bundle --config check.conf.json`으로 만든 점검용 빌드(식별자가 `com.xgetsongs.shell.check`라 사용자가 쓰는 앱과 섞이지 않는다)만 연다. 점검 스크립트(창을 닫고, 두 번째 실행을 하고, 풀다 죽이는 것 등)는 대부분 저장소에 없고 각 단계의 계획서(`docs/superpowers/plans`)에 들어 있다. 숨은 브라우저 창의 점검만 저장소에 있다(`tools/browser-check`, 아래). 점검용 빌드는 일반 빌드와 같은 `target\release\shell.exe`를 덮어쓰므로 점검 뒤에는 일반 빌드를 다시 만든다.
 
 점검용 명령(`check_record`, `check_env`, `check_ping`, `check_close`, `check_wait`, `check_burst`, `check_browser`)은 `XGS_BRIDGE_CHECK_FILE`이 없으면 거부한다(`check_ping`만은 아무 일도 하지 않는 명령이라 늘 응답한다). 같은 변수가 있을 때만 `XGS_FAKE_NO_WEBVIEW2`가 WebView2가 없는 척한다.
 

@@ -14,7 +14,7 @@ param(
     [int] $EndLimitSeconds = 5
 )
 $ErrorActionPreference = "Stop"
-$expected = "browserBuiltFast", "timersRunHidden", "windowIsReused", "cookieDoesNotSurviveTheWindow", "popupAndDownloadAreRefused", "hungPageIsReplaced", "windowLeftOpen"
+$expected = "browserBuiltFast", "timersRunHidden", "windowIsReused", "cookieDoesNotSurviveTheWindow", "popupAndDownloadAreRefused", "hungPageIsReplaced", "closeRequestOnTheHiddenWindowIsHarmless", "windowLeftOpen"
 $problems = [System.Collections.Generic.List[string]]::new()
 
 if (-not (Test-Path $ShellExe)) { throw "no shell at $ShellExe" }

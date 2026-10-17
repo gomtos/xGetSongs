@@ -46,14 +46,29 @@ class BrowserChannelTest {
     }
 
     @Test
-    fun anEvaluateAnsweredWithAnErrorGivesNull() = runTest {
+    fun anEvaluateAnsweredWithAnErrorFailsWithTheErrorText() = runTest {
         val channel = BrowserChannel(TestTimeSource())
         val poll = async { channel.nextCommand(25.seconds) }
         runCurrent()
 
-        val call = async { channel.evaluate("document.body.innerText") }
+        val call = async { runCatching { channel.evaluate("document.body.innerText") } }
         val command = checkNotNull(poll.await())
-        channel.answer(BrowserAnswer(command.id, ok = false, error = "no document"))
+        channel.answer(BrowserAnswer(command.id, ok = false, error = "script timed out"))
+
+        val error = call.await().exceptionOrNull()
+        assertTrue(error is BrowserUnavailableException, "$error")
+        assertEquals("script timed out", error.reason)
+    }
+
+    @Test
+    fun anEvaluateThatGaveNothingGivesNull() = runTest {
+        val channel = BrowserChannel(TestTimeSource())
+        val poll = async { channel.nextCommand(25.seconds) }
+        runCurrent()
+
+        val call = async { channel.evaluate("undefined") }
+        val command = checkNotNull(poll.await())
+        channel.answer(BrowserAnswer(command.id, ok = true, value = null))
 
         assertNull(call.await())
     }

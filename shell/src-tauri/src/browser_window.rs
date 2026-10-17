@@ -3,7 +3,8 @@
 //!
 //! The window is made on the first `load` and reused; it is private (nothing is kept on disk), shows nothing, opens no other window and
 //! takes no download. It is in no capability file, so the page in it cannot use the commands of the app (`tests/capabilities.test.ts`
-//! keeps it so), and the agent refuses addresses that are not `https://` (see `xgs_sidecar::browser::allowed_url`).
+//! keeps it so), and the agent opens `https://` addresses only, plus `http://` to the machine itself for the checks (see
+//! `xgs_sidecar::browser::allowed_url`).
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -31,6 +32,16 @@ pub struct BrowserWindow {
 impl BrowserWindow {
     pub fn new(handle: AppHandle) -> BrowserWindow {
         BrowserWindow { handle, window: None, made: 0 }
+    }
+
+    /// The label of the window; None when there is none. (The checks look at it.)
+    pub fn label(&self) -> Option<String> {
+        self.window.as_ref().map(|window| window.label().to_string())
+    }
+
+    /// Asks the window to close the way a user's or a tool's close request does (the window event handler decides). Check mode only.
+    pub fn request_close(&self) -> Result<(), String> {
+        self.window.as_ref().ok_or_else(|| "no window".to_string())?.close().map_err(|error| error.to_string())
     }
 
     /// Whether the window is visible; None when there is no window. (The checks look at it: it must be false.)

@@ -56,7 +56,7 @@ internal class DrivenBrowser(
         }
     }
 
-    /** Null when the script cannot run (no document yet) or does not answer what it should. */
+    /** Null when the script gave nothing or not what it should (the page is not ready yet); a browser that cannot run it throws. */
     private suspend fun probe(): PageProbe? {
         val answer = driver.evaluate(PROBE_SCRIPT) ?: return null
         return try {
@@ -67,7 +67,8 @@ internal class DrivenBrowser(
     }
 
     private suspend fun snapshot(probe: PageProbe): RenderResult.Loaded {
-        val html = driver.evaluate("document.documentElement.outerHTML") ?: ""
+        // No HTML is not an empty page: that would be read as "no lyrics card" and remembered for the song.
+        val html = driver.evaluate("document.documentElement.outerHTML") ?: throw BrowserUnavailableException("no-html")
         return RenderResult.Loaded(url = probe.url, html = html, bodyText = probe.bodyText)
     }
 
