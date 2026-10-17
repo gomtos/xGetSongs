@@ -120,6 +120,27 @@ async function main() {
     }
   }
 
+  // One real job with the lyrics lookup on, to see what the Google lookup does in the real chain (sidecar, this shell, the hidden browser,
+  // Google). It sends one or two real requests to Google: only for a check that the user has allowed. The lines say what happened to the job,
+  // never a song's lyrics; what the lookup found is in the sidecar's log (counts and result names).
+  const lyricsUrl = await invoke<string | null>("check_env", { name: "XGS_CHECK_LYRICS_URL" });
+  const lyricsDir = await invoke<string | null>("check_env", { name: "XGS_CHECK_OUTPUT_DIR" });
+  if (lyricsUrl && lyricsDir) {
+    const resolved = await bridge.resolve(lyricsUrl);
+    await record("lyricsResolved", `${resolved.kind}, ${resolved.items.length} item(s)`);
+    const created = await bridge.startJob({
+      resolveId: resolved.resolveId,
+      options: { outputDir: lyricsDir, overwrite: true, includeRank: false, searchLyricsOnline: true, singleRank: 1 },
+    });
+    const seen: string[] = [];
+    await bridge.watchJob(created.jobId, (event) => {
+      if (event.type !== "progress") seen.push(event.type === "item-done" ? `item-done(lyrics=${event.lyrics})` : event.type);
+    });
+    await record("lyricsJob", seen.join(" > "));
+    await record("done", 1);
+    return;
+  }
+
   // With real addresses and a folder from the script, the real screen is used next, as the top-level page (src/check-screen.ts):
   // it records `screenDone` and `done` itself.
   const wanted = ["XGS_CHECK_VIDEO_URL", "XGS_CHECK_PLAYLIST_URL", "XGS_CHECK_OUTPUT_DIR"];

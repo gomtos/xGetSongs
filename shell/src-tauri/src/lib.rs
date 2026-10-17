@@ -156,13 +156,14 @@ fn check_record(key: String, value: String) -> Result<(), String> {
 #[tauri::command]
 fn check_env(name: String) -> Result<Option<String>, String> {
     check_file()?;
-    const ALLOWED: [&str; 6] = [
+    const ALLOWED: [&str; 7] = [
         "XGS_CHECK_VIDEO_URL",
         "XGS_CHECK_PLAYLIST_URL",
         "XGS_CHECK_OUTPUT_DIR",
         "XGS_CHECK_DESKTOP",
         "XGS_CHECK_BROWSER_URL",
         "XGS_CHECK_BROWSER_KEEP",
+        "XGS_CHECK_LYRICS_URL",
     ];
     if !ALLOWED.contains(&name.as_str()) {
         return Err(format!("{name} is not one of the values of the check"));
