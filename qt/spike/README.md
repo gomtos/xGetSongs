@@ -68,3 +68,17 @@ pwsh qt/spike/check/tls.ps1
 ```
 
 `--tls-check`는 창 없이 `GET https://lrclib.net/api/search?track_name=test&artist_name=test`를 한 번 부른다(User-Agent `xgs-qt-spike`, 15초 제한). 기준: `backend`가 `schannel`, `ok:true`, `status` 200. lrclib.net이 응답하지 않으면(시간 초과, 5xx) HTTP 쪽은 `건너뜀`. 결과는 `build/qt-spike/tls.json`.
+
+## 점검: Defender와 사용자가 직접 보는 것
+
+```
+pwsh qt/spike/check/defender.ps1
+```
+
+`build/qt-spike/xgs-qt-spike.exe`를 `%TEMP%\xgs-qt-spike-<id>\내려받은 것\`에 복사하고 `Zone.Identifier`(`ZoneId=3`)를 붙인 뒤, `MpCmdRun.exe -Scan -ScanType 3 -File <경로> -DisableRemediation`으로 검사하고 `--exit-after-show`로 한 번 돌린다(창이 잠깐 뜬다). 비교용으로 `dist\xGetSongs.exe`가 있으면 `xGetSongs-현행.exe`로 복사해 같은 표식을 붙인다(복사만 하고 실행·검사하지 않는다). 기준: 검사 종료 코드 0(2는 위협 발견, 그 밖의 값이나 출력의 실패 표시는 "검사하지 못함"), 실행 종료 코드 0, 복사본의 길이·SHA-256이 원본과 같고, 그 폴더에 대한 `Get-MpThreatDetection`이 0건. 실시간 보호가 꺼져 있으면 "실행"은 아무것도 증명하지 않는다. 폴더는 지우지 않고 마지막 줄에 `FOLDER: <경로>`로 찍는다.
+
+사용자가 그 폴더에서 직접 보는 것:
+
+1. 탐색기에서 `xgs-qt-spike.exe`를 더블클릭: SmartScreen 경고가 뜨는지, "추가 정보 → 실행"으로 넘어가는지, `xGetSongs-현행.exe`(같은 표식)보다 더 나쁜지.
+2. 뜬 창의 입력란: 한글 조합 입력(`가사 검색`, 조합 중 글자가 제자리에 보이는가), Ctrl+V 붙여넣기, 마우스 선택, 우클릭 메뉴.
+3. Windows 디스플레이 배율 150%와 200%에서 창을 다시 띄워 글자가 흐리지 않은가.
