@@ -7,5 +7,5 @@ set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
-add_executable(xgs-qt-spike WIN32 src/main.cpp)
+add_executable(xgs-qt-spike WIN32 src/main.cpp src/report.cpp src/report.h)
 target_link_libraries(xgs-qt-spike PRIVATE Qt6::Widgets Qt6::Network)
