@@ -27,3 +27,11 @@ cmake --build build/qt-spike
 - 걸린 시간: 약 89분 (Qt와 의존성을 소스에서 빌드; 대부분 qtbase 구성 5328초 안에 있음).
 - `C:\dev\vcpkg` 디스크 사용량: 약 37 GB (그중 buildtrees 약 30 GB). 바이너리 캐시(`%LOCALAPPDATA%\vcpkg\archives`)는 약 1.2 GB.
 - `xgs-qt-spike.exe`: 21,302,784 바이트. `dumpbin /dependents`에 Qt6*.dll, VCRUNTIME, MSVCP, libssl, libcrypto는 없다 (Windows 시스템 DLL만; `icuuc.dll`은 Windows 10+ 내장).
+
+## 점검: 깨끗한 PC에서 시작 시간과 크기
+
+```
+pwsh qt/spike/check/start-time.ps1
+```
+
+가짜 깨끗한 PC(`%TEMP%\xgs-qt-spike-<id>`, 빈 APPDATA·LOCALAPPDATA·TEMP, 최소 PATH)에서 exe를 5번 새로 복사해 첫 실행과 두 번째 실행을 재고, 창이 10번 잠깐 뜬다. 기준: 첫 실행 중앙값 3700ms 이하, 두 번째 1200ms 이하. 결과는 `build/qt-spike/start-time.json`에 남는다.
