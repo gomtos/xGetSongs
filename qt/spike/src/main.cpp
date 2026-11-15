@@ -1,16 +1,25 @@
+#include "hidden_webview.h"
 #include "job_process.h"
 #include "report.h"
 
 #include <QApplication>
 #include <QDateTime>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEvent>
+#include <QJsonDocument>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPlainTextEdit>
+#include <QSslSocket>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <memory>
 
 #include <windows.h>
 
@@ -66,6 +75,100 @@ private:
     qint64 m_shownMs = -1;
 };
 
+// --webview-check <url>: opens <url> in a HiddenWebView, then every 200 ms evaluates the
+// card selector; writes "webview" and quits once it is not null, on failure, or after 10 s.
+// The user data folder is %LOCALAPPDATA%\xgs-qt-spike\webview.
+std::unique_ptr<HiddenWebView> startWebviewCheck(QApplication &app, const QUrl &url)
+{
+    auto finished = std::make_shared<bool>(false);
+    auto finish = [finished](const QJsonObject &result) {
+        if (*finished)
+            return;
+        *finished = true;
+        Report::put("webview", result);
+        QApplication::quit();
+    };
+
+    const QString local = qEnvironmentVariable("LOCALAPPDATA");
+    if (local.isEmpty()) {
+        QTimer::singleShot(0, &app, [finish] {
+            finish(QJsonObject{{"ok", false}, {"error", "LOCALAPPDATA is not set"}});
+        });
+        return nullptr;
+    }
+    const QString folder = QDir(local).filePath("xgs-qt-spike/webview");
+    QDir().mkpath(folder);
+
+    auto view = std::make_unique<HiddenWebView>(QDir::toNativeSeparators(folder));
+    HiddenWebView *v = view.get();
+    auto sinceOpen = std::make_shared<QElapsedTimer>();
+    auto *poll = new QTimer(v);
+    poll->setInterval(200);
+
+    // Guard for the environment/controller creation itself (before the 10 s page limit).
+    QTimer::singleShot(30000, v, [finish, sinceOpen] {
+        if (!sinceOpen->isValid())
+            finish(QJsonObject{{"ok", false}, {"error", "timeout before ready"}});
+    });
+
+    QObject::connect(v, &HiddenWebView::failed, v, [finish](const QString &error) {
+        finish(QJsonObject{{"ok", false}, {"error", error}});
+    });
+    QObject::connect(v, &HiddenWebView::ready, v, [v, url, poll, sinceOpen, finish] {
+        sinceOpen->start();
+        v->open(url);
+        poll->start();
+        QTimer::singleShot(10000, v, [finish] {
+            finish(QJsonObject{{"ok", false}, {"error", "timeout"}});
+        });
+    });
+    QObject::connect(v, &HiddenWebView::navigated, v, [finish](bool success) {
+        if (!success)
+            finish(QJsonObject{{"ok", false}, {"error", "navigation failed"}});
+    });
+    QObject::connect(poll, &QTimer::timeout, v, [v] {
+        v->evaluate("({ text: document.querySelector('div[data-lyricid]')?.textContent ?? null,"
+                    " ticks: window.__ticks ?? null })");
+    });
+    QObject::connect(v, &HiddenWebView::evaluated, v, [finish, sinceOpen, poll](const QString &json) {
+        const QJsonObject o = QJsonDocument::fromJson(json.toUtf8()).object();
+        if (!o.value("text").isString())
+            return; // not there yet (or the page is still loading)
+        poll->stop();
+        finish(QJsonObject{
+            {"ok", true},
+            {"text", o.value("text").toString()},
+            {"ticks", o.value("ticks").toInt()},
+            {"waitedMs", sinceOpen->elapsed()},
+        });
+    });
+    return view;
+}
+
+// --tls-check: one GET to lrclib.net over Qt's TLS backend (Schannel), 15 s limit;
+// writes "tls" and quits.
+void startTlsCheck(QApplication &app)
+{
+    auto *nam = new QNetworkAccessManager(&app);
+    QNetworkRequest request(QUrl("https://lrclib.net/api/search?track_name=test&artist_name=test"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, "xgs-qt-spike");
+    request.setTransferTimeout(15000);
+    QNetworkReply *reply = nam->get(request);
+    QObject::connect(reply, &QNetworkReply::finished, &app, [reply] {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        QJsonObject result{
+            {"ok", reply->error() == QNetworkReply::NoError && status == 200},
+            {"status", status},
+            {"backend", QSslSocket::activeBackend()},
+        };
+        if (reply->error() != QNetworkReply::NoError)
+            result.insert("error", reply->errorString());
+        Report::put("tls", result);
+        reply->deleteLater();
+        QApplication::quit();
+    });
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -75,12 +178,14 @@ int main(int argc, char *argv[])
     // Command line contract: xgs-qt-spike.exe [--report <file>] [one switch]
     //   switches: --exit-after-show | --spawn-tree <seconds> | --spawn-cmd <command line>
     //   --cancel-after <ms> goes with --spawn-tree / --spawn-cmd
+    //   --webview-check <url> | --tls-check (these two show no window)
     // Later tasks add switches by extending this list (and the dispatch below).
     const QStringList args = app.arguments().mid(1);
     QString mode; // empty = plain window
     int spawnTreeSec = -1;  // --spawn-tree <seconds>
     QString spawnCmd;       // --spawn-cmd <command line>
     int cancelAfterMs = -1; // --cancel-after <ms> (with --spawn-tree / --spawn-cmd)
+    QUrl webviewUrl;        // --webview-check <url>
     for (int i = 0; i < args.size(); ++i) {
         const QString &a = args[i];
         if (a == "--report" && i + 1 < args.size())
@@ -95,6 +200,23 @@ int main(int argc, char *argv[])
             spawnCmd = args[++i];
         } else if (a == "--cancel-after" && i + 1 < args.size())
             cancelAfterMs = args[++i].toInt();
+        else if (a == "--webview-check" && i + 1 < args.size()) {
+            mode = a;
+            webviewUrl = QUrl(args[++i]);
+        } else if (a == "--tls-check")
+            mode = a;
+    }
+
+    // Checks without a window: nothing of the spike appears on screen.
+    if (mode == "--webview-check") {
+        std::unique_ptr<HiddenWebView> view = startWebviewCheck(app, webviewUrl);
+        const int rc = app.exec();
+        view.reset(); // closes the controller while QApplication still exists
+        return rc;
+    }
+    if (mode == "--tls-check") {
+        startTlsCheck(app);
+        return app.exec();
     }
 
     QMainWindow window;
