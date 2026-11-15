@@ -75,7 +75,7 @@ pwsh qt/spike/check/tls.ps1
 pwsh qt/spike/check/defender.ps1
 ```
 
-`build/qt-spike/xgs-qt-spike.exe`를 `%TEMP%\xgs-qt-spike-<id>\내려받은 것\`에 복사하고 `Zone.Identifier`(`ZoneId=3`)를 붙인 뒤, `MpCmdRun.exe -Scan -ScanType 3 -File <경로> -DisableRemediation`으로 검사하고 `--exit-after-show`로 한 번 돌린다(창이 잠깐 뜬다). 비교용으로 `dist\xGetSongs.exe`가 있으면 `xGetSongs-현행.exe`로 복사해 같은 표식을 붙인다(복사만 하고 실행·검사하지 않는다). 기준: 검사 종료 코드 0(2는 위협 발견, 그 밖의 값이나 출력의 실패 표시는 "검사하지 못함"), 실행 종료 코드 0, 복사본의 길이·SHA-256이 원본과 같고, 그 폴더에 대한 `Get-MpThreatDetection`이 0건. 실시간 보호가 꺼져 있으면 "실행"은 아무것도 증명하지 않는다. 폴더는 지우지 않고 마지막 줄에 `FOLDER: <경로>`로 찍는다.
+`build/qt-spike/xgs-qt-spike.exe`를 `%TEMP%\xgs-qt-spike-<id>\내려받은 것\`에 복사하고 `Zone.Identifier`(`ZoneId=3`)를 붙인 뒤, `MpCmdRun.exe -Scan -ScanType 3 -File <경로> -DisableRemediation`으로 검사하고 `--exit-after-show`로 한 번 돌린다(창이 잠깐 뜬다). 비교용으로 `dist\xGetSongs.exe`가 있으면 `xGetSongs-현행.exe`로 복사해 같은 표식을 붙인다(복사만 하고 실행·검사하지 않는다). 기준: 검사 종료 코드 0(2는 위협 발견, 그 밖의 값이나 출력의 실패 표시는 "검사하지 못함"), 실행 종료 코드 0, 복사본의 길이·SHA-256이 원본과 같고, 그 폴더에 대한 `Get-MpThreatDetection`이 0건(조회 자체가 실패하면 판정 불가). 실시간 보호가 꺼져 있으면 "실행"은 아무것도 증명하지 않는다. 폴더는 지우지 않고 마지막 줄에 `FOLDER: <경로>`로 찍는다.
 
 사용자가 그 폴더에서 직접 보는 것:
 
