@@ -24,6 +24,9 @@ void Report::put(const QString &key, const QJsonObject &value)
         const QJsonDocument doc = QJsonDocument::fromJson(in.readAll());
         if (doc.isObject())
             root = doc.object();
+        // Close before QSaveFile replaces the file: an open handle (no FILE_SHARE_DELETE)
+        // makes the rename fail on Windows, and the second put() would be silently lost.
+        in.close();
     }
     root.insert(key, value);
 

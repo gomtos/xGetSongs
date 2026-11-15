@@ -35,3 +35,18 @@ pwsh qt/spike/check/start-time.ps1
 ```
 
 가짜 깨끗한 PC(`%TEMP%\xgs-qt-spike-<id>`, 빈 APPDATA·LOCALAPPDATA·TEMP, 최소 PATH)에서 exe를 5번 새로 복사해 첫 실행과 두 번째 실행을 재고, 창이 10번 잠깐 뜬다. 기준: 첫 실행 중앙값 3700ms 이하, 두 번째 1200ms 이하. 결과는 `build/qt-spike/start-time.json`에 남는다.
+
+## 점검: 자손 프로세스 정리 (Job Object)
+
+```
+pwsh qt/spike/check/descendants.ps1
+```
+
+`--spawn-tree`·`--spawn-cmd`로 띄운 자식은 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Job에 들어간다(`CREATE_SUSPENDED`로 만들고 Job에 넣은 뒤 재개). 시나리오 넷을 각각 가짜 PC에서 돌리고 창이 4번 이상 잠깐 뜬다.
+
+- A 취소: `--spawn-tree 120 --cancel-after 1500`, exe가 스스로 취소
+- B 강제 종료: `--spawn-tree 120`, `PING.EXE`가 보이면 스파이크를 `Stop-Process -Force`
+- C yt-dlp 취소: `--spawn-cmd "yt-dlp -J <영상>" --cancel-after 700`
+- D yt-dlp 강제 종료: `--spawn-cmd "yt-dlp -J <영상>"`, yt-dlp 아래에 프로세스가 생기면 스파이크를 `Stop-Process -Force`
+
+기준: 동작 뒤 5초 안에 살아 있는 자손이 0, 2초 뒤에도 0. 자손은 동작 전에 자식 pid부터 `ParentProcessId`를 따라 모으고 생성 시각을 같이 적어 pid 재사용을 거른다. yt-dlp는 `PATH`에서 찾고, 없으면 `%APPDATA%\xGetSongs` 아래의 것을 읽기만 해서 가짜 PC로 복사해 쓴다. 못 찾으면 C·D는 `건너뜀`이다.

@@ -1,6 +1,9 @@
+#include "job_process.h"
 #include "report.h"
 
 #include <QApplication>
+#include <QDateTime>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -70,15 +73,28 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
 
     // Command line contract: xgs-qt-spike.exe [--report <file>] [one switch]
+    //   switches: --exit-after-show | --spawn-tree <seconds> | --spawn-cmd <command line>
+    //   --cancel-after <ms> goes with --spawn-tree / --spawn-cmd
     // Later tasks add switches by extending this list (and the dispatch below).
     const QStringList args = app.arguments().mid(1);
     QString mode; // empty = plain window
+    int spawnTreeSec = -1;  // --spawn-tree <seconds>
+    QString spawnCmd;       // --spawn-cmd <command line>
+    int cancelAfterMs = -1; // --cancel-after <ms> (with --spawn-tree / --spawn-cmd)
     for (int i = 0; i < args.size(); ++i) {
         const QString &a = args[i];
         if (a == "--report" && i + 1 < args.size())
             Report::setPath(args[++i]);
         else if (a == "--exit-after-show")
             mode = a;
+        else if (a == "--spawn-tree" && i + 1 < args.size()) {
+            mode = a;
+            spawnTreeSec = args[++i].toInt();
+        } else if (a == "--spawn-cmd" && i + 1 < args.size()) {
+            mode = a;
+            spawnCmd = args[++i];
+        } else if (a == "--cancel-after" && i + 1 < args.size())
+            cancelAfterMs = args[++i].toInt();
     }
 
     QMainWindow window;
@@ -95,6 +111,59 @@ int main(int argc, char *argv[])
         app.installEventFilter(new StartProbe(&window));
 
     window.show();
+
+    // --spawn-tree / --spawn-cmd: run a child process tree in a Job Object, optionally cancel
+    // it after --cancel-after ms, and quit once the child has finished.
+    JobProcess job;
+    QElapsedTimer sinceSpawn;
+    bool childRunning = false;
+    bool cancelled = false;
+    if (mode == "--spawn-tree" || mode == "--spawn-cmd") {
+        QObject::connect(&job, &JobProcess::finished, &app, [&](int exitCode) {
+            childRunning = false;
+            Report::put("finished", QJsonObject{
+                {"exitCode", exitCode},
+                {"afterMs", static_cast<qint64>(sinceSpawn.isValid() ? sinceSpawn.elapsed() : -1)},
+                {"cancelled", cancelled},
+            });
+            QApplication::quit();
+        });
+
+        QString program;
+        QStringList childArgs;
+        if (mode == "--spawn-tree") {
+            // cmd.exe -> (start /b) PING.EXE, and cmd.exe -> cmd.exe -> PING.EXE: two branches,
+            // three levels. Nothing here ends early: ping -n N+1 runs about N seconds.
+            const QString ping = QString("ping -n %1 127.0.0.1").arg(spawnTreeSec + 1);
+            program = "cmd.exe";
+            childArgs = {"/d", "/c", QString("start /b %1 & cmd.exe /d /c %1").arg(ping)};
+        } else {
+            childArgs = QProcess::splitCommand(spawnCmd);
+            if (!childArgs.isEmpty())
+                program = childArgs.takeFirst();
+        }
+
+        if (program.isEmpty() || !job.start(program, childArgs)) {
+            Report::put("spawned", QJsonObject{{"error", "start failed"}});
+            return 2;
+        }
+        sinceSpawn.start();
+        childRunning = true;
+        Report::put("spawned", QJsonObject{{"pid", job.processId()}});
+
+        if (cancelAfterMs >= 0) {
+            QTimer::singleShot(cancelAfterMs, Qt::PreciseTimer, &job, [&] {
+                if (!childRunning)
+                    return; // already finished on its own: "finished" without "cancelled"
+                cancelled = true;
+                job.cancel();
+                Report::put("cancelled", QJsonObject{
+                    {"afterMs", sinceSpawn.elapsed()},
+                    {"atEpochMs", QDateTime::currentMSecsSinceEpoch()}, // same clock as the check script
+                });
+            });
+        }
+    }
 
     return app.exec();
 }
