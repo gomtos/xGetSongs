@@ -16,6 +16,8 @@ function(xgs_target_defaults target)
         QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII)
 endfunction()
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 enable_testing()
 add_subdirectory(core)
 add_subdirectory(tests)

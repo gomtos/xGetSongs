@@ -19,7 +19,7 @@ ctest --test-dir build/qt --output-on-failure
 pwsh qt/tools/differential/run.ps1 -Kinds <글자들> [-PerKind 10000] [-Seed 20261115]
 ```
 
-세 번째는 대조 도구(Task 2 이후)다. 테스트 실행 파일은 `build/qt/tests/` 아래에 생긴다.
+세 번째는 대조 도구(Task 2 이후)다. 실행 파일(테스트 포함)은 `build/qt/` 바로 아래에 생긴다(`CMAKE_RUNTIME_OUTPUT_DIRECTORY`).
 
 ## 켠 qtbase 기능
 
