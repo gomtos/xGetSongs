@@ -5,11 +5,12 @@
 
 # Returns PASS, FAIL or UNJUDGEABLE.
 # FAIL: evidence that Defender (or the exe) did something bad: a threat, a block/delete, a changed or missing file, a detection.
-# UNJUDGEABLE: no such evidence, but Defender did not really look (scan failed, real-time protection off, odd scan code).
+# UNJUDGEABLE: no such evidence, but Defender did not really look (scan failed, real-time protection off, odd scan code,
+# detection query failed).
 function Get-Q4Verdict {
     param(
         $ScanCode, [bool]$ScanFailed, [bool]$ThreatLine, [bool]$RtpOn,
-        $RunExit, $RunError, [bool]$Intact, [int]$DetCount
+        $RunExit, $RunError, [bool]$Intact, [int]$DetCount, [bool]$DetQueryFailed = $false
     )
     if ($ThreatLine) { return 'FAIL' }
     if ($ScanCode -eq 2 -and -not $ScanFailed) { return 'FAIL' }
@@ -18,6 +19,7 @@ function Get-Q4Verdict {
     if ($DetCount -gt 0) { return 'FAIL' }
     if ($null -ne $RunExit -and $RunExit -ne 0) { return 'FAIL' }
     if ($null -eq $RunExit) { return 'FAIL' }
+    if ($DetQueryFailed) { return 'UNJUDGEABLE' }
     if ($ScanFailed -or -not $RtpOn -or $ScanCode -ne 0) { return 'UNJUDGEABLE' }
     return 'PASS'
 }
@@ -33,6 +35,8 @@ if ($VerdictSelfTest) {
         @{ N = 'RTP on, scan failed, rest fine';      A = @{ ScanCode = 2; ScanFailed = $true;  ThreatLine = $false; RtpOn = $true;  RunExit = 0; RunError = $null; Intact = $true;  DetCount = 0 }; E = 'UNJUDGEABLE' }
         @{ N = 'threat line despite failure line';    A = @{ ScanCode = 2; ScanFailed = $true;  ThreatLine = $true;  RtpOn = $false; RunExit = 0; RunError = $null; Intact = $true;  DetCount = 0 }; E = 'FAIL' }
         @{ N = 'RTP off, file missing';               A = @{ ScanCode = 2; ScanFailed = $true;  ThreatLine = $false; RtpOn = $false; RunExit = 0; RunError = $null; Intact = $false; DetCount = 0 }; E = 'FAIL' }
+        @{ N = 'all good but detection query failed'; A = @{ ScanCode = 0; ScanFailed = $false; ThreatLine = $false; RtpOn = $true;  RunExit = 0; RunError = $null; Intact = $true;  DetCount = 0; DetQueryFailed = $true }; E = 'UNJUDGEABLE' }
+        @{ N = 'detection query failed, file missing'; A = @{ ScanCode = 0; ScanFailed = $false; ThreatLine = $false; RtpOn = $true;  RunExit = 0; RunError = $null; Intact = $false; DetCount = 0; DetQueryFailed = $true }; E = 'FAIL' }
     )
     $bad = 0
     foreach ($c in $cases) {
@@ -40,8 +44,8 @@ if ($VerdictSelfTest) {
         $got = Get-Q4Verdict @a
         $ok = ($got -eq $c.E)
         if (-not $ok) { $bad++ }
-        Write-Host ("{0,-36} scan={1} failed={2} threat={3} rtp={4} run={5} err={6} intact={7} det={8} -> {9} (기대 {10}) {11}" -f `
-            $c.N, $a.ScanCode, $a.ScanFailed, $a.ThreatLine, $a.RtpOn, $a.RunExit, $a.RunError, $a.Intact, $a.DetCount, $got, $c.E, $(if ($ok) { 'ok' } else { 'MISMATCH' }))
+        Write-Host ("{0,-36} scan={1} failed={2} threat={3} rtp={4} run={5} err={6} intact={7} det={8} detfail={12} -> {9} (기대 {10}) {11}" -f `
+            $c.N, $a.ScanCode, $a.ScanFailed, $a.ThreatLine, $a.RtpOn, $a.RunExit, $a.RunError, $a.Intact, $a.DetCount, $got, $c.E, $(if ($ok) { 'ok' } else { 'MISMATCH' }), [bool]$a.DetQueryFailed)
     }
     Write-Host "자체 시험: $($cases.Count - $bad)/$($cases.Count) 일치"
     if ($bad) { exit 1 }
@@ -141,16 +145,16 @@ if ($exists) {
 Write-Host "복사본 존재: $exists, 길이·SHA-256 원본과 동일: $intact"
 Start-Sleep -Seconds 2
 $folderName = Split-Path -Leaf $pc.Root
-$det = @()
+$det = @(); $detQueryFailed = $false
 try { $det = @(Get-MpThreatDetection -ErrorAction Stop | Where-Object { (($_.Resources) -join ' ') -like "*$folderName*" }) }
-catch { Write-Host "Get-MpThreatDetection 실패: $($_.Exception.Message) (탐지 0으로 취급)" }
+catch { $detQueryFailed = $true; Write-Host "Get-MpThreatDetection 실패: $($_.Exception.Message) (탐지 여부를 알 수 없음: 판정 불가로 취급)" }
 Write-Host "이 폴더에 대한 Defender 탐지 수: $($det.Count)"
 foreach ($d in $det) { Write-Host "  탐지: $(($d.Resources) -join ', ')" }
 
 $leftProcs = @(Get-Process -Name 'xgs-qt-spike' -ErrorAction SilentlyContinue).Count
 Write-Host "남은 xgs-qt-spike 프로세스: $leftProcs"
 $verdict = Get-Q4Verdict -ScanCode $scanCode -ScanFailed $scanFailed -ThreatLine $threatLine -RtpOn $rtpOn `
-    -RunExit $runExit -RunError $runError -Intact $intact -DetCount $det.Count
+    -RunExit $runExit -RunError $runError -Intact $intact -DetCount $det.Count -DetQueryFailed $detQueryFailed
 Write-Host "Q4 결과: $verdict"
 if ($verdict -eq 'UNJUDGEABLE') { Write-Host '  (판정 불가: Defender가 실제로 검사하지 못했다. 통과도 실패도 아니다. 멈추고 사용자에게 알릴 것)' }
 if ($verdict -eq 'FAIL') { Write-Host '  (실패: 위협·차단·삭제·변조·탐지 중 하나가 있다. 멈추고 사용자에게 알릴 것)' }
