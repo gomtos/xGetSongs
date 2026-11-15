@@ -10,3 +10,5 @@ out/
 /dist/
 # The output of the Java extension of VS Code: copies of the sources of the Kotlin modules (not the build of the project)
 /*/bin/
+# The mockups of the brainstorming visual companion
+/.superpowers/
