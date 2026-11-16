@@ -35,11 +35,14 @@
 #include "json/json.h"
 #include "log/log_redaction.h"
 #include "lyrics/lyrics_extractor.h"
+#include "tags/ffmetadata.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
 #include "ytdlp/error_classifier.h"
+#include "ytdlp/ffmpeg_commands.h"
 #include "ytdlp/progress_parser.h"
 #include "ytdlp/video_info_file.h"
+#include "ytdlp/ytdlp_commands.h"
 
 namespace xgs::diff {
 
@@ -263,6 +266,49 @@ QString answerV(const QStringList& fields) {
     return hex(info.album) + u' ' + hex(info.description) + u' ' + (info.duration ? QString::number(*info.duration) : QStringLiteral("-"));
 }
 
+// ---- kind K ----
+// K rp|rv ytDlp ffmpeg jsRuntime url | K dl ytDlp ffmpeg jsRuntime url outputDir videoId | K tag ffmpeg input cover metadataFile output
+// -> OK <each argument as hex> | ERR (the exception of std::invalid_argument). A path field is hex, "-" when absent.
+QString answerK(const QStringList& fields) {
+    if (fields.size() < 1) return QStringLiteral("?");
+    const QString& op = fields.at(0);
+    const auto path = [&](qsizetype index) { return unhex(fields.at(index)); };
+    QStringList command;
+    try {
+        if (op == u"tag") {
+            if (fields.size() < 6) return QStringLiteral("?");
+            command = ytdlp::tagCommand(textOf(fields.at(1)), textOf(fields.at(2)), path(3), textOf(fields.at(4)), textOf(fields.at(5)));
+        } else if (op == u"rp" || op == u"rv" || op == u"dl") {
+            if (fields.size() < (op == u"dl" ? 7 : 5)) return QStringLiteral("?");
+            const ToolPaths tools{path(1), path(2), path(3)};
+            const QString url = textOf(fields.at(4));
+            if (op == u"rp") command = ytdlp::resolvePlaylistCommand(tools, url);
+            else if (op == u"rv") command = ytdlp::resolveVideoCommand(tools, url);
+            else command = ytdlp::downloadCommand(tools, url, textOf(fields.at(5)), textOf(fields.at(6)));
+        } else {
+            return QStringLiteral("?");
+        }
+    } catch (const std::invalid_argument&) {
+        return QStringLiteral("ERR");
+    }
+    QString answer = QStringLiteral("OK");
+    for (const QString& argument : command) answer += u' ' + hexText(argument);
+    return answer;
+}
+
+// ---- kind A ----
+// A title artist album albumArtist track comment lyrics -> OK <hex of the ffmetadata text> (Ffmetadata.render; album, comment and
+// lyrics as hex, "-" when absent; track in decimal)
+QString answerA(const QStringList& fields) {
+    if (fields.size() < 7) return QStringLiteral("?");
+    bool ok = false;
+    const int track = fields.at(4).toInt(&ok);
+    if (!ok) return QStringLiteral("?");
+    const tags::TrackTags trackTags{textOf(fields.at(0)), textOf(fields.at(1)), unhex(fields.at(2)), textOf(fields.at(3)), track,
+                                    unhex(fields.at(5)), unhex(fields.at(6))};
+    return okHex(tags::renderFfmetadata(trackTags));
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -291,6 +337,8 @@ void registerAnswers() {
     registerAnswer('E', answerE);
     registerAnswer('Q', answerQ);
     registerAnswer('V', answerV);
+    registerAnswer('K', answerK);
+    registerAnswer('A', answerA);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).

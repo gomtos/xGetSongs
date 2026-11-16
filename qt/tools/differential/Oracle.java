@@ -1,4 +1,9 @@
+import com.xgetsongs.engine.tags.Ffmetadata;
+import com.xgetsongs.engine.tags.TrackTags;
+import com.xgetsongs.engine.tools.ToolPaths;
 import com.xgetsongs.engine.ytdlp.ErrorClassifier;
+import com.xgetsongs.engine.ytdlp.FfmpegCommands;
+import com.xgetsongs.engine.ytdlp.YtDlpCommands;
 import com.xgetsongs.engine.ytdlp.Failure;
 import com.xgetsongs.engine.ytdlp.ProgressParser;
 import com.xgetsongs.engine.ytdlp.ProgressUpdate;
@@ -80,6 +85,12 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            each, "." for none)  -> album description duration (the strings as hex, "-"
  *                                            for null; the duration in decimal or "-"), or THROW and the class of what
  *                                            read threw
+ *         K rp|rv ytDlp ffmpeg js url        YtDlpCommands.resolvePlaylist | resolveVideo(ToolPaths(Path.of(..)), url)
+ *         K dl ytDlp ffmpeg js url dir id    YtDlpCommands.download
+ *         K tag ffmpeg input cover meta out  FfmpegCommands.tag; the answer is OK and every argument as hex, ERR when it
+ *                                            throws IllegalArgumentException (a path is hex, "-" for null; BADPATH when
+ *                                            Path.of(text).toString() differs from text)
+ *         A title artist album albumArtist track comment lyrics     Ffmetadata.render(TrackTags(...))  -> OK hex
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
@@ -94,6 +105,18 @@ public class Oracle {
         StringBuilder out = new StringBuilder();
         for (int i = 0; i < hex.length(); i += 4) out.append((char) Integer.parseInt(hex.substring(i, i + 4), 16));
         return out.toString();
+    }
+
+    // A path field of a kind K case: Path.of(text), "-" for null. The generator only writes paths that Path gives back unchanged;
+    // one that comes back different would hide a generator problem behind a matching answer, so the case answers BADPATH.
+    static final class BadPath extends RuntimeException {}
+
+    static java.nio.file.Path path(String hex) {
+        if (hex.equals("-")) return null;
+        String text = dec(hex);
+        java.nio.file.Path path = java.nio.file.Path.of(text);
+        if (!path.toString().equals(text)) throw new BadPath();
+        return path;
     }
 
     // the bytes of a kind V case: 2 hex digits each, "." for none
@@ -383,6 +406,35 @@ public class Oracle {
                         // read promises never to throw; should it (an Error such as a stack overflow), say what it threw
                         out.append("THROW ").append(e.getClass().getName());
                     }
+                    break;
+                }
+                case "K": {
+                    try {
+                        java.util.List<String> command;
+                        if (part[1].equals("tag")) {
+                            command = FfmpegCommands.INSTANCE.tag(path(part[2]), path(part[3]), path(part[4]), path(part[5]), path(part[6]));
+                        } else {
+                            ToolPaths tools = new ToolPaths(path(part[2]), path(part[3]), path(part[4]));
+                            String url = dec(part[5]);
+                            command = switch (part[1]) {
+                                case "rp" -> YtDlpCommands.INSTANCE.resolvePlaylist(tools, url);
+                                case "rv" -> YtDlpCommands.INSTANCE.resolveVideo(tools, url);
+                                default -> YtDlpCommands.INSTANCE.download(tools, url, path(part[6]), dec(part[7]));
+                            };
+                        }
+                        out.append("OK");
+                        for (String argument : command) out.append(' ').append(enc(argument));
+                    } catch (BadPath e) {
+                        out.append("BADPATH");
+                    } catch (IllegalArgumentException e) {
+                        out.append("ERR");
+                    }
+                    break;
+                }
+                case "A": {
+                    TrackTags tags = new TrackTags(dec(part[1]), dec(part[2]), dec(part[3]), dec(part[4]), Integer.parseInt(part[5]),
+                        dec(part[6]), dec(part[7]));
+                    out.append("OK ").append(enc(Ffmetadata.INSTANCE.render(tags)));
                     break;
                 }
                 case "C": {

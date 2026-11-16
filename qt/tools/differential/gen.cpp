@@ -2018,6 +2018,105 @@ QString generateV(Rng& rng) {
     return bytesField(bytes);
 }
 
+// ---- kind K: YtDlpCommands (rp, rv, dl) and FfmpegCommands.tag (tag) ----
+// Paths are normalised Windows absolute paths only (a drive letter, `\`, one to four parts of ASCII letters and digits, Korean,
+// space, `.`, `(`, `)`, `&` and `%`; never a trailing space or dot, never an empty part), which java.nio.file.Path gives back
+// unchanged. The tool paths are absent now and then (an absent yt-dlp makes the answer ERR); the js runtime's file name is one of
+// the spellings that do and do not count as Deno or Node. A video id is text() without `\ / : * ? " < > |` and the control
+// characters U+0000..U+001F: Path.resolve would throw for them or read them as separators (a real id is [A-Za-z0-9_-]).
+constexpr QStringView kPathPartChars = u"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789가나다라마바사아자차카타파하 .()&%";
+constexpr QStringView kDriveLetters = u"CCCDEc";
+constexpr QStringView kJsRuntimeNames[] = {u"node.exe", u"NODE.EXE", u"deno", u"Deno.exe", u"deno.EXE", u"node", u"Node.Exe.exe",
+                                           u"bun.exe", u"node.cmd", u"nodejs.exe", u"node.exe.exe", u"denox.exe"};
+constexpr QStringView kJsRuntimeValid[] = {u"node.exe", u"NODE.EXE", u"deno", u"Deno.exe", u"deno.EXE", u"node"};
+
+QString winPathPart(Rng& rng) {
+    QString part;
+    const int length = rng.between(1, 12);
+    for (int i = 0; i < length; ++i) part += charOf(rng, kPathPartChars);
+    while (!part.isEmpty() && (part.back() == u' ' || part.back() == u'.')) part.chop(1);
+    if (part.isEmpty()) part = u"x"_s;
+    return part;
+}
+
+QString winPath(Rng& rng) {
+    QString path = QString(QChar(kDriveLetters[rng.between(0, int(kDriveLetters.size()) - 1)])) + u":";
+    const int parts = rng.between(1, 4);
+    for (int i = 0; i < parts; ++i) path += u'\\' + winPathPart(rng);
+    return path;
+}
+
+QString videoIdText(Rng& rng) {
+    QString raw = text(rng, 12);
+    QString id;
+    for (const QChar c : raw) {
+        const char16_t unit = c.unicode();
+        if (unit < 0x20 || QStringView(u"\\/:*?\"<>|").contains(c)) continue;
+        id += c;
+    }
+    return id;
+}
+
+QString optionalPathField(Rng& rng, double absent) {
+    return rng.chance(absent) ? QStringLiteral("-") : hex(winPath(rng));
+}
+
+QString jsRuntimeField(Rng& rng) {
+    if (rng.chance(0.1)) return QStringLiteral("-");
+    const QStringView name = rng.chance(0.7) ? pick(rng, kJsRuntimeValid) : pick(rng, kJsRuntimeNames);
+    return hex(winPath(rng) + u'\\' + name);
+}
+
+QString generateK(Rng& rng) {
+    static constexpr QStringView ops[] = {u"rp", u"rv", u"dl", u"tag"};
+    const QString op = pick(rng, ops).toString();
+    if (op == u"tag") {
+        static constexpr QStringView extensions[] = {u".m4a", u".m4a", u".m4a", u".M4A", u".M4a", u".mp3", u".mp4", u"", u".m4a.tmp", u".m4"};
+        QString output = winPath(rng) + pick(rng, extensions).toString();
+        // the whole file name is the extension
+        if (rng.chance(0.05)) output = winPath(rng) + (rng.chance(0.5) ? u"\\.m4a"_s : u"\\.M4A"_s);
+        return u"tag\t" + hex(winPath(rng)) + u'\t' + hex(winPath(rng)) + u'\t' + (rng.chance(0.55) ? hex(winPath(rng)) : QStringLiteral("-")) +
+               u'\t' + hex(winPath(rng)) + u'\t' + hex(output);
+    }
+    QString line = op + u'\t' + optionalPathField(rng, 0.12) + u'\t' + optionalPathField(rng, 0.3) + u'\t' + jsRuntimeField(rng) + u'\t' + hex(text(rng, 20));
+    if (op == u"dl") line += u'\t' + hex(winPath(rng)) + u'\t' + hex(videoIdText(rng));
+    return line;
+}
+
+// ---- kind A: Ffmetadata.render ----
+// Every value is text(), and 60% get one to three of the characters that matter (`=` `;` `#` `\`, LF, CR, tab, NUL, U+001B,
+// U+007F) at random places; 25% end in one to three backslashes.
+constexpr QStringView kTagSpecials[] = {u"=", u";", u"#", u"\\", u"\n", u"\r", u"\t", QStringView(u"\0", 1), u"\u001b", u"\u007f",
+                                        u"\\\n", u"\r\n", u"=\\", u"\u0001", u"\u001f"};
+
+QString tagValueFrom(Rng& rng, QString value) {
+    if (rng.chance(0.6)) {
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i)
+            value.insert(rng.between(0, int(value.size())), pick(rng, kTagSpecials).toString());
+    }
+    if (rng.chance(0.25)) value += QString(u'\\').repeated(rng.between(1, 3));
+    return value;
+}
+
+QString tagValue(Rng& rng) {
+    return tagValueFrom(rng, text(rng, 14));
+}
+
+QString optionalTagField(Rng& rng) {
+    std::optional<QString> value = nullable(rng);
+    if (value) value = tagValueFrom(rng, *value);
+    return hex(value);
+}
+
+QString generateA(Rng& rng) {
+    const QString title = tagValue(rng);
+    const QString artist = tagValue(rng);
+    const QString albumArtist = rng.chance(0.2) ? artist : tagValue(rng);
+    return hex(title) + u'\t' + hex(artist) + u'\t' + optionalTagField(rng) + u'\t' + hex(albumArtist) + u'\t' +
+           QString::number(rng.between(-5, 1500)) + u'\t' + optionalTagField(rng) + u'\t' + optionalTagField(rng);
+}
+
 }  // namespace
 
 void registerKind(char kind, Generator gen) {
@@ -2045,6 +2144,8 @@ void registerGenerators() {
     registerKind('E', generateE);
     registerKind('Q', generateQ);
     registerKind('V', generateV);
+    registerKind('K', generateK);
+    registerKind('A', generateA);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).

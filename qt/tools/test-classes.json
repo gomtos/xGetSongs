@@ -43,5 +43,20 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/VideoInfoFileTest.kt",
     "exe": "tst_video_info_file",
     "added": ["readsATenMegabyteInfoFileQuickly"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/YtDlpCommandsTest.kt",
+    "exe": "tst_ytdlp_commands",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/FfmpegCommandsTest.kt",
+    "exe": "tst_ffmpeg_commands",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tags/FfmetadataTest.kt",
+    "exe": "tst_ffmetadata",
+    "added": []
   }
 ]
