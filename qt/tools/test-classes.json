@@ -58,5 +58,10 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tags/FfmetadataTest.kt",
     "exe": "tst_ffmetadata",
     "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/LyricsMatcherTest.kt",
+    "exe": "tst_lyrics_matcher",
+    "added": ["sigmaFormsAreTheSameLetterInMatching"]
   }
 ]

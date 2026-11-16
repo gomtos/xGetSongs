@@ -5,6 +5,7 @@ add_library(xgscore STATIC
     filename/filename_formatter.h filename/filename_formatter.cpp
     title/title_parser.h title/title_parser.cpp
     lyrics/lyrics_extractor.h lyrics/lyrics_extractor.cpp
+    lyrics/lyrics_matcher.h lyrics/lyrics_matcher.cpp
     log/log_redaction.h log/log_redaction.cpp
     model/models.h
     json/json.h json/json.cpp

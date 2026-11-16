@@ -4,7 +4,10 @@
 #include <QStringView>
 
 #include <algorithm>
+#include <bit>
 #include <iterator>
+#include <limits>
+#include <optional>
 
 #include "codec.h"
 #include "text/kt_text.h"
@@ -2126,6 +2129,465 @@ QString generateA(Rng& rng) {
            QString::number(rng.between(-5, 1500)) + u'\t' + optionalTagField(rng) + u'\t' + optionalTagField(rng);
 }
 
+// ---- kind I: LyricsMatcher (titleVariants, artistVariants, normalize, isMatch, pick) ----
+// Titles are built from pieces: a body (words, full-width words, Hangul as separate jamo, letters with combining marks, NFKC
+// material of kind H, tokens of text()), zero to three bracketed parts of the four kinds (version words, Korean version words,
+// plain words or credits inside; nested, unclosed or stray), a credit (` feat. X`, ` FT X`, ` Prod.X`, `\tNarr.\nX`, ` with X`,
+// one after U+00A0...) and one of ten quote kinds. A candidate's title is made from the query's in 60% of the cases (as it is,
+// without its brackets, without its credit, its body only, with other case, width or spaces, with a version part added); the
+// artist likewise (an alias in parentheses, several joined by `&`, one letter, word boundaries such as `IU` and `Liu`). Album,
+// length, instrumental and lyrics are optional and take their edge values (length differences 7.9, 8.0 and 8.1, NaN, the
+// infinities, negative values; lyrics of white space only). A pick case has 0 to 6 candidates, often copies of one another so
+// that equal ranks occur.
+//
+// No case contains Σ, σ or ς: in matching the C++ port takes ς and σ for the same letter (a user decision of 2026-11-15, a
+// documented divergence), so every string is cleared of the code points whose NFKC, lowercase or NFKC of that holds one of the
+// three (Σ σ ς themselves, and forms such as U+03F2 and the mathematical sigmas, which NFKC turns into them).
+bool holdsSigma(const QString& value) {
+    for (const QChar c : value) {
+        const char16_t unit = c.unicode();
+        if (unit == 0x03A3 || unit == 0x03C2 || unit == 0x03C3) return true;
+    }
+    return false;
+}
+
+const QList<bool>& sigmaSources() {
+    static const QList<bool> table = [] {
+        QList<bool> out(0x110000, false);
+        for (char32_t cp = 0; cp <= 0x10FFFF; ++cp) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+            const QString compatible = kt::nfkc(codePointText(cp));
+            const QString lowered = kt::lowercase(compatible);
+            out[cp] = holdsSigma(compatible) || holdsSigma(lowered) || holdsSigma(kt::nfkc(lowered));
+        }
+        return out;
+    }();
+    return table;
+}
+
+QString sigmaFree(const QString& value) {
+    const QList<bool>& sources = sigmaSources();
+    QString out;
+    out.reserve(value.size());
+    for (qsizetype i = 0; i < value.size();) {
+        char32_t cp = value.at(i).unicode();
+        qsizetype units = 1;
+        if (value.at(i).isHighSurrogate() && i + 1 < value.size() && value.at(i + 1).isLowSurrogate()) {
+            cp = QChar::surrogateToUcs4(value.at(i), value.at(i + 1));
+            units = 2;
+        }
+        if (!sources.at(cp)) out += QStringView(value).sliced(i, units);
+        i += units;
+    }
+    return out;
+}
+
+QString lyricsField(const QString& value) {
+    return hex(sigmaFree(value));
+}
+
+QString lyricsField(const std::optional<QString>& value) {
+    return value ? lyricsField(*value) : QStringLiteral("-");
+}
+
+constexpr QStringView kSongWords[] = {u"Love", u"poem", u"Hello", u"Stay", u"With", u"Me", u"Dance", u"Golden", u"Night", u"Rain",
+                                      u"Without", u"You", u"Featuring", u"Prodigal", u"Son", u"Verse", u"Lively", u"Discover",
+                                      u"Mixture", u"Democracy", u"Editor's", u"Korea", u"Don't", u"Stop", u"2", u"I", u"ATTACK",
+                                      u"A-B", u"사랑", u"시", u"밤", u"노래", u"사랑의", u"한글", u"日本語", u"ÜNÏ", u"Café", u"Ｌｏｖｅ",
+                                      u"feat", u"ft", u"prod", u"narr", u"with", u"Live", u"Remix", u"Ver", u"Ft.", u"FEAT."};
+constexpr QStringView kVersionPhrases[] = {u"Japanese Ver.", u"Remixes", u"Remastered 2011", u"Live", u"Lived", u"Acoustic",
+                                           u"Verse", u"Discover", u"Ver2", u"inst", u"Ｌｉｖｅ", u"Live Ver.", u"Radio Edit",
+                                           u"Club Mix", u"Instrumental", u"English Version", u"Cover", u"Demo", u"Lives",
+                                           u"Acoustics", u"Acousticd", u"Liveds", u"Remix2", u"Live2023", u"Mixture", u"Lively",
+                                           u"Remix٣", u"LIVE", u"acousticed", u"remixes", u"versions", u"Ver.", u"live at Somewhere",
+                                           u"2011 Remaster", u"Korean ver", u"Live١", u"Ver१", u"Remix²", u"Mix２", u"ıns", u"Remıx", u"ＲＥＭＩＸ"};
+constexpr QStringView kKoreanVersionPhrases[] = {u"일본어 버전", u"라이브", u"반주", u"어쿠스틱", u"밴드 버전", u"리믹스", u"한국어Ver",
+                                                 u"AR 반주", u"라이브 버전", u"어쿠스틱 라이브", u"인스트", u"커버", u"영어"};
+constexpr QStringView kPlainPhrases[] = {u"Official Audio", u"MV", u"LOVE ATTACK", u"B", u"feat. X", u"with X", u"Prod. Y", u"Love poem",
+                                         u"사랑의 시", u"Official", u"", u" ", u"Editor's Note"};
+constexpr QStringView kOpenBrackets = u"([{<";
+constexpr QStringView kCloseBrackets = u")]}>";
+constexpr QStringView kCredits[] = {u" feat. X", u" FT X", u" Prod.X", u"\tNarr.\nX", u" with X", u"\u00A0feat. X", u" ft. X Remix",
+                                    u" feat X Y", u" Feat.  Somebody", u" ft.Y", u" prod. 라이브", u" narr. X", u" FEAT. X\nY",
+                                    u"\u3000feat. X", u" \u001cfeat. X", u" featuring X", u" feat.. X", u" ft. "};
+// Ten quote kinds: the six pairs of Kotlin's QUOTES, the apostrophe inside a word, and three that are no quote to Kotlin.
+constexpr QStringView kQuoteOpen[] = {u"'", u"\"", u"\u2018", u"\u201C", u"\u201A", u"\u201E", u"", u"`", u"\u00AB", u"\uFF02"};
+constexpr QStringView kQuoteClose[] = {u"'", u"\"", u"\u2019", u"\u201D", u"\u201B", u"\u201F", u"'s", u"`", u"\u00BB", u"\uFF02"};
+constexpr QStringView kWordSeparators[] = {u" ", u" ", u" ", u" ", u"  ", u"\t", u"\u3000", u"\u00A0", u"-", u"_", u"", u"\n", u" \u001c "};
+constexpr QStringView kArtistNames[] = {u"IU", u"iu", u"I.U.", u"Liu", u"Liu Yifei", u"Rain", u"Rainbow", u"Jin", u"Jinx", u"BTS",
+                                        u"Abtsa", u"소연", u"SOYEON", u"아이유", u"I.O.I", u"IOI", u"아이오아이", u"Taylor Swift",
+                                        u"Swift Taylor", u"AKMU", u"악뮤", u"ABBA", u"Band", u"Friends", u"Someone",
+                                        u"Somebody Else", u"(G)I-DLE", u"I-DLE", u"LOVE ATTACK", u"Ｉ Ｕ"};
+// Names that are too short to match on once normalised (one letter, or no letter at all).
+constexpr QStringView kShortArtistNames[] = {u"A", u"B", u"G", u"X", u"!", u"?", u"아", u"Ａ", u"A.", u"-"};
+constexpr QStringView kArtistJoiners[] = {u" & ", u", ", u" feat. ", u" x ", u" X ", u"&", u" and "};
+constexpr QStringView kAlbums[] = {u"Love poem", u"Another album", u"Golden", u"사랑", u"LOVE POEM!", u"love-poem", u"Ｌｏｖｅ ｐｏｅｍ"};
+constexpr double kDurationDeltas[] = {0.0, 0.0, 7.9, -7.9, 8.0, -8.0, 8.1, -8.1, 0.5, 3.0, -2.0, 20.0, -20.0, 0.1, 1e-9, -7.999999};
+
+QString asciiToFullWidth(const QString& value) {
+    QString out = value;
+    for (QChar& c : out) {
+        const char16_t unit = c.unicode();
+        if (unit >= 0x21 && unit <= 0x7E) c = QChar(char16_t(unit + 0xFEE0));
+        else if (unit == u' ') c = QChar(char16_t(0x3000));
+    }
+    return out;
+}
+
+// ASCII letters in the other case (all upper, all lower, or each at random); everything else stays.
+QString asciiCaseShuffle(Rng& rng, const QString& value) {
+    const int mode = rng.between(0, 2);
+    QString out = value;
+    for (QChar& c : out) {
+        const char16_t unit = c.unicode();
+        const bool upper = unit >= u'A' && unit <= u'Z';
+        const bool lower = unit >= u'a' && unit <= u'z';
+        if (!upper && !lower) continue;
+        const bool toUpper = mode == 0 || (mode == 2 && rng.chance(0.5));
+        if (toUpper && lower) c = QChar(char16_t(unit - 32));
+        else if (!toUpper && upper) c = QChar(char16_t(unit + 32));
+    }
+    return out;
+}
+
+// A Hangul syllable written as its conjoining jamo (L V, or L V T), which NFKC composes.
+QString decomposedSyllable(Rng& rng) {
+    const int index = rng.between(0, 11171);
+    QString out;
+    out += QChar(char16_t(0x1100 + index / 588));
+    out += QChar(char16_t(0x1161 + (index % 588) / 28));
+    if (index % 28 != 0) out += QChar(char16_t(0x11A7 + index % 28));
+    return out;
+}
+
+QString markedLetter(Rng& rng) {
+    QString out = pick(rng, kBases).toString();
+    const int marks = rng.between(1, 2);
+    for (int i = 0; i < marks; ++i) out += QChar(pick(rng, kMarks));
+    return out;
+}
+
+QString songWord(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.45) return pick(rng, kSongWords).toString();
+    if (roll < 0.53) return asciiToFullWidth(pick(rng, kSongWords).toString());
+    if (roll < 0.61) {
+        QString word;
+        const int syllables = rng.between(1, 3);
+        for (int i = 0; i < syllables; ++i) word += decomposedSyllable(rng);
+        return word;
+    }
+    if (roll < 0.66) return QString(QChar(char16_t(rng.between(0xAC00, 0xD7A3))));
+    if (roll < 0.73) return markedLetter(rng) + (rng.chance(0.5) ? pick(rng, kSongWords).toString() : QString());
+    if (roll < 0.80) return nfkcPiece(rng);
+    if (roll < 0.88) return token(rng);
+    if (roll < 0.94) return pick(rng, kVersionPhrases).toString();
+    return pick(rng, kKoreanVersionPhrases).toString();
+}
+
+QString songWords(Rng& rng, int low, int high) {
+    QString out;
+    const int count = rng.between(low, high);
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) out += pick(rng, kWordSeparators);
+        out += songWord(rng);
+    }
+    return out;
+}
+
+QString bracketContent(Rng& rng, int depth);
+
+QString bracketedPart(Rng& rng, int depth) {
+    const int kind = rng.between(0, 3);
+    const QString content = bracketContent(rng, depth);
+    const double shape = rng.next();
+    if (shape < 0.06) return QString(kOpenBrackets[kind]) + content;                     // never closed
+    if (shape < 0.10) return content + QString(kCloseBrackets[kind]);                    // a stray closing bracket
+    if (shape < 0.14) return QString(kOpenBrackets[kind]) + content + QString(kCloseBrackets[rng.between(0, 3)]);   // crossed kinds
+    return QString(kOpenBrackets[kind]) + content + QString(kCloseBrackets[kind]);
+}
+
+QString bracketContent(Rng& rng, int depth) {
+    const double roll = rng.next();
+    QString content;
+    if (roll < 0.40) content = pick(rng, kVersionPhrases).toString();
+    else if (roll < 0.55) content = pick(rng, kKoreanVersionPhrases).toString();
+    else if (roll < 0.80) content = rng.chance(0.5) ? pick(rng, kPlainPhrases).toString() : songWords(rng, 1, 3);
+    else content = text(rng, 6);
+    if (depth < 2 && rng.chance(0.15)) {
+        const QString inner = bracketedPart(rng, depth + 1);
+        content = rng.chance(0.5) ? content + u' ' + inner : inner + u' ' + content;
+    }
+    return content;
+}
+
+// The pieces of a title, so that a candidate can leave some out.
+struct TitlePieces {
+    QString body;
+    QString quotedBody;
+    QStringList partsBefore;   // bracketed parts between the body and the credit
+    QString credit;
+    QStringList partsAfter;    // bracketed parts after the credit
+    QString lead;
+    QString trail;
+};
+
+QString joinParts(Rng& rng, const QStringList& parts) {
+    QString out;
+    for (const QString& part : parts) out += (rng.chance(0.85) ? u" "_s : QString()) + part;
+    return out;
+}
+
+TitlePieces titlePieces(Rng& rng) {
+    TitlePieces t;
+    t.body = songWords(rng, 1, 4);
+    t.quotedBody = t.body;
+    if (rng.chance(0.45)) {
+        const int kind = rng.between(0, int(std::size(kQuoteOpen)) - 1);
+        if (kind == 6) t.quotedBody = u"Don"_s + kQuoteClose[kind].left(1) + u"t "_s + t.body;   // an apostrophe in a word
+        else t.quotedBody = kQuoteOpen[kind].toString() + t.body + kQuoteClose[kind];
+    }
+    const int parts = rng.chance(0.4) ? 0 : rng.between(1, 3);
+    for (int i = 0; i < parts; ++i) (rng.chance(0.7) ? t.partsBefore : t.partsAfter).append(bracketedPart(rng, 0));
+    if (rng.chance(0.5)) t.credit = pick(rng, kCredits).toString();
+    if (rng.chance(0.08)) t.lead = pick(rng, kWordSeparators).toString();
+    if (rng.chance(0.08)) t.trail = pick(rng, kWordSeparators).toString();
+    return t;
+}
+
+QString composeTitle(Rng& rng, const TitlePieces& t) {
+    return t.lead + t.quotedBody + joinParts(rng, t.partsBefore) + t.credit + joinParts(rng, t.partsAfter) + t.trail;
+}
+
+// The title of a candidate: made from the query's pieces with the probability `fromQuery` (60% unless the case wants a candidate
+// that is likely to match), otherwise another title.
+QString candidateTitle(Rng& rng, const TitlePieces& t, double fromQuery = 0.6) {
+    if (!rng.chance(fromQuery)) {
+        const double other = rng.next();
+        if (other < 0.15) return t.quotedBody + u" 2";
+        if (other < 0.25) return songWord(rng);
+        if (other < 0.30) return text(rng, 10);
+        return composeTitle(rng, titlePieces(rng));
+    }
+    const double roll = rng.next();
+    QString title;
+    if (roll < 0.30) title = composeTitle(rng, t);
+    else if (roll < 0.40) title = t.quotedBody + t.credit;
+    else if (roll < 0.52) title = t.quotedBody + joinParts(rng, t.partsBefore + t.partsAfter);
+    else if (roll < 0.66) title = t.quotedBody;
+    else if (roll < 0.74) title = t.body;
+    else if (roll < 0.82) title = asciiCaseShuffle(rng, composeTitle(rng, t));
+    else if (roll < 0.86) title = asciiToFullWidth(composeTitle(rng, t));
+    else if (roll < 0.90) title = composeTitle(rng, t).replace(u' ', rng.chance(0.5) ? u"  "_s : u"\t"_s);
+    else {
+        const QString added = rng.chance(0.7) ? pick(rng, kVersionPhrases).toString() : pick(rng, kKoreanVersionPhrases).toString();
+        const int kind = rng.between(0, 3);
+        title = (rng.chance(0.5) ? t.quotedBody : composeTitle(rng, t)) + u' ' + kOpenBrackets[kind] + added + kCloseBrackets[kind];
+    }
+    return title;
+}
+
+struct ArtistPieces {
+    QString text;
+    QStringList names;   // the names it is made of (for a candidate that has only one of them)
+};
+
+ArtistPieces artistPieces(Rng& rng) {
+    const double roll = rng.next();
+    ArtistPieces a;
+    const QString first = rng.chance(0.08) ? pick(rng, kShortArtistNames).toString() : pick(rng, kArtistNames).toString();
+    const QString second = rng.chance(0.15) ? pick(rng, kShortArtistNames).toString() : pick(rng, kArtistNames).toString();
+    a.names = {first, second};
+    if (roll < 0.40) {
+        a.text = first;
+        a.names = {first};
+    } else if (roll < 0.60) {
+        a.text = first + (rng.chance(0.8) ? u" ("_s : u"("_s) + second + u")";
+    } else if (roll < 0.75) {
+        a.text = first + pick(rng, kArtistJoiners) + second;
+    } else if (roll < 0.82) {
+        const QString third = pick(rng, kArtistNames).toString();
+        a.names.append(third);
+        static constexpr QStringView shapes[] = {u"%1 (%2) (%3) (%1)", u"%1 (%2 (%3)) (%1)", u"(%1)%2", u"%1 (%2) (%3)", u"%1 & %2 (%3)",
+                                                 u"%1 ( %2 )", u"%1 (\t%2 \t) (%3 )", u"( %1 )%2"};
+        a.text = pick(rng, shapes).toString().arg(first, second, third);
+    } else if (roll < 0.89) {
+        a.text = asciiToFullWidth(first);
+        a.names = {first};
+    } else if (roll < 0.94) {
+        a.text = rng.chance(0.5) ? QString(QChar(char16_t(rng.between(u'A', u'Z')))) : QString(QChar(char16_t(rng.between(0xAC00, 0xD7A3))));
+        a.names = {a.text};
+    } else if (roll < 0.98) {
+        a.text = text(rng, 8);
+        a.names = {a.text};
+    } else {
+        a.text = rng.chance(0.5) ? QString() : u"  "_s;
+        a.names = {a.text};
+    }
+    return a;
+}
+
+QString candidateArtist(Rng& rng, const ArtistPieces& a, double fromQuery = 0.6) {
+    if (!rng.chance(fromQuery)) return artistPieces(rng).text;
+    const double roll = rng.next();
+    if (roll < 0.45) return a.text;
+    if (roll < 0.55) return a.names.at(rng.between(0, int(a.names.size()) - 1));
+    if (roll < 0.70) return a.text + pick(rng, kArtistJoiners) + pick(rng, kArtistNames);
+    if (roll < 0.78) return pick(rng, kArtistNames).toString() + pick(rng, kArtistJoiners) + a.text;
+    if (roll < 0.88) return asciiCaseShuffle(rng, a.text);
+    if (roll < 0.94) return asciiToFullWidth(a.text);
+    return a.text + u" (" + pick(rng, kArtistNames) + u")";
+}
+
+struct QueryPieces {
+    ArtistPieces artist;
+    TitlePieces title;
+    QString titleText;
+    std::optional<QString> album;
+    std::optional<int> duration;
+};
+
+QueryPieces queryPieces(Rng& rng) {
+    QueryPieces q;
+    q.artist = artistPieces(rng);
+    q.title = titlePieces(rng);
+    q.titleText = rng.chance(0.05) ? text(rng, 12) : composeTitle(rng, q.title);
+    const double album = rng.next();
+    if (album < 0.35) q.album = std::nullopt;
+    else if (album < 0.40) q.album = u"  "_s;
+    else if (album < 0.43) q.album = QString();
+    else if (album < 0.85) q.album = pick(rng, kAlbums).toString();
+    else q.album = q.title.body;
+    const double duration = rng.next();
+    if (duration < 0.15) q.duration = std::nullopt;
+    else if (duration < 0.75) q.duration = rng.between(150, 300);
+    else if (duration < 0.80) q.duration = 0;
+    else if (duration < 0.82) {
+        static constexpr int edges[] = {-5, 2147483647, -2147483647 - 1, 1, -1};
+        q.duration = pick(rng, edges);
+    } else {
+        q.duration = rng.between(0, 1000);
+    }
+    return q;
+}
+
+QString queryFields(const QueryPieces& q) {
+    return lyricsField(q.artist.text) + u'\t' + lyricsField(q.titleText) + u'\t' + lyricsField(q.album) + u'\t' +
+           (q.duration ? QString::number(*q.duration) : QStringLiteral("-"));
+}
+
+struct CandidatePieces {
+    std::optional<QString> trackName;
+    std::optional<QString> artistName;
+    std::optional<QString> albumName;
+    std::optional<double> duration;
+    std::optional<bool> instrumental;
+    std::optional<QString> plainLyrics;
+};
+
+std::optional<double> candidateDuration(Rng& rng, const std::optional<int>& wanted) {
+    const double roll = rng.next();
+    if (roll < 0.13) return std::nullopt;
+    if (roll < 0.17) return std::numeric_limits<double>::quiet_NaN();
+    if (roll < 0.19) return std::numeric_limits<double>::infinity();
+    if (roll < 0.21) return -std::numeric_limits<double>::infinity();
+    if (roll < 0.23) return -0.0;
+    if (roll < 0.25) return -double(rng.between(1, 300)) - rng.next();
+    if (!wanted) return double(rng.between(0, 600)) + (rng.chance(0.3) ? rng.next() : 0.0);
+    if (roll < 0.85) return double(*wanted) + pick(rng, kDurationDeltas);
+    return double(*wanted) + (rng.next() - 0.5) * 40.0;
+}
+
+// A candidate for the query; a `likely` one has its title and artist from the query's and lyrics that count.
+CandidatePieces candidatePieces(Rng& rng, const QueryPieces& q, bool likely = false) {
+    CandidatePieces c;
+    const double fromQuery = likely ? 1.0 : 0.6;
+    c.trackName = rng.chance(0.05) ? std::nullopt : std::optional<QString>(rng.chance(0.03) ? QString() : candidateTitle(rng, q.title, fromQuery));
+    c.artistName = rng.chance(0.05) ? std::nullopt : std::optional<QString>(candidateArtist(rng, q.artist, fromQuery));
+    const double album = rng.next();
+    if (album < 0.20) c.albumName = std::nullopt;
+    else if (album < 0.23) c.albumName = QString();
+    else if (album < 0.26) c.albumName = u" "_s;
+    else if (album < 0.56) c.albumName = q.album.value_or(u"Love poem"_s);
+    else if (album < 0.66) c.albumName = asciiCaseShuffle(rng, q.album.value_or(u"Love poem"_s)) + u"!";
+    else c.albumName = pick(rng, kAlbums).toString();
+    c.duration = candidateDuration(rng, q.duration);
+    const double instrumental = rng.next();
+    c.instrumental = instrumental < 0.18 ? std::nullopt : std::optional<bool>(instrumental > (likely ? 0.98 : 0.92));
+    const double lyrics = likely ? 0.5 : rng.next();   // (0.5: the plain lyrics below)
+    if (lyrics < 0.04) c.plainLyrics = std::nullopt;
+    else if (lyrics < 0.07) c.plainLyrics = QString();
+    else if (lyrics < 0.12) {
+        QString blank;
+        const int length = rng.between(1, 4);
+        for (int i = 0; i < length; ++i) blank += pick(rng, kWhitespace);
+        c.plainLyrics = blank;
+    } else if (lyrics < 0.85) {
+        c.plainLyrics = u"La la la\nLa la\nLa"_s;
+    } else {
+        c.plainLyrics = text(rng, 12);
+    }
+    return c;
+}
+
+QString candidateFields(const CandidatePieces& c) {
+    QString bits = QStringLiteral("-");
+    if (c.duration) bits = QStringLiteral("%1").arg(std::bit_cast<quint64>(*c.duration), 16, 16, QChar(u'0'));
+    const QString instrumental = c.instrumental ? (*c.instrumental ? u"1"_s : u"0"_s) : u"-"_s;
+    return lyricsField(c.trackName) + u'\t' + lyricsField(c.artistName) + u'\t' + lyricsField(c.albumName) + u'\t' + bits + u'\t' +
+           instrumental + u'\t' + lyricsField(c.plainLyrics);
+}
+
+QString generateI(Rng& rng) {
+    const double op = rng.next();
+    if (op < 0.19) {
+        const double source = rng.next();
+        QString title;
+        if (source < 0.70) title = composeTitle(rng, titlePieces(rng));
+        else if (source < 0.90) title = candidateTitle(rng, titlePieces(rng));
+        else title = text(rng, 20);
+        return u"tv\t"_s + lyricsField(title);
+    }
+    if (op < 0.38) return u"av\t"_s + lyricsField(rng.chance(0.9) ? artistPieces(rng).text : text(rng, 20));
+    if (op < 0.55) {
+        const double source = rng.next();
+        QString value;
+        if (source < 0.35) value = songWords(rng, 1, 6);
+        else if (source < 0.55) value = composeTitle(rng, titlePieces(rng));
+        else if (source < 0.70) value = artistPieces(rng).text;
+        else if (source < 0.85) {
+            for (int i = rng.between(1, 6); i > 0; --i) value += nfkcPiece(rng);
+        } else {
+            value = text(rng, 30);
+        }
+        return u"norm\t"_s + lyricsField(value);
+    }
+    const QueryPieces query = queryPieces(rng);
+    if (op < 0.79) return u"match\t"_s + queryFields(query) + u'\t' + candidateFields(candidatePieces(rng, query, rng.chance(0.55)));
+    // pick: 0 to 6 candidates, half of them copies of one candidate with another length, album or title, so ranks tie
+    const int count = rng.between(0, 6);
+    const CandidatePieces base = candidatePieces(rng, query, rng.chance(0.75));
+    QString line = u"pick\t"_s + queryFields(query) + u'\t' + QString::number(count);
+    for (int i = 0; i < count; ++i) {
+        CandidatePieces c = base;
+        const double roll = rng.next();
+        if (roll < 0.25) {
+            // an exact copy
+        } else if (roll < 0.50) {
+            const double tweak = rng.next();
+            if (tweak < 0.4) c.duration = candidateDuration(rng, query.duration);
+            else if (tweak < 0.7) c.albumName = rng.chance(0.5) ? query.album : std::optional<QString>(pick(rng, kAlbums).toString());
+            else c.trackName = candidateTitle(rng, query.title);
+        } else if (roll < 0.85) {
+            c = candidatePieces(rng, query, rng.chance(0.4));
+        } else {
+            c = candidatePieces(rng, queryPieces(rng));
+        }
+        line += u'\t' + candidateFields(c);
+    }
+    return line;
+}
+
 }  // namespace
 
 void registerKind(char kind, Generator gen) {
@@ -2155,6 +2617,7 @@ void registerGenerators() {
     registerKind('V', generateV);
     registerKind('K', generateK);
     registerKind('A', generateA);
+    registerKind('I', generateI);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).

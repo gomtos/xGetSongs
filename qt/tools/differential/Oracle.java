@@ -1,3 +1,6 @@
+import com.xgetsongs.engine.lyrics.LyricsCandidate;
+import com.xgetsongs.engine.lyrics.LyricsMatcher;
+import com.xgetsongs.engine.lyrics.LyricsQuery;
 import com.xgetsongs.engine.tags.Ffmetadata;
 import com.xgetsongs.engine.tags.TrackTags;
 import com.xgetsongs.engine.tools.ToolPaths;
@@ -91,6 +94,14 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            throws IllegalArgumentException (a path is hex, "-" for null; BADPATH when
  *                                            Path.of(text).toString() differs from text)
  *         A title artist album albumArtist track comment lyrics     Ffmetadata.render(TrackTags(...))  -> OK hex
+ *         I tv title | I av artist           LyricsMatcher.titleVariants | artistVariants  -> OK and every variant as hex
+ *         I norm text                        LyricsMatcher.normalize  -> OK hex
+ *         I match query candidate            LyricsMatcher.isMatch  -> 0 | 1
+ *         I pick query n candidate...        LyricsMatcher.pick  -> the index of the candidate picked (by identity), -1 for
+ *                                            null. A query is 4 fields (artist title album durationSeconds: hex, album "-"
+ *                                            for null, the duration in decimal or "-"); a candidate is 6 fields (trackName
+ *                                            artistName albumName duration instrumental plainLyrics: hex or "-", the duration
+ *                                            as the 16 hex digits of Double.doubleToRawLongBits or "-", instrumental 0 | 1 | -)
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
@@ -125,6 +136,19 @@ public class Oracle {
         byte[] out = new byte[hex.length() / 2];
         for (int i = 0; i < out.length; i++) out[i] = (byte) Integer.parseInt(hex.substring(2 * i, 2 * i + 2), 16);
         return out;
+    }
+
+    // a query of kind I: artist title album durationSeconds, from part[at]
+    static LyricsQuery lyricsQuery(String[] part, int at) {
+        Integer duration = part[at + 3].equals("-") ? null : Integer.valueOf(Integer.parseInt(part[at + 3]));
+        return new LyricsQuery(dec(part[at]), dec(part[at + 1]), dec(part[at + 2]), duration);
+    }
+
+    // a candidate of kind I: trackName artistName albumName duration instrumental plainLyrics, from part[at]
+    static LyricsCandidate lyricsCandidate(String[] part, int at) {
+        Double duration = part[at + 3].equals("-") ? null : Double.valueOf(Double.longBitsToDouble(Long.parseUnsignedLong(part[at + 3], 16)));
+        Boolean instrumental = part[at + 4].equals("-") ? null : Boolean.valueOf(part[at + 4].equals("1"));
+        return new LyricsCandidate(dec(part[at]), dec(part[at + 1]), dec(part[at + 2]), duration, instrumental, dec(part[at + 5]));
     }
 
     // kind V's temporary file (created at the first V case, deleted after the last)
@@ -435,6 +459,31 @@ public class Oracle {
                     TrackTags tags = new TrackTags(dec(part[1]), dec(part[2]), dec(part[3]), dec(part[4]), Integer.parseInt(part[5]),
                         dec(part[6]), dec(part[7]));
                     out.append("OK ").append(enc(Ffmetadata.INSTANCE.render(tags)));
+                    break;
+                }
+                case "I": {
+                    switch (part[1]) {
+                        case "tv", "av" -> {
+                            java.util.List<String> variants = part[1].equals("tv") ? LyricsMatcher.INSTANCE.titleVariants(dec(part[2]))
+                                : LyricsMatcher.INSTANCE.artistVariants(dec(part[2]));
+                            out.append("OK");
+                            for (String variant : variants) out.append(' ').append(enc(variant));
+                        }
+                        case "norm" -> out.append("OK ").append(enc(LyricsMatcher.INSTANCE.normalize(dec(part[2]))));
+                        case "match" -> out.append(bit(LyricsMatcher.INSTANCE.isMatch(lyricsQuery(part, 2), lyricsCandidate(part, 6))));
+                        case "pick" -> {
+                            LyricsQuery query = lyricsQuery(part, 2);
+                            int count = Integer.parseInt(part[6]);
+                            java.util.List<LyricsCandidate> candidates = new java.util.ArrayList<>();
+                            for (int k = 0; k < count; k++) candidates.add(lyricsCandidate(part, 7 + 6 * k));
+                            LyricsCandidate picked = LyricsMatcher.INSTANCE.pick(query, candidates);
+                            // indexOfFirst { it === picked }: by identity (a data class's equals would find an equal earlier one)
+                            int index = -1;
+                            for (int k = 0; k < count; k++) if (candidates.get(k) == picked) { index = k; break; }
+                            out.append(index);
+                        }
+                        default -> out.append("?");
+                    }
                     break;
                 }
                 case "C": {

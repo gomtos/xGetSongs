@@ -19,6 +19,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <bit>
 #include <cstdio>
 #include <iostream>
 #include <optional>
@@ -35,6 +36,8 @@
 #include "json/json.h"
 #include "log/log_redaction.h"
 #include "lyrics/lyrics_extractor.h"
+#include "lyrics/lyrics_matcher.h"
+#include "model/models.h"
 #include "tags/ffmetadata.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
@@ -309,6 +312,68 @@ QString answerA(const QStringList& fields) {
     return okHex(tags::renderFfmetadata(trackTags));
 }
 
+// ---- kind I ----
+// I tv title | I av artist -> OK <each variant as hex> (LyricsMatcher.titleVariants / artistVariants)
+// I norm text -> OK hex (LyricsMatcher.normalize)
+// I match <query> <candidate> -> 0 | 1 (LyricsMatcher.isMatch)
+// I pick <query> n <candidate>... -> the index of the candidate picked, -1 for none (LyricsMatcher.pick)
+// A query is 4 fields: artist title album durationSeconds (strings as hex, album "-" when absent, the duration in decimal or
+// "-"). A candidate is 6 fields: trackName artistName albumName duration instrumental plainLyrics (strings as hex or "-", the
+// duration as the 16 hex digits of the double's bits or "-", instrumental 0 | 1 | -).
+LyricsQuery lyricsQueryOf(const QStringList& fields, qsizetype at, bool& ok) {
+    LyricsQuery query{textOf(fields.at(at)), textOf(fields.at(at + 1)), unhex(fields.at(at + 2)), std::nullopt};
+    if (fields.at(at + 3) != u"-") {
+        bool parsed = false;
+        query.durationSeconds = fields.at(at + 3).toInt(&parsed);
+        ok = ok && parsed;
+    }
+    return query;
+}
+
+lyrics::LyricsCandidate lyricsCandidateOf(const QStringList& fields, qsizetype at, bool& ok) {
+    lyrics::LyricsCandidate candidate{unhex(fields.at(at)), unhex(fields.at(at + 1)), unhex(fields.at(at + 2)), std::nullopt,
+                                      std::nullopt, unhex(fields.at(at + 5))};
+    if (fields.at(at + 3) != u"-") {
+        bool parsed = false;
+        candidate.duration = std::bit_cast<double>(quint64(fields.at(at + 3).toULongLong(&parsed, 16)));
+        ok = ok && parsed && fields.at(at + 3).size() == 16;
+    }
+    const QString& instrumental = fields.at(at + 4);
+    if (instrumental == u"0" || instrumental == u"1") candidate.instrumental = instrumental == u"1";
+    else ok = ok && instrumental == u"-";
+    return candidate;
+}
+
+QString answerI(const QStringList& fields) {
+    if (fields.size() < 2) return QStringLiteral("?");
+    const QString& op = fields.at(0);
+    if (op == u"tv" || op == u"av") {
+        const QString value = textOf(fields.at(1));
+        QString answer = QStringLiteral("OK");
+        for (const QString& variant : op == u"tv" ? lyrics::titleVariants(value) : lyrics::artistVariants(value))
+            answer += u' ' + hexText(variant);
+        return answer;
+    }
+    if (op == u"norm") return okHex(lyrics::normalizeForMatching(textOf(fields.at(1))));
+    bool ok = true;
+    if (op == u"match") {
+        if (fields.size() != 11) return QStringLiteral("?");
+        const LyricsQuery query = lyricsQueryOf(fields, 1, ok);
+        const lyrics::LyricsCandidate candidate = lyricsCandidateOf(fields, 5, ok);
+        return ok ? flag(lyrics::isMatch(query, candidate)) : QStringLiteral("?");
+    }
+    if (op == u"pick") {
+        if (fields.size() < 6) return QStringLiteral("?");
+        const LyricsQuery query = lyricsQueryOf(fields, 1, ok);
+        qsizetype count = 0;
+        if (!numberOf(fields.at(5), count) || fields.size() != 6 + 6 * count) return QStringLiteral("?");
+        QList<lyrics::LyricsCandidate> candidates;
+        for (qsizetype i = 0; i < count; ++i) candidates.append(lyricsCandidateOf(fields, 6 + 6 * i, ok));
+        return ok ? QString::number(lyrics::pick(query, candidates)) : QStringLiteral("?");
+    }
+    return QStringLiteral("?");
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -339,6 +404,7 @@ void registerAnswers() {
     registerAnswer('V', answerV);
     registerAnswer('K', answerK);
     registerAnswer('A', answerA);
+    registerAnswer('I', answerI);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).
