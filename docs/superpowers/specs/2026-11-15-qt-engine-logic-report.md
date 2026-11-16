@@ -7,13 +7,53 @@
 
 환경: Windows 11 Home 10.0.26200, Visual Studio 2022(vcvars64), Qt 6.11.3, 정답 쪽 JVM은 `server/build/sidecar-image`의 OpenJDK 21.0.9와 그 안의 `engine.jar`·`shared-jvm.jar`·`kotlinx-serialization` jar. 창은 띄우지 않았고 네트워크도 쓰지 않았다. Gradle은 돌리지 않았다(사이드카 이미지가 이미 있었고, `run.ps1`의 오래된 오라클 검사가 통과했다).
 
-이 문서의 "관문 표"에 있는 숫자는 Task 8에서 관문 전체를 처음부터 한 번 돌린 결과다(깨끗한 릴리스·디버그 빌드, 두 빌드의 테스트, 두 점검 스크립트, 대조 네 번). 그 밖의 숫자(관찰 표, 변이 시험, Task별 대조 통계)는 각 Task가 자기 작업 중에 돌린 결과이고, 그 자리마다 "Task N의 실행"이라고 적었다. Task 8은 그것들을 다시 돌리지 않았다.
+이 문서의 "관문 표"에 있는 숫자와 "이번 관문 실행"이라고 적은 숫자는 **최종 리뷰를 반영한 뒤 관문 전체를 처음부터 다시 돌린 실행**(아래 "최종 리뷰 반영")의 결과다: 깨끗한 릴리스·디버그 빌드, 두 빌드의 테스트, 두 점검 스크립트, 대조 다섯 번(1만 건 seed 셋, 디버그 도구 자체 점검 한 번, 10만 건 한 번). 숫자는 모두 그 실행의 원본 출력(저장소 밖 작업 폴더 `.superpowers/sdd/2026-11-15-qt-engine-logic/gate/`, 단계마다 파일 하나)에서 옮겼다. 그 밖의 숫자(관찰 표, 변이 시험, Task별 대조 통계)는 각 Task가 자기 작업 중에 돌린 결과이고, 그 자리마다 "Task N의 실행"이라고 적었다. 최종 리뷰 반영은 그것들을 다시 돌리지 않았다(따로 적은 오라클 탐침만 새로 했다).
+
+## 읽는 법
+
+**Task 1~8**은 계획서의 여덟 Task다.
+
+| Task | 내용 |
+|---|---|
+| 1 | 기반: `xgs::kt`에 코드 포인트 글자 판정·NFKC·실수 파싱·ASCII 공백을 더하고 관문 도구를 일반화 |
+| 2 | 데이터 형(`models.h`) |
+| 3 | `xgs::json`: Kotlin이 받아들이는 JSON을 똑같이 받아들이는 파서 |
+| 4 | 오류 분류, 진행률 파싱, 동시 다운로드 수 |
+| 5 | 영상 정보 파일(`info.json`) 읽기 |
+| 6 | yt-dlp·ffmpeg 명령 조립과 태그 파일 |
+| 7 | 가사 후보 매칭 |
+| 8 | 관문과 이 보고서 |
+
+**대조 종류 글자**(생성기와 통계의 자세한 설명은 `qt/README.md`의 "대조 도구" 절). "표"는 사례 없이 두 쪽이 전수 표를 찍어 비교하는 종류다.
+
+| 글자 | 비교하는 것 | 단계 |
+|---|---|---|
+| `U` | 코드 포인트마다 `lowercase()`·`uppercase()`(표) | Q1 |
+| `X` | UTF-16 단위마다 글자 판정·대소문자(표) | Q1 |
+| `M` | 사용자 문구 상수 11개(표) | Q1 |
+| `S` | 문자열 함수(`trim`, 대소문자 무시 비교 등) | Q1 |
+| `C` | 입력 분류(`InputClassifier`) | Q1 |
+| `F`, `D`, `G` | 파일 이름, 폴더 이름, 저장 폴더 | Q1 |
+| `T` | 제목 파싱(`TitleParser`) | Q1 |
+| `L`, `Y` | 설명란 가사 추출, 가사 정리(`LyricsExtractor`) | Q1 |
+| `R`, `N` | 로그의 경로·파일 이름 가리기(`LogRedaction`) | Q1 |
+| `B` | 코드 포인트마다 `isLetterOrDigit`(표) | Q2a |
+| `Z` | 코드 포인트마다 NFKC(표) | Q2a |
+| `H` | 문자열의 NFKC | Q2a |
+| `O` | `toDoubleOrNull` | Q2a |
+| `J` | JSON 파싱(`parseToJsonElement`) | Q2a |
+| `E` | 오류 분류(`ErrorClassifier`) | Q2a |
+| `Q` | 진행률 파싱(`ProgressParser`) | Q2a |
+| `V` | 영상 정보 파일(`VideoInfoFile`) | Q2a |
+| `K` | yt-dlp·ffmpeg 명령 인자 목록 | Q2a |
+| `A` | 태그 파일(`Ffmetadata`) | Q2a |
+| `I` | 가사 후보 매칭(`LyricsMatcher`) | Q2a |
 
 ## 요약
 
-- 설계 §4의 Q2a 관문 두 조건(이식 대상 `engine` 테스트 157개가 같은 이름으로 모두 통과, 대조 불일치 0)은 이 PC에서 지금 코드로 돌린 범위에서 **충족됐다.** Q1의 관문(테스트 193개, Q1의 대조 종류)도 같은 실행에서 다시 충족됐다.
+- 설계 §4의 Q2a 관문 두 조건(이식 대상 `engine` 테스트 157개가 같은 이름으로 모두 통과, 대조 불일치 0)은 이 PC에서 지금 코드로 돌린 범위에서 **충족됐다.** Q1의 관문(테스트 193개, Q1의 대조 종류)도 같은 실행에서 다시 충족됐다. 최종 리뷰를 반영한 뒤 관문 전체를 다시 돌렸고, 디버그 빌드의 대조 도구가 생성된 사례에 릴리스와 똑같이 답하는지도 새로 보았다(차이 0).
 - 이식한 것: 오류 분류(`ErrorClassifier`), 진행률 파싱(`ProgressParser`), 영상 정보 파일 읽기(`VideoInfoFile`), yt-dlp·ffmpeg 명령 조립(`YtDlpCommands`, `FfmpegCommands`), 태그 파일 만들기(`TrackTags`, `Ffmetadata`), 동시 다운로드 수(`DownloadConcurrency`), 가사 후보 매칭(`LyricsMatcher`), 그리고 그것들이 쓰는 데이터 형(`ApiModels`의 도메인 형, `ToolPaths`, `LyricsQuery`). 기반으로 `xgs::kt`에 코드 포인트 글자 판정·NFKC·실수 파싱·ASCII 공백 판정을 더했고, `kotlinx.serialization`의 `Json.parseToJsonElement`와 같은 것을 받아들이는 읽기 전용 JSON 파서 `xgs::json`을 새로 만들었다.
-- **Kotlin과 일부러 다르게 한 것이 넷 있다**(아래 "Kotlin과 다르게 한 것"): 가사 매칭의 시그마(사용자 결정), JSON 배열 깊이 한계, 영상 ID 거절, 경로를 `Path` 대신 정리된 문자열로 받는 것. 둘째와 셋째는 실행 중에 controller가 정한 것이라 **사용자의 검토를 기다린다.**
+- **Kotlin과 일부러 다르게 한 것이 넷 있다**(아래 "Kotlin과 다르게 한 것"): 가사 매칭의 시그마(사용자 결정), JSON 배열 깊이 한계, 영상 ID 거절, 경로를 `Path` 대신 정리된 문자열로 받는 것. 둘째와 셋째는 실행 중에 controller가 정한 것이라 **사용자의 검토를 기다린다**(아래 "사용자가 정할 것").
 - Kotlin 쪽에서 버그로 보이는 동작을 여럿 그대로 따랐다(아래 "고치지 않은 Kotlin 쪽 동작"). 바꿀지는 사용자가 정한다.
 - 이 진술 밖에 있는 것: 프로세스 실행·도구 찾기·실제 yt-dlp·ffmpeg(Q2b), LRCLIB(Q2c), 작업·동시성·취소(Q2d), 구글 가사(Q3), 다른 Qt·JVM 버전, 아래 "확인하지 못한 것".
 
@@ -21,35 +61,37 @@
 
 ### 빌드
 
-`build/qt`, `build/qt-debug`, 그 안의 `vcpkg_installed`, `C:\dev\vcpkg`는 지우지 않았다. VS 2022 vcvars64 안에서(`VCPKG_ROOT=C:\dev\vcpkg`) 빌드마다 한 명령으로 `cmake --preset <프리셋> -S qt`, `cmake --build <폴더> --target clean`, `cmake --build <폴더>`를 이어 돌렸다. 둘 다 종료 코드 0이다.
+`build/qt`, `build/qt-debug`, 그 안의 `vcpkg_installed`, `C:\dev\vcpkg`는 지우지 않았다. VS 2022 vcvars64 안에서(`VCPKG_ROOT=C:\dev\vcpkg`) 빌드마다 한 명령으로 `cmake --build <폴더> --target clean`, `cmake --preset <프리셋> -S qt`, `cmake --build <폴더>`를 이어 돌렸다(릴리스 다음 디버그). 둘 다 종료 코드 0이다(원본: `gate/01-clean-build-release.txt`, `01-clean-build-debug.txt`).
 
 | 항목 | 릴리스(`qt-release`, `build/qt`) | 디버그(`qt-debug`, `build/qt-debug`) |
 |---|---|---|
-| clean | `Cleaning... 73 files.` | `Cleaning... 73 files.` |
-| 구성 | `Configuring done (7.2s)`, `Generating done (0.6s)` | `Configuring done (7.1s)`, `Generating done (0.6s)` |
+| clean | `Cleaning... 73 files.` | `Cleaning... 72 files.`(그 전에 `tst_models`의 RED를 보려고 디버그에서 따로 빌드하다 컴파일이 실패해 파일 하나가 없었다) |
+| 구성 | `Configuring done (7.7s)`, `Generating done (0.6s)` | `Configuring done (7.1s)`, `Generating done (0.6s)` |
 | 빌드 단계 | `[1/92]`~`[92/92]` 모두 실행 | `[1/92]`~`[92/92]` 모두 실행 |
 | 경고 | 컴파일러 경고 0(`/W4 /WX`). 출력의 경고는 Qt의 CMake 매크로(`Qt6CoreMacros.cmake`)가 구성 때 낸 `CMake Warning` 하나뿐 | 같음 |
-| 걸린 시간 | 재지 않았다 | 구성·clean·빌드 합쳐 47초(00:13:35~00:14:22) |
+| 걸린 시간 | clean·구성·빌드 합쳐 약 49초(00:57:32~00:58:21) | 약 49초(00:58:21~00:59:10) |
 
 Qt는 다시 빌드되지 않았다.
 
 ### 테스트
 
-릴리스 `ctest --test-dir build/qt --output-on-failure`: `100% tests passed, 0 tests failed out of 17`(Total 2.20 sec).
-디버그 `ctest --test-dir build/qt-debug --output-on-failure`: `100% tests passed, 0 tests failed out of 17`(Total 26.05 sec). Qt의 단언과 `QString`/`QList` 범위 검사가 켜진 빌드다.
+릴리스 `ctest --test-dir build/qt --output-on-failure`: `100% tests passed, 0 tests failed out of 17`(Total 2.17 sec).
+디버그 `ctest --test-dir build/qt-debug --output-on-failure`: `100% tests passed, 0 tests failed out of 17`(Total 19.37 sec). Qt의 단언과 `QString`/`QList` 범위 검사가 켜진 빌드다.
 
-릴리스 실행 파일마다 `-o <파일>,txt`로 얻은 `Totals:` 줄과 `-functions`로 센 테스트 함수 수:
+(관문 스크립트의 첫 `ctest`는 vcvars 밖에서 불려 `ctest`를 찾지 못했다. 코드는 그대로인 채 vcvars64 안에서 두 `ctest`를 다시 돌렸고, 그때 대조 실행이 뒤에서 함께 돌고 있었다. 위 숫자는 그 다시 돌린 것이다. 아래 실행 파일별 결과는 빌드 직후, 대조 전에 얻었다.)
+
+릴리스 실행 파일마다 `-o <파일>,txt`로 얻은 `Totals:` 줄과 `-functions`로 센 테스트 함수 수(원본: `gate/qttest-release/`; 디버그의 `gate/qttest-debug/`도 실행 파일마다 같은 통과 수, 실패 0이다):
 
 | 실행 파일 | 통과 | 실패 | 테스트 함수 | 그중 |
 |---|---|---|---|---|
 | `tst_smoke` | 3 | 0 | 1 | 연기 시험 |
-| `tst_kt_text` | 62 | 0 | 22 | `xgs::kt` 단위 시험(Q1의 16 + Q2a의 6), Kotlin 짝 없음 |
+| `tst_kt_text` | 68 | 0 | 22 | `xgs::kt` 단위 시험(Q1의 16 + Q2a의 6), Kotlin 짝 없음. 최종 리뷰 반영에서 데이터 행 6개 추가 |
 | `tst_input_classifier` | 17 | 0 | 15 | Q1 `InputClassifierTest` 15 |
 | `tst_filename_formatter` | 41 | 0 | 39 | Q1 `FilenameFormatterTest` 39 |
 | `tst_title_parser` | 44 | 0 | 42 | Q1 `TitleParserTest` 41 + 추가 1 |
 | `tst_lyrics_extractor` | 69 | 0 | 67 | Q1 `LyricsExtractorTest` 66 + 추가 1 |
 | `tst_log_redaction` | 35 | 0 | 33 | Q1 `LogRedactionTest` 32 + 추가 1 |
-| `tst_models` | 5 | 0 | 3 | 데이터 형, Kotlin 짝 없음 |
+| `tst_models` | 7 | 0 | 5 | 데이터 형, Kotlin 짝 없음. 최종 리뷰 반영에서 슬롯 2개 추가 |
 | `tst_json` | 201 | 0 | 8 | `xgs::json`, Kotlin 짝 없음(데이터 시험 행 포함) |
 | `tst_error_classifier` | 15 | 0 | 13 | `ErrorClassifierTest` 13 |
 | `tst_progress_parser` | 9 | 0 | 7 | `ProgressParserTest` 7 |
@@ -59,13 +101,13 @@ Qt는 다시 빌드되지 않았다.
 | `tst_ffmpeg_commands` | 6 | 0 | 4 | `FfmpegCommandsTest` 4 |
 | `tst_ffmetadata` | 21 | 0 | 19 | `FfmetadataTest` 19 |
 | `tst_lyrics_matcher` | 64 | 0 | 62 | `LyricsMatcherTest` 61 + 추가 1 |
-| **합계** | **653** | **0** | **390** | 이식 350(Q1 193 + Q2a 157) + 추가 6 + Kotlin 짝 없는 34 |
+| **합계** | **661** | **0** | **392** | 이식 350(Q1 193 + Q2a 157) + 추가 6 + Kotlin 짝 없는 36 |
 
 통과 수가 함수 수보다 많은 것은 Qt Test가 실행 파일마다 `initTestCase`와 `cleanupTestCase`를 통과로 세고(17개 × 2) 데이터 시험을 행마다 세기 때문이다. Q2a의 157 = 13 + 7 + 3 + 40 + 10 + 4 + 19 + 61로 계획의 수와 같다.
 
-시간 한도가 있는 시험 셋(1MB 설명란 추출, 부분 5000개 경로 가리기, 10MB `info.json` 읽기)과 `tst_json`의 10MB 문서 시험은 한도를 최적화 빌드(`NDEBUG`)에서만 확인한다. 이번 릴리스 실행에서 `tst_video_info_file` 전체가 494 ms, `tst_json` 전체가 512 ms였다(`Totals:` 줄). 각 시험 하나의 시간은 따로 찍지 않는다.
+시간 한도가 있는 시험 셋(1MB 설명란 추출, 부분 5000개 경로 가리기, 10MB `info.json` 읽기)과 `tst_json`의 10MB 문서 시험은 한도를 최적화 빌드(`NDEBUG`)에서만 확인한다. 이번 릴리스 실행에서 `tst_video_info_file` 전체가 529 ms, `tst_json` 전체가 577 ms였다(`Totals:` 줄). 각 시험 하나의 시간은 따로 찍지 않는다.
 
-### 이름 대조 (`pwsh qt/tools/test-names.ps1`, 종료 코드 0)
+### 이름 대조 (`pwsh qt/tools/test-names.ps1`, 종료 코드 0, 원본 `gate/04-test-names.txt`)
 
 ```
 InputClassifierTest: Kotlin 15, Qt 15, missing 0, added 0
@@ -84,20 +126,20 @@ LyricsMatcherTest: Kotlin 61, Qt 62, missing 0, added 1 (sigmaFormsAreTheSameLet
 PASSED: every Kotlin test name is a Qt test name in 13 classes; only the 6 intended names were added
 ```
 
-Q2a가 더한 이름 셋: `readsATenMegabyteInfoFileQuickly`(10MB `info.json`을 3초 안에 읽는다, 계획에 있던 것), `downloadRejectsAVideoIdThatIsNotAPlainFileNamePart`(아래 "영상 ID 거절"), `sigmaFormsAreTheSameLetterInMatching`(아래 "시그마"). 이 스크립트는 이름만 대조한다. 단언이 Kotlin과 같은지는 각 Task의 구현자와 리뷰어가 보았고 Task 8은 다시 보지 않았다.
+`tst_models`의 새 슬롯 둘은 Kotlin 짝이 없고 `tst_models`가 `test-classes.json`에 없으므로 이 대조와 상관없다(위 출력이 그대로다). Q2a가 더한 이름 셋: `readsATenMegabyteInfoFileQuickly`(10MB `info.json`을 3초 안에 읽는다, 계획에 있던 것), `downloadRejectsAVideoIdThatIsNotAPlainFileNamePart`(아래 "영상 ID 거절"), `sigmaFormsAreTheSameLetterInMatching`(아래 "시그마"). 이 스크립트는 이름만 대조한다. 단언이 Kotlin과 같은지는 각 Task의 구현자와 리뷰어가 보았고 Task 8은 다시 보지 않았다.
 
-### 금지 호출 (`pwsh qt/tools/forbidden-calls.ps1`, 종료 코드 0)
+### 금지 호출 (`pwsh qt/tools/forbidden-calls.ps1`, 종료 코드 0, 원본 `gate/05-forbidden-calls.txt`)
 
 ```
 looked at 33 files under qt/core for the Q1 list (kt_text.* and kt_tables.inc excluded), 36 for the Q2a list, and 68 text files under qt/ (qt/spike excluded)
 PASSED: 0 hits
 ```
 
-Q1 목록(`QChar`/`QString`의 공백·글자·숫자·대소문자 함수, `trimmed`, `simplified`, `QRegularExpression`, `QLocale` 등)과 Q2a 목록(Qt의 JSON 클래스 넷, `toDouble(`·`toInt(`·`toLongLong(`, 실수 형식을 준 `QString::number(`, `normalized(`, 경로 정리 함수 `cleanPath`·`absoluteFilePath`·`absolutePath`·`canonicalPath`·`canonicalFilePath`), 그리고 `qt/`의 모든 텍스트 파일에서 JDK 내부 이름을 찾았고 0건이다. 예외는 `kt::nfkc`를 구현하는 `kt_text.cpp`의 `normalized(` 하나다. 경로 정리 패턴은 계획의 `canonical*`이 아니라 Qt 멤버 이름으로 좁혔다(우리 코드의 `ParsedInput::canonicalUrl`이 걸리지 않게; 아래 "계획과 달라진 것").
+Q1 목록(`QChar`/`QString`의 공백·글자·숫자·대소문자 함수, `trimmed`, `simplified`, `QRegularExpression`, `QLocale` 등)과 Q2a 목록(Qt의 JSON 클래스 넷, `toDouble(`·`toInt(`·`toLongLong(`과 최종 리뷰 반영에서 더한 `toUInt(`·`toLong(`·`toULong(`·`toULongLong(`·`toShort(`·`toUShort(`·`toFloat(`·`setNum(`, 실수 형식을 준 `QString::number(`, `normalized(`, 경로 정리 함수 `cleanPath`·`absoluteFilePath`·`absolutePath`·`canonicalPath`·`canonicalFilePath`), 그리고 `qt/`의 모든 텍스트 파일에서 JDK 내부 이름을 찾았고 0건이다. 예외는 `kt::nfkc`를 구현하는 `kt_text.cpp`의 `normalized(` 하나다. 경로 정리 패턴은 계획의 `canonical*`이 아니라 Qt 멤버 이름으로 좁혔다(우리 코드의 `ParsedInput::canonicalUrl`이 걸리지 않게; 아래 "계획과 달라진 것").
 
 ### 대조 (`pwsh qt/tools/differential/run.ps1`)
 
-네 번의 실행이다. 모두 모든 종류 `UXMSCFDGTLYRNBZHOJEQVKAI`(Q1의 13개와 Q2a의 11개)를 한 번의 호출로 돌렸다. 앞의 셋은 `-PerKind 10000`, 넷째는 `-PerKind 100000 -Seed 424242`다. 네 실행 모두 오래된 오라클 검사를 통과했고 종료 코드 0, 마지막 줄은 `PASSED (kinds UXMSCFDGTLYRNBZHOJEQVKAI, <건수> cases per case kind, seed <seed>)`다. 표의 칸은 "사례 수(표 종류는 코드 포인트·단위·상수 수), 불일치 수"다.
+오라클과 비교하는 네 번의 실행과 디버그 도구 자체 점검 한 번(아래)이다. 모두 모든 종류 `UXMSCFDGTLYRNBZHOJEQVKAI`(Q1의 13개와 Q2a의 11개)를 한 번의 호출로 돌렸다. 앞의 셋은 `-PerKind 10000`, 넷째는 `-PerKind 100000 -Seed 424242`다. 네 실행 모두 오래된 오라클 검사를 통과했고 종료 코드 0, 마지막 줄은 `PASSED (kinds UXMSCFDGTLYRNBZHOJEQVKAI, <건수> cases per case kind, seed <seed>)`다(원본: `gate/06-diff-10000-seed20261115.txt`, `07-diff-10000-seed1.txt`, `08-diff-10000-seed987654321.txt`, `10-diff-100000-seed424242.txt`). 표의 칸은 "사례 수(표 종류는 코드 포인트·단위·상수 수), 불일치 수"다.
 
 | 종류 | 10000 seed 20261115 | 10000 seed 1 | 10000 seed 987654321 | 100000 seed 424242 |
 |---|---|---|---|---|
@@ -126,7 +168,7 @@ Q1 목록(`QChar`/`QString`의 공백·글자·숫자·대소문자 함수, `tri
 | A | 10000건, 0 | 10000, 0 | 10000, 0 | 100000, 0 |
 | I | 10000건, 0 | 10000, 0 | 10000, 0 | 100000, 0 |
 | **불일치 합계** | **0** | **0** | **0** | **0** |
-| 걸린 시간 | 111초(00:15:42~00:17:33) | 116초 | 121초 | 653초(00:21:31~00:32:24) |
+| 걸린 시간 | 110초(01:00:57~01:02:47) | 114초 | 113초 | 670초(01:10:24~01:21:34) |
 
 모든 실행이 통계 문턱을 넘었다. 각 실행의 출력에는 `(needs …)`가 붙은 통계 줄이 194개 있다(보여 주기만 하는 줄 포함). 문턱은 낮추지 않았다. 측정값을 문턱으로 나눈 값이 가장 작은 셋:
 
@@ -151,7 +193,13 @@ Q2a 종류의 통계(100000건, seed 424242, `run.ps1` 출력에서 옮김; 괄�
 | A | 역슬래시로 이스케이프된 글자가 든 답 99.0% (40%), 전각 역슬래시 82.9% (5%), 제어 문자가 지워진 사례 76.0% (10%) |
 | I | op `tv` 19.1%, `av` 19.3%, `norm` 16.9%, `match` 23.8%, `pick` 20.9% (각 15%); `match` 답 1 24.7% (20%)·0 75.3% (30%); `pick` 답 -1 37.2%·0이 아닌 인덱스 42.0% (각 15%); `tv` 변형 1~4개 22.3/40.1/30.0/6.7% (각 5%); `av` 변형 3개 25.5% (5%); 버전 낱말 43.9% (20%); 낱말이 아닌 부분 문자열 가수 짝 10.3% (5%); NaN 길이 후보가 든 `pick` 36.7% (10%); `Σσς`가 든 사례 0건 (0) |
 
-`R`과 `N`의 누설 방향 진단(C++ 답이 Kotlin 답보다 덜 가린 사례)은 네 실행 모두 0이다. `S`의 `lower`는 Q1대로 입력에 `Σ`가 있을 때만 끝 시그마 꼴을 접어 비교한다. 다른 종류는 접지 않는다.
+`R`과 `N`의 누설 방향 진단(C++ 답이 Kotlin 답보다 덜 가린 사례)은 네 실행 모두 0이다. 생성기가 결정적이라 이 숫자들은 최종 리뷰 반영 전(Task 8)의 관문 실행과 같다(고친 코드는 사례도 답도 바꾸지 않았다). `S`의 `lower`는 Q1대로 입력에 `Σ`가 있을 때만 끝 시그마 꼴을 접어 비교한다. 다른 종류는 접지 않는다.
+
+### 디버그 도구 자체 점검 (`run.ps1 -PerKind 10000 -Seed 20261115 -DebugTool`, 종료 코드 0)
+
+최종 리뷰 반영에서 더한 단계다. 위의 보통 비교에 더해, 종류마다 같은 사례 파일(표 종류 `U X M B Z`는 같은 표 모드)을 디버그 빌드의 `build/qt-debug/xgs-diff.exe`에도 주고 그 답이 릴리스 도구의 답과 줄마다 같은지 본다(오라클은 끼지 않는다). 디버그 빌드에서는 Qt의 단언과 `QString`/`QList` 범위 검사가 켜져 있으므로, 생성된 사례 전부가 그 검사를 지난다. 디버그 실행 파일이 없거나 릴리스 것보다 오래됐으면 실패한다(이 두 경우는 손으로 확인했다).
+
+결과(원본 `gate/09-diff-10000-seed20261115-debugtool.txt`, 232초, 01:06:33~01:10:24): 24개 종류 모두 `debug tool <줄 수> lines, 0 differences from the release tool`이고 디버그 도구가 0이 아닌 코드로 끝난 적이 없다. 줄 수는 `U`·`B`·`Z` 1,112,064, `X` 65,536, `M` 11, 나머지 종류 10,000이다. 같은 실행의 오라클 비교도 불일치 0, 통계 줄 194개 모두 문턱을 넘었다. 마지막 줄 `PASSED (kinds UXMSCFDGTLYRNBZHOJEQVKAI, 10000 cases per case kind, seed 20261115, debug tool identical to the release tool)`.
 
 ## `xgs::kt`에 더한 것
 
@@ -501,7 +549,7 @@ Task 3이 구현 전에(그리고 대조가 불일치를 하나 찾은 뒤에) �
 
 ## 변이 시험 (각 Task의 실행)
 
-이식 코드를 일부러 틀리게 고쳐 대조가 잡는지 본 것이다. 모두 시험 뒤 되돌렸고 커밋에 없다. Task 8은 다시 하지 않았다. 숫자는 seed 20261115, 1만 건에서의 불일치 수다(Task 7의 수정 뒤 넷은 seed 1도 적었다).
+이식 코드를 일부러 틀리게 고쳐 대조가 잡는지 본 것이다. 모두 시험 뒤 되돌렸고 커밋에 없다. Task 8과 최종 리뷰 반영은 다시 하지 않았다. 숫자는 seed 20261115, 1만 건에서의 불일치 수다(Task 7의 수정 뒤 넷은 seed 1도 적었다).
 
 | Task | 대상 | 변이 수 | 잡힘 | 계획의 최소 |
 |---|---|---|---|---|
@@ -509,7 +557,7 @@ Task 3이 구현 전에(그리고 대조가 불일치를 하나 찾은 뒤에) �
 | 3 | `xgs::json` | 14 | 14 | 8 |
 | 4 | 오류 분류·진행률 | 13 | 13 | 6 |
 | 5 | 영상 정보 파일 | 13 | 13 | 8 |
-| 6 | 명령 조립·태그 파일 | 14 + 1 | 15 | 8 |
+| 6 | 명령 조립·태그 파일 | 15(Task가 고른 14 + 영상 ID 검사를 끈 1) | 15 | 8 |
 | 7 | 가사 매칭 | 26 | 23 | 12(목록의 14개 모두) |
 | 합계 | | 84 | 81 | |
 
@@ -524,15 +572,15 @@ Task 3이 구현 전에(그리고 대조가 불일치를 하나 찾은 뒤에) �
 
 ## 계획의 Review Focus: 테스트 157개 밖의 실제 입력
 
-계획이 "테스트가 다루지 않지만 실제로 만날 입력"으로 든 다섯 갈래다. 이번 관문 실행의 숫자는 1만 건 seed 20261115의 것이고(다른 seed도 문턱을 넘었다, 위 "대조"), 그 밖은 표시한 Task의 실행이다.
+계획이 "테스트가 다루지 않지만 실제로 만날 입력"으로 든 다섯 갈래다. 칸 안의 백분율과 건수는 앞에 붙인 이름표가 출처다: **"관문 1만 건 seed 20261115:"**는 이번 관문 실행 중 1만 건 seed 20261115 실행의 통계 줄(다른 seed도 문턱을 넘었다, 위 "대조"), **"Task N의 실행:"**은 그 Task가 작업 중에 돌린 것이다.
 
 | 갈래 | 지키는 것 | 찾은 것 |
 |---|---|---|
-| 1. 표준이 아닌 JSON(따옴표 없는 `NaN`·`Infinity`, 중복 키, 깊은 중첩, 잘못된 이스케이프, 짝 없는 서로게이트 이스케이프) | 종류 `J`(`xgs::json`), 종류 `V`(그 위의 `info.json` 읽기), `tst_json` | Kotlin은 이런 것을 대부분 받아들인다(위 목록). 그래서 `NaN`이 하나 있어도 앨범·설명을 잃지 않는다. 대조가 C++ 버그 하나(`]`가 쉼표처럼 동작)를 찾아 고쳤다(Task 3). 깊은 배열은 일부러 다르게 했다(아래 2번). 이번 실행: `J`의 비표준 리터럴이 든 성공 28.9%, 중복 키 28.9%, 서로게이트 이스케이프 30.0%, 틀린 이스케이프 12.1%, 1000단 이상 0.6%, 배열 60000단 17건, 불일치 0 |
-| 2. UTF-8이 아닌 바이트, BOM, 빈 파일, 아주 큰 파일 | 종류 `V`의 생성기(UTF-8이 아닌 열 8%, BOM 3%, UTF-16 3%, 드물지만 올바른 열 8%, 빈 파일 2%), `readsATenMegabyteInfoFileQuickly`(10MB, 3초 한도, 릴리스에서만 확인) | 잘못된 UTF-8은 두 쪽 모두 "모두 없음"이다. Qt의 `QStringDecoder`가 너무 긴 꼴, 서로게이트(CESU), U+10FFFF 너머, 잘린 열에서 JVM과 같았다(Task 5의 관찰). BOM으로 시작하는 파일은 Kotlin이 모두 없음으로 읽고 C++도 따른다(아래 "고치지 않은 Kotlin 쪽 동작" 1번). 이번 실행: `V`의 UTF-8 아닌 입력 11.9%, BOM으로 시작 3.2%, 불일치 0, Kotlin이 던진 사례 0. 10MB 시험은 이번 릴리스·디버그 테스트에서 통과했다 |
-| 3. 자모가 풀린 한글, 전각 문자, 결합 문자의 정규화 | 표 `Z`(코드 포인트 전수 NFKC), 종류 `H`(무작위 문자열), 종류 `I`의 생성기(전각, 자모로 풀린 한글, 결합 문자, `H`의 재료) | Qt의 유니코드 판(17.0)을 그대로 쓰면 JVM(15.0)과 다르다. 판 인자로 맞췄다(위 "`xgs::kt`에 더한 것"). 이번 실행: `Z` 1,112,064개 불일치 0, `H`의 한글 자모가 든 입력 58.4%, 결합 문자 62.3%, 불일치 0 |
-| 4. 숫자가 아닌 진행률 필드(`NA`, 빈 문자열, `1e3`, `0x10`, `Infinity`, 앞뒤 공백)와 0·음수 전체 크기 | 종류 `O`(`toDoubleOrNull`), 종류 `Q`(그 생성기의 값을 필드에 넣음) | Kotlin의 문법(16진은 `p` 지수가 있어야 함, 앞뒤 U+0020 이하만 무시 등)을 그대로 따랐다. 백분율이 NaN이 되는 경우 Kotlin의 `coerceIn`이 NaN을 남기는 것까지 같다(Task 4: 10만 건 중 94건이 NaN, 두 부호). 이번 실행: `O`의 NULL 39.3%, 무한·NaN 13.2%, `Q`의 `NULL` 27.9%, `P -` 23.1%, 값 49.0%, 불일치 0 |
-| 5. 태그 값 속의 제어 문자·줄바꿈·끝의 역슬래시 | 종류 `A`(값의 60%에 `= ; # \`·LF·CR·탭·NUL·U+001B·U+007F를 1~3개, 25%는 끝에 `\` 1~3개) | 줄바꿈과 특수 글자는 역슬래시로 이스케이프되고, 탭·LF·CR이 아닌 U+0020 미만 제어 문자는 지워지며, 끝의 `\` 연속은 같은 수의 전각 역슬래시(U+FF3C)가 된다. 그래서 값이 다른 태그를 끼워 넣을 수 없다. 두 쪽이 같다. 이번 실행: 이스케이프된 글자가 든 답 99.0%, 전각 역슬래시 82.9%, 제어 문자가 지워진 사례 75.2%, 불일치 0 |
+| 1. 표준이 아닌 JSON(따옴표 없는 `NaN`·`Infinity`, 중복 키, 깊은 중첩, 잘못된 이스케이프, 짝 없는 서로게이트 이스케이프) | 종류 `J`(`xgs::json`), 종류 `V`(그 위의 `info.json` 읽기), `tst_json` | Kotlin은 이런 것을 대부분 받아들인다(위 목록). 그래서 `NaN`이 하나 있어도 앨범·설명을 잃지 않는다. 대조가 C++ 버그 하나(`]`가 쉼표처럼 동작)를 찾아 고쳤다(Task 3). 깊은 배열은 일부러 다르게 했다(아래 2번). 관문 1만 건 seed 20261115: `J`의 비표준 리터럴이 든 성공 28.9%, 중복 키 28.9%, 서로게이트 이스케이프 30.0%, 틀린 이스케이프 12.1%, 1000단 이상 0.6%, 배열 60000단 17건, 불일치 0 |
+| 2. UTF-8이 아닌 바이트, BOM, 빈 파일, 아주 큰 파일 | 종류 `V`의 생성기(UTF-8이 아닌 열 8%, BOM 3%, UTF-16 3%, 드물지만 올바른 열 8%, 빈 파일 2%), `readsATenMegabyteInfoFileQuickly`(10MB, 3초 한도, 릴리스에서만 확인) | 잘못된 UTF-8은 두 쪽 모두 "모두 없음"이다. Qt의 `QStringDecoder`가 너무 긴 꼴, 서로게이트(CESU), U+10FFFF 너머, 잘린 열에서 JVM과 같았다(Task 5의 관찰). BOM으로 시작하는 파일은 Kotlin이 모두 없음으로 읽고 C++도 따른다(아래 "고치지 않은 Kotlin 쪽 동작" 1번). 관문 1만 건 seed 20261115: `V`의 UTF-8 아닌 입력 11.9%, BOM으로 시작 3.2%, 불일치 0, Kotlin이 던진 사례 0. 10MB 시험은 이번 릴리스·디버그 테스트에서 통과했다 |
+| 3. 자모가 풀린 한글, 전각 문자, 결합 문자의 정규화 | 표 `Z`(코드 포인트 전수 NFKC), 종류 `H`(무작위 문자열), 종류 `I`의 생성기(전각, 자모로 풀린 한글, 결합 문자, `H`의 재료) | Qt의 유니코드 판(17.0)을 그대로 쓰면 JVM(15.0)과 다르다. 판 인자로 맞췄다(위 "`xgs::kt`에 더한 것"). 관문 1만 건 seed 20261115: `Z` 1,112,064개 불일치 0, `H`의 한글 자모가 든 입력 58.4%, 결합 문자 62.3%, 불일치 0 |
+| 4. 숫자가 아닌 진행률 필드(`NA`, 빈 문자열, `1e3`, `0x10`, `Infinity`, 앞뒤 공백)와 0·음수 전체 크기 | 종류 `O`(`toDoubleOrNull`), 종류 `Q`(그 생성기의 값을 필드에 넣음) | Kotlin의 문법(16진은 `p` 지수가 있어야 함, 앞뒤 U+0020 이하만 무시 등)을 그대로 따랐다. 백분율이 NaN이 되는 경우 Kotlin의 `coerceIn`이 NaN을 남기는 것까지 같다(Task 4의 실행: 10만 건 중 94건이 NaN, 두 부호). 관문 1만 건 seed 20261115: `O`의 NULL 39.3%, 무한·NaN 13.2%, `Q`의 `NULL` 27.9%, `P -` 23.1%, 값 49.0%, 불일치 0 |
+| 5. 태그 값 속의 제어 문자·줄바꿈·끝의 역슬래시 | 종류 `A`(값의 60%에 `= ; # \`·LF·CR·탭·NUL·U+001B·U+007F를 1~3개, 25%는 끝에 `\` 1~3개) | 줄바꿈과 특수 글자는 역슬래시로 이스케이프되고, 탭·LF·CR이 아닌 U+0020 미만 제어 문자는 지워지며, 끝의 `\` 연속은 같은 수의 전각 역슬래시(U+FF3C)가 된다. 그래서 값이 다른 태그를 끼워 넣을 수 없다. 두 쪽이 같다. 관문 1만 건 seed 20261115: 이스케이프된 글자가 든 답 99.0%, 전각 역슬래시 82.9%, 제어 문자가 지워진 사례 75.2%, 불일치 0 |
 
 ## Kotlin과 다르게 한 것
 
@@ -576,14 +624,12 @@ Task 3이 구현 전에(그리고 대조가 불일치를 하나 찾은 뒤에) �
 | `:` 혼자 | 던짐 | 던짐 |
 | `a:b` | `a:b.%(ext)s`(드라이브 상대 경로로 읽혀 출력 폴더가 사라짐) | 던짐 |
 | `a*b`, `a?b`, `a"b`, `a<b`, `a>b`, `a|b`(혼자일 때도) | 던짐 | 던짐 |
-| U+0001 혼자, U+0001 두 개 | 받음 | 던짐 |
-| U+0009~000D 혼자 | 던짐 | 던짐 |
-| `a`+U+0001, U+0001+`a` 등 다른 글자와 함께인 제어 문자 | 던짐 | 던짐 |
+| U+0000~001F가 든 ID(혼자, 둘, 다른 글자와 함께; 최종 리뷰 반영의 탐침) | 던짐 | 던짐 |
 | `a `, `a.` | 받음(`C:\out\a .%(ext)s`, `C:\out\a..%(ext)s`) | 받음 |
 | U+007F가 든 ID | 받음 | 받음 |
 | `dQw4w9WgXcQ`, `a_b-c` | 받음 | 받음 |
 
-C++이 더 엄격한 곳은 빈 ID, `\`, `/`, ID 안의 `:`, 그리고 Kotlin이 받는 제어 문자(혼자이거나 제어 문자로만 된 ID)다. 실제 영상 ID는 `[A-Za-z0-9_-]` 11자라서 정상 사용에서는 차이가 없다. 이 판단이 틀리면, 그런 글자가 든 정상 ID가 내려받기 전에 크게 실패한다. C++ 전용 테스트 `downloadRejectsAVideoIdThatIsNotAPlainFileNamePart`가 이 규칙을 고정한다. 대조 생성기는 Kotlin도 던지는 글자는 그대로 넣어 두 쪽의 `ERR`을 비교하고, C++만 던지는 입력만 바꾼다(빈 ID는 `id`로, `\ / :`는 지우고, 영문자·숫자가 없는 ID의 제어 문자는 지운다).
+C++이 더 엄격한 곳은 빈 ID, `\`, `/`, ID 안의 `:`다. 이 보고서의 앞 판은 "U+0001 혼자, U+0001 두 개"를 Kotlin이 받는다고 적었으나(Task 6의 기록), 최종 리뷰 반영에서 다시 물으니 Kotlin은 U+0000~001F가 든 ID를 모두 거절했다: 오라클 종류 `K`의 `dl`로 U+0000~001F 32개 각각을 혼자, 그리고 `-`·`_`·` x`·`é`·`가`·공백과 앞뒤로 붙여 458건 모두 `ERR`(C++도 모두 `ERR`), JVM에서 `YtDlpCommands.download`를 직접 불러도 U+0001, U+0001 두 개, U+0009, U+000A, U+000D, U+001F, U+0000이 모두 `InvalidPathException`이었다. 그래서 제어 문자에서는 두 쪽이 같고 C++이 더 엄격하지 않다. 실제 영상 ID는 `[A-Za-z0-9_-]` 11자라서 정상 사용에서는 차이가 없다. 이 판단이 틀리면, 그런 글자가 든 정상 ID가 내려받기 전에 크게 실패한다. C++ 전용 테스트 `downloadRejectsAVideoIdThatIsNotAPlainFileNamePart`가 이 규칙을 고정한다. 대조 생성기는 Kotlin도 던지는 글자는 그대로 넣어 두 쪽의 `ERR`을 비교하고, C++만 던지는 입력만 바꾼다(빈 ID는 `id`로, `\ / :`는 지운다). 영문자·숫자가 없는 ID의 제어 문자도 지우는데, 위 탐침으로 보면 필요 없는 제외다(아래 "남은 사소한 것").
 
 ### 4. 경로는 이미 정리된 문자열로 받는다 (계획 결정)
 
@@ -625,7 +671,7 @@ Q1 보고서의 "고치지 않은 Kotlin 쪽 동작" 일곱 가지와 최종 리
 - **각 Task의 진술.** Task 1, 3, 4, 5, 6, 7의 구현자는 각자 보고서에 OpenJDK 소스와 `kotlinx.serialization` 소스를 보지 않았고 기억에서 옮겨 쓰지 않았다고 적었다. Task 1은 Kotlin 표준 라이브러리 소스도 보지 않았다고 적었고, Task 7은 `java.util.regex`의 소스도 보지 않았다고 적었다. Task 2(데이터 형)의 보고서에는 이 진술이 없다. Task 2는 Kotlin 파일 `ApiModels.kt`의 필드를 구조체로 옮긴 일이고 JDK나 kotlinx의 동작에 기대는 코드가 없다. Task 8(이 보고서)도 JDK·kotlinx 소스를 보지 않았다.
 - **근거.** 동작은 이식 대상 Kotlin 파일과 테스트, 공개 문서(`Double.valueOf(String)`의 문법, Java 21 `Character`의 유니코드 15.0, `java.text.Normalizer` API, `java.util.regex.Pattern`의 Javadoc, Kotlin `roundToLong`의 문서, Qt 문서), 그리고 오라클이 공개 API로 관찰한 JVM·kotlinx의 답으로만 정했다. 탐침 프로그램은 공개 API만 불렀고 저장소에 넣지 않았다.
 - **`xgs::json`과 `kotlinx.serialization`.** `xgs::json`의 구조(명시적 스택, 객체의 키 색인, 재귀 없는 소멸·복사·덤프)는 Task 3의 설계이고, 무엇을 받아들이는지는 위 관찰 표, 한 단위씩 훑기, 깊이 탐침, 대조 종류 `J`의 답과 공개된 JSON 문법으로 정했다. kotlinx의 코드는 옮기지 않았다.
-- **Kotlin 표준 라이브러리(Apache-2.0).** 이번 단계에서 그 절차를 따라 쓴 함수는 없다. Task 1은 `THIRD-PARTY-NOTICES.md`를 바꿀 필요가 없다고 적었고, Task 3~7의 보고서에도 그런 함수가 없다. `qt/` 안에서 Kotlin 표준 라이브러리를 출처로 적은 곳은 Q1의 `kt::replace`와 `kt::indexOf` 두 곳뿐이고 이미 고지돼 있다. 그래서 `THIRD-PARTY-NOTICES.md`는 바꾸지 않았다. 정규식 여덟 개를 옮긴 스캐너는 Javadoc의 정규식 뜻과 오라클 답으로 쓴 것이다.
+- **Kotlin 표준 라이브러리(Apache-2.0).** 이번 단계에서 그 절차를 따라 쓴 함수는 없다. Task 1은 `THIRD-PARTY-NOTICES.md`를 바꿀 필요가 없다고 적었고, Task 3~7의 보고서에도 그런 함수가 없다. `qt/` 안에서 Kotlin 표준 라이브러리를 출처로 적은 곳은 Q1의 `kt::replace`와 `kt::indexOf` 두 곳뿐이고 이미 고지돼 있다. 그래서 `THIRD-PARTY-NOTICES.md`는 바꾸지 않았다. 정규식 여섯 개(`LyricsMatcher.kt`의 `Regex(` 여섯: `BRACKETED`, `PARENTHESISED`, `CREDIT`, `WHITESPACE`, `VERSION_WORD`, `LIVE_LIKE_WORD`)를 옮긴 스캐너는 Javadoc의 정규식 뜻과 오라클 답으로 쓴 것이다.
 - **유니코드 데이터.** `kt_tables.inc`에 더한 BMP 밖 `isLetterOrDigit` 예외 9,642개는 JVM의 공개 API(`Character.isLetterOrDigit(int)`)에 코드 포인트마다 물어 얻은 유니코드 문자 데이터다. `THIRD-PARTY-NOTICES.md`의 "Unicode Character Database" 항목이 이 파일의 문자 속성을 이미 다룬다.
 - **한계.** AI 모델은 자신이 무엇을 기억하고 무엇을 기억하지 않는지 증명할 수 없다. 위의 것은 과정상의 안전장치이지 법적 보증이 아니다.
 
@@ -640,6 +686,7 @@ Q1 보고서의 "고치지 않은 Kotlin 쪽 동작" 일곱 가지와 최종 리
 - **대조 통계를 더했다.** 계획 표의 문턱에 더해 Task 3은 `J`에 여섯(다른 공백, 서로게이트 이스케이프, 틀린 이스케이프, 1000단 이상, 값 앞의 `]`, 배열 60000단), Task 7은 `I`에 여럿(버전 낱말, 부분 문자열 가수 짝, NaN 길이 후보 등)을 더했다. 계획의 문턱은 낮추지 않았다.
 - **종류 `V`의 생성기**는 처음에 앨범·설명·길이 비율 문턱을 못 넘어 생성기를 고쳤다(Task 5). 문턱은 그대로다.
 - **데이터 형의 테스트.** `tst_models`는 Kotlin 짝이 없어 이름 대조에 넣지 않았다(Task 2).
+- **정규식 수.** 계획(과 그것을 따른 `lyrics_matcher.h` 주석)은 `LyricsMatcher`의 정규식을 여덟 개라고 적었으나 잘못 센 것이다. `LyricsMatcher.kt`에는 `Regex(`가 여섯 개 있다. 주석은 최종 리뷰 반영에서 고쳤다.
 - **README의 관문 절.** "Q1 관문"을 "관문"으로 바꾸고 Q2a를 함께 다루게 했으며, 디버그 빌드의 깨끗한 재빌드 명령과 허용한 추가 이름 여섯을 적었다(Task 8).
 
 ## 확인하지 못한 것
@@ -650,27 +697,41 @@ Q1 보고서의 "고치지 않은 Kotlin 쪽 동작" 일곱 가지와 최종 리
 - **태그 파일을 디스크에 쓰는 것.** `renderFfmetadata`의 문자열만 비교했다. Kotlin은 그것을 UTF-8로 쓴다(`Files.writeString(…, UTF_8)`). 값에 짝 없는 서로게이트가 있을 때 Kotlin의 쓰기가 무엇을 하는지는 관찰하지 않았다.
 - **`automaticConcurrency`**: 대조하지 않았다(위).
 - **다른 Qt·JVM 버전.** Qt 6.11.3과 JVM 21.0.9에서만 돌렸다. 둘 중 하나가 바뀌면 `gen-tables.ps1`을 다시 돌리고 `U`·`X`·`S`·`B`·`Z`·`H`를 다시 돌려야 한다. NFKC 예외가 0인 것은 Qt가 판 인자를 문서대로 지키는 데 기댄다.
-- **실수 파싱의 넘침 판정**은 MSVC `from_chars`의 관찰된 동작(비정규 값은 그대로, 0이나 무한일 때만 범위 오류)에 기댄다. 다른 컴파일러는 시험하지 않았다.
+- **실수 파싱의 넘침 판정**은 MSVC `from_chars`의 관찰된 동작(비정규 값은 그대로, 0이나 무한일 때만 범위 오류)에 기댄다. 최종 리뷰 반영에서 `tst_kt_text`에 가장 작은 비정규 수·가운데 비정규 수·0으로 반올림·무한으로 넘침(두 부호) 행을 오라클의 비트로 더해, 디버그 빌드에서도 지킨다. 다른 컴파일러는 시험하지 않았다.
 - **단언의 같음.** `test-names.ps1`은 이름만 본다. 157개 테스트의 단언이 Kotlin과 같은지는 각 Task의 구현자와 리뷰어가 보았고 Task 8은 다시 보지 않았다.
 - **seed가 적다.** 이번 관문 실행은 1만 건 seed 셋과 10만 건 seed 하나(424242)다. 각 Task는 자기 종류를 다른 seed(42, 777, 4242, 20261116)로도 돌렸다고 적었으나 그것은 그 Task의 실행이다.
 - **통계는 근사다.** 여러 통계는 `run.ps1`이 규칙을 다시 쓴 근사로 센다(예: `V`의 "UTF-8이 아닌 입력", `I`의 "부분 문자열 가수 짝"). 답의 비교는 정확하다.
 - **시간 한도.** 10MB `info.json`의 3초, 10MB JSON 문서의 3초는 릴리스에서만 확인한다. 이번 실행에서 시험 하나하나의 시간은 따로 찍지 않았다(위 "테스트").
-- **사용자 결정을 기다리는 것.** 배열 깊이 한계와 영상 ID 거절(위 2, 3번)은 사용자가 아직 보지 않았다.
+- **사용자 결정을 기다리는 것.** 아래 "사용자가 정할 것".
 - **Q1·Q0에서 열려 있는 것**은 그대로다(Q1 보고서의 "확인하지 못한 것").
+
+## 최종 리뷰 반영
+
+Task 1~8 전체를 본 최종 리뷰의 지적(중요 하나, 작은 것 여럿)을 한 번에 고치고 관문을 처음부터 다시 돌렸다. 기대값, 통계 문턱, 생성기의 강도는 바꾸지 않았다.
+
+- **데이터 형의 초기값(중요).** `models.h`에서 초기값이 없던 멤버(여러 구조체의 `rank`, `ResolveResult::kind`, `JobSummary`의 세 수, `Progress::stage`, `JobDone::status`, `ToolInfo::found`)에 `= 0`, `= false`, 첫 열거자를 주었다. 전에는 중괄호 없이 기본 생성한 값을 읽거나 비교하거나 늘리면 정의되지 않은 동작이었다. `tst_models`에 슬롯 둘(`defaultConstructedValuesAreDeterminate`, `toolAndQueryTypesHaveOptionalDefaults`)을 더했다. 고치기 전에는 컴파일이 실패했다(`const ToolInfo info;`에 C2737, 기본 생성한 `JobSummary`를 읽는 곳에 C4700이 `/WX`로 오류). 초기화되지 않은 값을 실행 중에 읽는 것은 믿을 만한 실패가 아니라서 실행 시 실패는 보이지 않았고, 이 컴파일 실패를 RED로 삼았다. `tst_models`는 Kotlin 짝이 없어 `test-classes.json`에 없으므로 이름 대조와 상관없다.
+- **`toDoubleOrNull` 단위 시험 행.** `4.9e-324`, `1e-310`, `1e-400`, `-1e-400`, `1e400`, `-1e400`. 기대 비트는 오라클(종류 `O`)의 답이다.
+- **금지 목록.** `toUInt(`, `toLong(`, `toULong(`, `toULongLong(`, `toShort(`, `toUShort(`, `toFloat(`, `setNum(`을 Q2a 목록에 더했다. 기존 `qt/core` 코드에는 걸리는 것이 없었다.
+- **디버그 빌드의 대조 자체 점검.** `run.ps1 -DebugTool`(아래 "관문 표"의 "디버그 도구 자체 점검").
+- **주석과 헤더 안내.** `lyrics_matcher`의 대소문자 주석(아래 "Q3에 넘길 것"의 정규식 플래그), 정규식 수(여섯), `ytdlp_commands.cpp`의 검사 순서 주석, 한국어 주석 하나를 영어로, `downloadCommand`의 `%` 안내, `json.h`의 자원 안내(객체 깊이를 세지 않음, `std::bad_alloc`을 잡지 않음, `find`는 선형 탐색), `video_info_file.h`의 "던지지 않는다"에서 메모리 부족 제외, `lyrics_matcher.h`의 괄호 제거 비용. README의 종류 `K` 설명과 `downloadCommand` 헤더의 제어 문자 문장은 오라클 탐침대로 고쳤다(위 "영상 ID 거절").
+- **가사 매칭의 대소문자 탐침(결과: 차이 없음).** Kotlin의 `IGNORE_CASE`는 유니코드 대소문자 접기도 켠다(JVM에 물으니 `Pattern.flags()`가 66 = `CASE_INSENSITIVE | UNICODE_CASE`). C++의 크레딧 스캐너는 ASCII만 접는데, 크레딧 낱말의 글자 `a d e f n o p r t`에는 ASCII 밖에서 대소문자로 같아지는 글자가 없다(JVM에 물으니 ASCII 글자로 접히는 ASCII 밖 글자는 U+0130 `İ`, U+0131 `ı`, U+017F `ſ`, U+212A `K` 넷뿐이고, 크레딧 정규식에 각 글자 자리를 U+0080~FFFF로 바꿔 넣은 사례는 하나도 맞지 않았다). 버전 낱말에는 `s`·`k`·`i`가 있지만 Kotlin은 그 정규식을 `IGNORE_CASE` 없이, 이미 NFKC와 소문자를 거친 낱말에 쓴다. 그래서 `ſ`는 `s`, `K`는 `k`가 되고, `İ`는 `i`+U+0307이 되어 낱말이 끊기고, `ı`는 그대로다. 오라클에 `verſion`, `inſt`, `Korean`, `KOREAN`, `lİve`, `lıve`, `remİx`, `remıx`, `coverſ`, `demoſ`, `İnst`, `ınst` 등 23개 낱말을 `match`(후보 쪽·질의 쪽·크레딧 안)와 `norm`으로, 크레딧 꼴 12개를 `tv`로 물어 104건 모두 C++과 같았다. 고칠 C++은 없었다.
 
 ## 남은 사소한 것
 
-각 Task 리뷰가 고치지 않고 남긴 작은 지적들이다. 최종 리뷰 단계에서 다룰 예정이고, 아직 **열려 있다.**
+최종 리뷰가 고치지 않고 남긴 작은 지적들이다. 모두 **열려 있다.** 결과에 영향을 주는 것은 없다.
 
-- `tst_kt_text`에 `4.9e-324`, 비정규 수, 넘침의 단위 시험 행이 없다. 지금은 대조 `O`만 `from_chars`의 범위 오류 처리를 지킨다.
-- `forbidden-calls.ps1`이 `toUInt`, `toLong`, `toFloat`, `toShort`, `toULongLong`, `setNum`, 여러 줄에 걸친 `QString::number`를 찾지 않는다. 형식 인자 없이 실수를 넘긴 `QString::number(x)`는 정수와 구별하지 못한다.
-- 대조 도구에 코드 포인트 문자열을 만드는 같은 도우미가 둘 있다. `O` 생성기의 긴 리터럴에 부호·접미사·긴 16진 가수가 없다. `main.cpp` 사용법 주석과 `run.ps1` 머리의 줄 맞춤.
-- `models.h`의 기본값 없는 멤버(번호, 영상 ID, 열거형 등)에 초기값이 없어, 중괄호 없이 기본 생성하면 값이 정해지지 않는다. `tst_models`가 `ToolPaths`, `ToolInfo`, `ToolsStatus`, `LyricsQuery`를 건드리지 않는다.
-- `tst_json`에 `{"a":1}"b":2}`, `[[a]`, `[]]` 행이 없다(관찰 표에는 있다). `J` 생성기가 객체 1만~5만 단 사슬을 드물게도 만들지 않는다. 10MB 문서 시험이 시간을 성공 때도 찍는다. `json::find`가 선형 탐색이라는 주석이 없다. 통계 "값 앞의 `]`"가 `]\`도 센다.
-- 종류 `E`가 두 쪽에서 빈 필드를 버려 빈 stderr 줄을 실제로는 보내지 않는다(빈 줄을 따로 표시해야 한다). `Q` 생성기가 필드 하나짜리 사례를 적게 만든다.
-- `tst_video_info_file`의 파일 쓰기 도우미가 도우미 안에서 `QVERIFY`를 쓴다. 오라클이 죽으면 `V`의 임시 파일이 남을 수 있다. `V`의 "길이 있음" 비율(약 32.6%)이 문턱 30%에 가깝다.
-- `K` 생성기가 영상 ID에서 필요보다 넓게 뺀다(모든 ID에서 `\ / :`를 지우고, 제어 문자를 "영문자·숫자 없음"으로 어림해 지운다). `ytdlp_commands.cpp`의 주석 하나("Kotlin처럼 먼저 던진다")가 틀렸고, README의 "제어 문자만 든 id"가 U+0009~000D에 대해 부정확하다.
-- `lyrics_matcher.cpp`의 주석 몇 곳이 Kotlin의 정규식 플래그를 단정한다(이 낱말들에서는 ASCII와 유니코드 대소문자 접기가 같다고 쓰는 것이 맞다). `lyrics_matcher.h`에 계획이 정한 한국어 주석이 하나 있다(집의 관례는 영어).
+- 대조 도구에 코드 포인트 문자열을 만드는 같은 도우미가 둘 있다.
+- `O` 생성기의 긴 리터럴에 부호·접미사·긴 16진 가수가 없다.
+- `main.cpp` 사용법 주석과 `run.ps1` 머리의 줄 맞춤.
+- `tst_json`에 `{"a":1}"b":2}`, `[[a]`, `[]]` 행이 없다(관찰 표에는 있다).
+- `J` 생성기가 객체 1만~5만 단 사슬을 만들지 않는다.
+- 시험 하나(`tst_json`의 10MB 문서)가 성공 때도 `qInfo`로 시간을 찍는다.
+- 통계 "값 앞의 `]`"가 `]\`도 센다(조금 많이 센다).
+- `Q` 생성기가 필드 하나짜리 사례를 적게 만든다.
+- `tst_video_info_file`의 파일 쓰기 도우미가 도우미 안에서 `QVERIFY`를 쓴다.
+- 오라클이 죽으면 `V`의 임시 파일이 지워지지 않고 남는다.
+- `V`의 "길이 있음" 비율이 문턱 30%에 가깝다(이번 관문 실행의 값은 위 "대조").
+- `K` 생성기가 영상 ID에서 필요보다 넓게 뺀다(영문자·숫자가 없는 ID의 제어 문자; 위 "영상 ID 거절"의 탐침으로 보면 Kotlin도 거절하므로 뺄 필요가 없다).
 
 ## Q2b에 넘길 것
 
@@ -678,15 +739,41 @@ Q1 보고서의 "고치지 않은 Kotlin 쪽 동작" 일곱 가지와 최종 리
 - **`parseVideoInfo`가 받는 바이트.** `parseVideoInfo(const QByteArray&)`는 파일의 바이트를 **그대로** 받는다: UTF-8로 엄격히 디코드하고(잘못된 열이면 모두 없음), 맨 앞 BOM을 떼지 않는다(그러면 모두 없음, Kotlin과 같음). `readVideoInfo(path)`가 `QFile`로 읽어 이것을 부른다. Q2b는 바이트를 미리 디코드하거나 BOM을 떼거나 줄바꿈을 바꾸지 말아야 한다. 파일을 읽는 동안 yt-dlp가 아직 쓰고 있을 수 있는지(잘린 파일은 대개 "모두 없음")는 Q2b가 순서로 막는다.
 - **명령 인자를 `QProcess`에 넘길 때의 인용.** `ytdlp_commands`와 `ffmpeg_commands`는 인자 목록(`QStringList`)을 낸다. 대조는 이 목록이 Kotlin의 목록과 같음만 보였다. Windows에서는 목록이 명령줄 하나로 합쳐지고 받는 프로그램이 다시 나눈다. Kotlin의 `ProcessBuilder`와 Qt의 `QProcess`가 공백, `"`, 끝의 `\`, 빈 인자, `%`·`&`가 든 인자를 같은 명령줄로 만든다는 보장은 확인하지 않았다. 출력 경로 틀 `%(ext)s`, `--print` 틀, 공백·`&`·`%`가 든 폴더, 끝이 `\`인 값이 실제 yt-dlp·ffmpeg에 글자 그대로 닿는지 Q2b의 통합 테스트(예: 받은 인자를 그대로 적는 작은 프로그램)로 확인해야 한다. 도구 경로가 `.cmd`·`.bat`이면 Windows가 `cmd.exe`를 거치므로 `%`·`&`·`^`가 해석될 수 있다(js 런타임 경로는 yt-dlp에 인자로만 넘기므로 우리가 실행하지 않는다).
 - **영상 ID 규칙.** `downloadCommand`는 빈 ID와 `\ / : * ? " < > |`·U+0000~001F가 든 ID에 `std::invalid_argument`를 던진다(Kotlin은 일부만 던진다). Q2b·Q2d는 이 예외를 잡아 그 곡만 실패로 처리해야 한다(Kotlin은 일부 ID에서 `InvalidPathException`이 났을 자리다). 다른 함수들도 `ytDlp` 경로가 없으면 `std::invalid_argument`를 던진다. `tagCommand`는 출력 파일이 `.m4a`로 끝나지 않으면 던진다.
-- **태그 파일 쓰기.** `renderFfmetadata`는 `QString`을 낸다. Kotlin은 그것을 BOM 없는 UTF-8로 쓴다(`M4aTagger`). Q2b가 같은 인코딩으로 써야 하고, 값의 짝 없는 서로게이트를 쓸 때 Kotlin이 무엇을 하는지는 관찰해서 맞춰야 한다(위 "확인하지 못한 것").
+- **명령 조립의 예외를 곡 하나의 실패로.** `resolvePlaylistCommand`, `resolveVideoCommand`, `downloadCommand`, `tagCommand`는 `std::invalid_argument`를 던질 수 있다(도구 경로 없음, 영상 ID 거절, `.m4a`가 아닌 출력). Q2b·Q2d는 이 호출을 감싸서 예외가 작업 밖으로 새지 않고 그 곡의 실패가 되게 해야 한다.
+- **출력 폴더의 `%`.** `-o`의 값은 yt-dlp의 출력 틀이라 출력 폴더나 ID의 `%`를 yt-dlp가 틀 필드로 읽는다. `downloadCommand`는 이스케이프하지 않는다(Kotlin도 같다). `%`가 든 폴더를 받을지, 받는다면 `%%`로 바꿀지는 Q2b가 정하고 실제 yt-dlp로 확인한다.
+- **태그 파일 쓰기.** `renderFfmetadata`는 `QString`을 낸다. Kotlin은 그것을 BOM 없는 UTF-8로 쓴다(`M4aTagger`). Q2b가 같은 인코딩으로 써야 하고, 값의 짝 없는 서로게이트를 UTF-8로 쓸 때 Kotlin이 무엇을 하는지(대체 문자, `?`, 예외)는 관찰해서 맞춰야 한다(위 "확인하지 못한 것").
 - **동시 다운로드 수.** `automaticConcurrency`는 `QThread::idealThreadCount()`(논리 프로세서 수)를 쓴다. Kotlin의 값과 같은지는 Q2d에서 실제 PC로 확인한다.
-- **오류 분류에 넘길 stderr 줄.** `classifyError`는 줄 목록을 받는다. 빈 줄을 대조가 실제로 보내지 않았다(위 "남은 사소한 것"). Q2b가 stderr를 줄로 나눌 때 `\r\n`·`\r`과 빈 줄을 Kotlin의 `ProcessRunner`와 같게 다루는지 확인해야 한다.
+- **오류 분류에 넘길 stderr 줄.** `classifyError`는 줄 목록을 받는다. 대조 `E`는 빈 줄을 `.`으로 적어 두 쪽에 실제로 보낸다(최종 리뷰 반영에서 센 것: `xgs-diff gen E 10000 20261115`의 사례 1만 건 중 1,821건에 빈 줄이 있고, 줄이 하나도 없는 사례는 618건이다). 건너뛰는 것은 "줄이 하나도 없음"을 뜻하는 정말 빈 필드뿐이다. Q2b가 stderr를 줄로 나눌 때 `\r\n`·`\r`과 빈 줄을 Kotlin의 `ProcessRunner`와 같게 다루는지는 Q2b에서 확인해야 한다.
 - **시그마 결정의 범위.** 사용자 결정은 가사 매칭에만 적용됐다. Q1 보고서가 함께 짚은 `engine/lyrics/google/GoogleSearchQuery.kt`의 캐시 키(사용자 글을 소문자로 바꿔 쓴다)는 Q3에서 같은 문제를 만난다. 그때 다시 정해야 한다.
 - **대조 종류를 더하는 법과 관문**은 `qt/README.md`에 있다(이번 단계에서 종류 `B Z H O J E Q V K A I`를 더했다). 새 종류도 1만 건 seed 셋과 10만 건으로 돌리고, 변이로 생성기를 시험한다.
 - **JDK·kotlinx 소스를 보지 않는다.** 차이는 오라클로만 정한다. `server/build/sidecar-image`가 오래되면 `run.ps1`이 실패한다(Gradle은 사용자가 정할 때 돌린다).
 
+## Q2c에 넘길 것
+
+- **LRCLIB 후보 필드의 길이 상한.** 가사 매칭의 괄호 제거는 겹침 깊이마다 제목 전체를 다시 훑는다(깊이 × 길이, `lyrics_matcher.h`). LRCLIB의 답(곡·가수·앨범 이름, 가사)은 네트워크에서 오므로 Q2c가 필드 길이에 상한을 두고 넘기는 것이 좋다.
+
+## Q2d에 넘길 것
+
+- **NaN 백분율.** 진행률 파싱은 Kotlin처럼 NaN 백분율을 남길 수 있다(위 "Review Focus" 4번, Task 4의 실행에서 10만 건 중 94건). 이 값이 그대로 UI에 숫자로 가지 않게 Q2d에서 막아야 한다(진행 이벤트를 만들 때 "모름"으로 바꾸는 등).
+
+## Q3에 넘길 것
+
+- **시그마 결정의 범위.** 가사 매칭의 `σ`/`ς` 결정이 구글 가사의 캐시 키(`GoogleSearchQuery.kt`, 사용자 글을 소문자로 바꿔 쓴다)에도 미치는지 사용자가 정해야 한다(아래 "사용자가 정할 것").
+- **정규식 플래그.** Kotlin의 `RegexOption.IGNORE_CASE`는 유니코드 대소문자 접기를 켠다(`CASE_INSENSITIVE | UNICODE_CASE`). 구글 가사 이식에서 대소문자를 무시하는 정규식을 손으로 옮길 때, 패턴에 `s`·`k`·`i`가 있으면 ASCII 접기로는 같지 않다(`ſ` U+017F, `K` U+212A, `İ` U+0130·`ı` U+0131). 가사 매칭에서 ASCII 접기가 맞았던 이유는 위 "최종 리뷰 반영"에 있다.
+
+## 사용자가 정할 것
+
+모두 사용자의 결정이다. 지금 코드는 아래 "지금"대로 동작하고, 관문은 그 동작으로 통과했다.
+
+1. **JSON 배열 깊이 한계 1000**(위 "Kotlin과 다르게 한 것" 2번; controller가 실행 중에 정함). 받아들일지. 최종 리뷰의 의견: C++ 읽기는 재귀가 없어 이 한계가 지키는 것이 없으므로, 한계 없는 읽기로 바꾸고 대조에서 1001단 이상 구역만 빼도 된다. 지금: 배열 1000개 초과는 오류.
+2. **영상 ID 규칙**(위 "Kotlin과 다르게 한 것" 3번; controller가 정함). `%`도 거절할지, 아니면 `[A-Za-z0-9_-]`만 받을지. 지금: 빈 ID와 `\ / : * ? " < > |`·U+0000~001F를 거절하고 `%`는 받는다(그러면 yt-dlp가 `%`를 틀로 읽는다, 위 "Q2b에 넘길 것").
+3. **전각·CJK 괄호.** 가사 매칭은 `（Live）`, `【MV】` 같은 전각·CJK 괄호를 괄호로 보지 않는다. 그래서 `Hello【MV】`는 `Hello`와 맞지 않는다. Kotlin의 동작이고 그대로 따랐다.
+4. **괄호 안의 다른 제목.** 괄호 안의 다른 제목은 키가 되지 않는다. 그래서 `밤편지 (Through the Night)`는 후보 `Through the Night`와 맞지 않는다. Kotlin의 동작이고 그대로 따랐다.
+5. **따른 Kotlin 쪽 동작을 고칠지.** 위 "고치지 않은 Kotlin 쪽 동작"(BOM으로 시작하는 `info.json`, 빈 `ERROR:` 메시지, 서로게이트 자름, NaN 길이 통과, `Lived` 등)과 위 3·4번 중 Qt 판에서 고칠 것이 있는지. 고친다면 Kotlin과 다르게 하는 문서화된 차이가 되고 대조에서 그 구역을 빼야 한다.
+6. **시그마 결정이 캐시 키에도 미치는지**(위 "Q3에 넘길 것"). Q3 전에 정하면 된다.
+
 ## 판정
 
-**Q2a 관문(설계 §4의 Q2 행 중 이 계획의 몫)은 충족됐다.** 이식 대상 `engine` 테스트 157개는 같은 이름으로 모두 통과하고(이름 대조에서 빠진 것 0, Q1의 193개 포함 13개 클래스), 릴리스와 디버그의 깨끗한 빌드에서 테스트 17개 실행 파일이 모두 통과했으며, 금지 호출은 0건이고, 대조는 네 번의 실행(1만 건 seed 셋, 10만 건 seed 하나, 모두 한 번의 호출로 24개 종류 전부)에서 모든 종류가 불일치 0이고 통계 문턱도 넘었다. 이 실행은 Task 8에서 처음부터 한 번 돌린 것이고, 그 사이 C++을 고치지 않았다.
+**Q2a 관문(설계 §4의 Q2 행 중 이 계획의 몫)은 충족됐다.** 이식 대상 `engine` 테스트 157개는 같은 이름으로 모두 통과하고(이름 대조에서 빠진 것 0, Q1의 193개 포함 13개 클래스), 릴리스와 디버그의 깨끗한 빌드에서 테스트 17개 실행 파일이 모두 통과했으며(합계 661 통과, 실패 0), 금지 호출은 0건이고, 대조는 네 번의 실행(1만 건 seed 셋, 10만 건 seed 하나, 모두 한 번의 호출로 24개 종류 전부)에서 모든 종류가 불일치 0이고 통계 문턱도 넘었으며, 디버그 도구 자체 점검에서 디버그 빌드의 답이 릴리스와 24개 종류 모두 같았다. 이 실행은 최종 리뷰를 반영한 뒤 처음부터 한 번 돌린 것이고, 그 사이 C++을 고치지 않았다(관문 스크립트가 `ctest`를 찾지 못해 두 `ctest`만 vcvars 안에서 다시 돌렸다, 위 "테스트").
 
-이 진술이 다루지 않는 것: 실제 프로세스·파일 시스템·네트워크(Q2b~Q2d), 정리되지 않은 경로, 배열 1001~59999단 JSON, 명령줄 인용, 다른 Qt·JVM 버전, 단언의 같음을 다시 본 것. 사용자가 정할 것: 배열 깊이 한계(1000)와 영상 ID 거절을 받아들일지, 위 Kotlin 쪽 동작들을 바꿀지. Q1에서 남은 결정(예전 로컬 커밋 정리, Q1의 Kotlin 동작들)도 그대로다.
+이 진술이 다루지 않는 것: 실제 프로세스·파일 시스템·네트워크(Q2b~Q2d), 정리되지 않은 경로, 배열 1001~59999단 JSON, 명령줄 인용, 다른 Qt·JVM 버전, 단언의 같음을 다시 본 것. 사용자가 정할 것은 위 "사용자가 정할 것"에 모았다(배열 깊이 한계, 영상 ID 규칙, 전각·CJK 괄호, 괄호 안의 다른 제목, 따른 Kotlin 동작, 시그마와 캐시 키). Q1에서 남은 결정(예전 로컬 커밋 정리, Q1의 Kotlin 동작들)도 그대로다.
