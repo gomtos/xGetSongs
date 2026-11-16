@@ -5,6 +5,7 @@
 #include <QStringView>
 
 #include <concepts>
+#include <optional>
 
 // Kotlin/JVM character and string semantics, so that the ports of `shared` give exactly the answers of the Kotlin originals
 // (Kotlin's standard library on JVM 21). Lengths and indices are UTF-16 units, as Kotlin's String.length. Nothing here depends
@@ -14,6 +15,8 @@ namespace xgs::kt {
 bool isWhitespace(QChar c);        // Char.isWhitespace(): Zs, Zl, Zp, U+0009..000D, U+001C..001F
 bool isLetter(QChar c);            // Char.isLetter()
 bool isLetterOrDigit(QChar c);     // Char.isLetterOrDigit(): a letter (L*) or Nd; a surrogate unit is neither
+bool isLetterOrDigit(char32_t codePoint);   // Character.isLetterOrDigit(int); a surrogate code point is neither
+bool isAsciiSpace(QChar c);        // \s of a Java regular expression without flags: ' ', \t, \n, U+000B, \f, \r
 bool isHighSurrogate(QChar c);
 bool isSurrogate(QChar c);
 QChar uppercaseChar(QChar c);      // Char.uppercaseChar()
@@ -28,6 +31,15 @@ QString trimEnd(const QString& s);
 QString trimEndChars(const QString& s, QStringView chars);     // trimEnd(vararg chars)
 QString trimStartChars(const QString& s, QStringView chars);
 bool isBlank(const QString& s);                                // empty or all isWhitespace
+
+// java.text.Normalizer.normalize(s, Normalizer.Form.NFKC) with the Unicode version of JVM 21 (15.0): code points assigned
+// only by Qt's newer Unicode and unpaired surrogates stay as they are.
+QString nfkc(const QString& s);
+// Kotlin's String.toDoubleOrNull() on the JVM: the grammar of java.lang.Double.valueOf(String) (decimal and hexadecimal
+// floating-point literals, an optional f/F/d/D suffix, "NaN", "Infinity", an optional sign, and leading and trailing
+// characters up to U+0020 ignored); std::nullopt for anything else. The value is the nearest double (ties to even).
+std::optional<double> toDoubleOrNull(const QString& s);
+QString hexBits(double value);     // the 16 lowercase hex digits of the bit pattern (qt/tools/differential, kind O)
 
 // Kotlin's `ignoreCase` argument. An enum, not a bool, so that a position and a case mode can never be swapped silently;
 // the arguments follow Kotlin's order: (..., from = 0, mode = Sensitive).
@@ -62,6 +74,7 @@ struct CharFacts {
     char16_t lower;
 };
 CharFacts qtCharFacts(char16_t unit);
+bool qtLetterOrDigit(char32_t codePoint);   // a letter (L*) or Nd by Qt's categories alone (gen-tables.ps1)
 
 }  // namespace detail
 

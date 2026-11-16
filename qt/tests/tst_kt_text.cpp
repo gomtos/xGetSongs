@@ -2,6 +2,7 @@
 
 #include <clocale>
 #include <initializer_list>
+#include <optional>
 #include <string>
 
 #include "text/kt_text.h"
@@ -162,6 +163,86 @@ private slots:
         row("23", "ci-starts", "D801DC00", "D801", 0, 1);
         row("24", "ci-starts", "D801DC00", "D802DC00", 0, 0);
         row("25", "eqic", "0069", "0130", 0, 1);
+    }
+
+    // Kotlin's answers from `Oracle.java lettertable` (Character.isLetterOrDigit(int), JVM 21.0.9 of the sidecar image).
+    void codePointIsLetterOrDigitHandlesSupplementaryLetters() {
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0x1D49C)), true);    // 𝒜 MATHEMATICAL SCRIPT CAPITAL A
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0x10400)), true);    // DESERET CAPITAL LONG I
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0x1F600)), false);   // 😀
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0x20000)), true);    // CJK Extension B
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0x0661)), true);     // ARABIC-INDIC DIGIT ONE
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0x00B2)), false);    // SUPERSCRIPT TWO (No)
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0x2163)), false);    // ROMAN NUMERAL FOUR (Nl)
+        QCOMPARE(kt::isLetterOrDigit(char32_t(0xD83D)), false);    // a surrogate code point
+    }
+
+    // Kotlin's answers from Oracle.java (case lines `H text`: Normalizer.normalize(text, Form.NFKC), JVM 21.0.9).
+    void nfkcComposesHangulJamoAndFoldsFullWidth() {
+        QCOMPARE(kt::nfkc(QStringLiteral(u"가")), QStringLiteral(u"가"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"가")), QStringLiteral(u"가"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"각")), QStringLiteral(u"각"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"ＡＢＣ１２３")), QStringLiteral(u"ABC123"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"ﬁ")), QStringLiteral(u"fi"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"é")), QStringLiteral(u"é"));    // é composed
+        QCOMPARE(kt::nfkc(QStringLiteral(u"é")), QStringLiteral(u"é"));   // é decomposed
+        QCOMPARE(kt::nfkc(QStringLiteral(u"①")), QStringLiteral(u"1"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"㈜")), QStringLiteral(u"(주)"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"ｶﾞ")), QStringLiteral(u"ガ"));
+    }
+
+    void nfkcLeavesLoneSurrogatesAlone() {
+        QCOMPARE(kt::nfkc(QStringLiteral(u"\xD800")), QStringLiteral(u"\xD800"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"a\xDC00" u"b")), QStringLiteral(u"a\xDC00" u"b"));
+        QCOMPARE(kt::nfkc(QStringLiteral(u"\xDBFF́")), QStringLiteral(u"\xDBFF́"));
+    }
+
+    // Kotlin's answers from Oracle.java (case lines `O text`: String.toDoubleOrNull(), JVM 21.0.9), as the bit patterns.
+    void toDoubleOrNullAcceptsWhatKotlinAccepts_data() {
+        QTest::addColumn<QString>("text");
+        QTest::addColumn<QString>("bits");
+        const auto row = [](const char16_t* text, const char* bits) {
+            const QString value = QString::fromUtf16(text);
+            QTest::newRow(qPrintable(value)) << value << QString::fromLatin1(bits);
+        };
+        row(u"1", "3ff0000000000000");
+        row(u"1.5", "3ff8000000000000");
+        row(u"-0", "8000000000000000");
+        row(u".5", "3fe0000000000000");
+        row(u"5.", "4014000000000000");
+        row(u"1e3", "408f400000000000");
+        row(u"1E-3", "3f50624dd2f1a9fc");
+        row(u" 1 ", "3ff0000000000000");
+        row(u"1f", "3ff0000000000000");
+        row(u"1d", "3ff0000000000000");
+        row(u"0x1p3", "4020000000000000");
+        row(u"NaN", "7ff8000000000000");
+        row(u"Infinity", "7ff0000000000000");
+        row(u"-Infinity", "fff0000000000000");
+        row(u"+1", "3ff0000000000000");
+    }
+
+    void toDoubleOrNullAcceptsWhatKotlinAccepts() {
+        QFETCH(QString, text);
+        QFETCH(QString, bits);
+        const std::optional<double> value = kt::toDoubleOrNull(text);
+        QVERIFY(value.has_value());
+        QCOMPARE(kt::hexBits(*value), bits);
+    }
+
+    void toDoubleOrNullRejectsWhatKotlinRejects() {
+        for (const char16_t* text : {u"", u" ", u"NA", u"1,5", u"1 2", u"abc", u"0x10", u"١", u"1e", u"--1", u"infinity", u"nan"}) {
+            QVERIFY2(!kt::toDoubleOrNull(QString::fromUtf16(text)).has_value(), qPrintable(QString::fromUtf16(text)));
+        }
+    }
+
+    void isAsciiSpaceIsExactlySixCharacters() {
+        for (char16_t unit : std::initializer_list<char16_t>{u' ', u'\t', u'\n', 0x000B, u'\f', u'\r'}) {
+            QVERIFY2(kt::isAsciiSpace(QChar(unit)), qPrintable(QString::number(unit, 16)));
+        }
+        for (char16_t unit : std::initializer_list<char16_t>{0x00A0, 0x3000, 0x2028, 0x0085, 0x001C}) {
+            QVERIFY2(!kt::isAsciiSpace(QChar(unit)), qPrintable(QString::number(unit, 16)));
+        }
     }
 
     void regionMatchesIgnoreCaseMatchesTheObservedJvmAnswers() {

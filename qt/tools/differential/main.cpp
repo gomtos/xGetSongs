@@ -7,9 +7,14 @@
 //   xgs-diff constants                    the user-facing constants, sorted by name: "name hex" (kind M)
 //   xgs-diff unicodecase                  for each code point 0..10FFFF but the surrogates: "cp lower upper" from
 //                                         kt::lowercase and kt::uppercase of the one-code-point string (kind U)
+//   xgs-diff lettertable                  for each code point 0..10FFFF but the surrogates: "cp d" = kt::isLetterOrDigit(char32_t)
+//                                         as 0/1 (kind B)
+//   xgs-diff nfkctable                    for each code point 0..10FFFF but the surrogates: "cp hex" = kt::nfkc of the
+//                                         one-code-point string (kind Z)
 //   xgs-diff qt-chartable                 as chartable, from Qt's own tables only (gen-tables.ps1)
-//   xgs-diff qt-casetable                 for each unit: QString::toUpper and QString::toLower of it, as hex (gen-tables.ps1)
-//   xgs-diff qt-version                   the Qt version the tables were compared with
+//   xgs-diff qt-casetable               for each unit: QString::toUpper and QString::toLower of it, as hex (gen-tables.ps1)
+//   xgs-diff qt-lettertable               as lettertable, from Qt's categories only (gen-tables.ps1)
+//   xgs-diff qt-version                  the Qt version the tables were compared with
 #include <QMap>
 #include <QString>
 #include <QStringList>
@@ -197,6 +202,19 @@ QString answerN(const QStringList& fields) {
     return okHex(redaction::redact(textOf(fields.at(0)), names));
 }
 
+// ---- kinds H and O ----
+// H text -> OK hex (NFKC); O text -> NULL | the 16 hex digits of the double's bits (String.toDoubleOrNull)
+QString answerH(const QStringList& fields) {
+    if (fields.size() < 1) return QStringLiteral("?");
+    return okHex(kt::nfkc(textOf(fields.at(0))));
+}
+
+QString answerO(const QStringList& fields) {
+    if (fields.size() < 1) return QStringLiteral("?");
+    const std::optional<double> value = kt::toDoubleOrNull(textOf(fields.at(0)));
+    return value ? kt::hexBits(*value) : QStringLiteral("NULL");
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -219,6 +237,8 @@ void registerAnswers() {
     registerAnswer('Y', answerY);
     registerAnswer('R', answerR);
     registerAnswer('N', answerN);
+    registerAnswer('H', answerH);
+    registerAnswer('O', answerO);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).
@@ -305,6 +325,43 @@ int unicodecase() {
     return 0;
 }
 
+// The one-code-point string of `cp` (not QString::fromUcs4, which drops U+FEFF at the start as a byte order mark).
+QString codePointString(char32_t cp) {
+    QString one;
+    if (cp > 0xFFFF) one.append(QChar(QChar::highSurrogate(cp))).append(QChar(QChar::lowSurrogate(cp)));
+    else one.append(QChar(char16_t(cp)));
+    return one;
+}
+
+// One line per code point 0..10FFFF but the surrogates: the code point in hex, a space and what `row` writes.
+template <typename Row>
+int codePointTable(Row row) {
+    std::string out;
+    out.reserve(std::size_t(0x110000) * 10);
+    for (char32_t cp = 0; cp <= 0x10FFFF; ++cp) {
+        if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+        char head[16];
+        std::snprintf(head, sizeof head, "%x ", unsigned(cp));
+        out += head;
+        row(cp, out);
+        out += '\n';
+    }
+    writeLines(out);
+    return 0;
+}
+
+int lettertable() {
+    return codePointTable([](char32_t cp, std::string& out) { out += kt::isLetterOrDigit(cp) ? '1' : '0'; });
+}
+
+int nfkctable() {
+    return codePointTable([](char32_t cp, std::string& out) { out += toAscii(hexText(kt::nfkc(codePointString(cp)))); });
+}
+
+int qtLettertable() {
+    return codePointTable([](char32_t cp, std::string& out) { out += kt::detail::qtLetterOrDigit(cp) ? '1' : '0'; });
+}
+
 int constants() {
     std::string out;
     const QMap<QString, QString>& table = constantTable();
@@ -368,10 +425,13 @@ int main(int argc, char** argv) {
     if (mode == "unicodecase") return unicodecase();
     if (mode == "qt-chartable") return qtChartable();
     if (mode == "qt-casetable") return qtCasetable();
+    if (mode == "lettertable") return lettertable();
+    if (mode == "nfkctable") return nfkctable();
+    if (mode == "qt-lettertable") return qtLettertable();
     if (mode == "qt-version") {
         std::printf("%s\n", QT_VERSION_STR);
         return 0;
     }
-    std::fprintf(stderr, "usage: xgs-diff gen <kind> <count> <seed> | answer | chartable | constants | unicodecase | qt-chartable | qt-casetable | qt-version\n");
+    std::fprintf(stderr, "usage: xgs-diff gen <kind> <count> <seed> | answer | chartable | constants | unicodecase | lettertable | nfkctable | qt-chartable | qt-casetable | qt-lettertable | qt-version\n");
     return 2;
 }

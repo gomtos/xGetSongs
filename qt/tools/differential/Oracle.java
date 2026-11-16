@@ -11,6 +11,7 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.Locale;
 import java.util.TreeMap;
 import kotlin.text.CharsKt;
@@ -30,6 +31,12 @@ import kotlin.text.StringsKt;
  *   ... Oracle.java unicodecase
  *       one line per code point 0..10FFFF except the surrogates D800..DFFF: "cp lower upper" = the code point in hex, and
  *       String.lowercase() and String.uppercase() of the one-code-point string as hex units
+ *   ... Oracle.java lettertable
+ *       one line per code point 0..10FFFF except the surrogates D800..DFFF: "cp d" = the code point in hex and
+ *       Character.isLetterOrDigit(int) as 0/1 (kind B)
+ *   ... Oracle.java nfkctable
+ *       one line per code point 0..10FFFF except the surrogates: "cp hex" = the code point in hex and
+ *       java.text.Normalizer.normalize(s, Normalizer.Form.NFKC) of the one-code-point string (kind Z)
  *   ... Oracle.java                (no argument)
  *       one answer per case line on stdin (tab-separated, the kind letter first):
  *         S op text          op = lower | upper | trim | trimStart | trimEnd   -> OK hex
@@ -48,11 +55,15 @@ import kotlin.text.StringsKt;
  *         Y text                             LyricsExtractor.tidy  -> OK hex | NULL
  *         R text                             LogRedaction.redactPaths  -> OK hex
  *         N text name1 [name2 ...]           LogRedaction.redact(text, names)  -> OK hex
+ *         H text                             Normalizer.normalize(text, Normalizer.Form.NFKC)  -> OK hex
+ *         O text                             String.toDoubleOrNull()  -> NULL | the 16 hex digits of
+ *                                            Double.doubleToRawLongBits
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
  *                                  each single unit where it is not uppercaseChar()/lowercaseChar() (special casing), and
  *                                  the case mappings of the code points above U+FFFF
+ *   ... Oracle.java lettertable    (also kind B) the code points above U+FFFF whose answer differs from Qt's are tabled
  */
 public class Oracle {
     static String dec(String hex) {
@@ -146,6 +157,24 @@ public class Oracle {
         }
     }
 
+    static void lettertable(StringBuilder out) {
+        for (int cp = 0; cp <= 0x10FFFF; cp++) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+            out.append(Integer.toHexString(cp)).append(' ').append(bit(Character.isLetterOrDigit(cp))).append('\n');
+        }
+    }
+
+    static String nfkc(String s) {
+        return Normalizer.normalize(s, Normalizer.Form.NFKC);
+    }
+
+    static void nfkctable(StringBuilder out) {
+        for (int cp = 0; cp <= 0x10FFFF; cp++) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+            out.append(Integer.toHexString(cp)).append(' ').append(enc(nfkc(new String(Character.toChars(cp))))).append('\n');
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         StringBuilder out = new StringBuilder();
         if (args.length > 0) {
@@ -154,6 +183,8 @@ public class Oracle {
                 case "constants" -> constants(out);
                 case "unicodecase" -> unicodecase(out);
                 case "casetable" -> casetable(out);
+                case "lettertable" -> lettertable(out);
+                case "nfkctable" -> nfkctable(out);
                 default -> throw new IllegalArgumentException("unknown mode " + args[0]);
             }
             print(out);
@@ -228,6 +259,15 @@ public class Oracle {
                     java.util.List<String> names = new java.util.ArrayList<>();
                     for (int k = 2; k < part.length; k++) names.add(dec(part[k]));
                     out.append("OK ").append(enc(LogRedaction.INSTANCE.redact(dec(part[1]), names)));
+                    break;
+                }
+                case "H":
+                    out.append("OK ").append(enc(nfkc(dec(part[1]))));
+                    break;
+                case "O": {
+                    // String.toDoubleOrNull() is an ordinary function of the kotlin.text.StringsKt facade.
+                    Double value = StringsKt.toDoubleOrNull(dec(part[1]));
+                    out.append(value == null ? "NULL" : String.format(Locale.ROOT, "%016x", Double.doubleToRawLongBits(value)));
                     break;
                 }
                 case "C": {

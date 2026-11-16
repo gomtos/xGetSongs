@@ -1035,6 +1035,263 @@ QString generateN(Rng& rng) {
     return out;
 }
 
+// ---- kind H: NFKC (java.text.Normalizer) of text with Hangul jamo, width variants, combining marks and compatibility forms ----
+QString codePointText(char32_t codePoint) {
+    QString out;
+    if (codePoint > 0xFFFF) out.append(QChar(QChar::highSurrogate(codePoint))).append(QChar(QChar::lowSurrogate(codePoint)));
+    else out.append(QChar(char16_t(codePoint)));
+    return out;
+}
+
+QString codePointIn(Rng& rng, char32_t first, char32_t last) {
+    return codePointText(char32_t(rng.between(int(first), int(last))));
+}
+
+// Combining marks of several combining classes (230 above, 220 below, 216 attached, 240 iota subscript, 202 cedilla, 8 kana
+// voicing, Hebrew points 10..20, 1 overlay), so that a shuffled run needs canonical reordering.
+constexpr char16_t kMarks[] = {0x0301, 0x0308, 0x3099, 0x309A, 0x0300, 0x0302, 0x0303, 0x030A, 0x030C, 0x0323, 0x0327,
+                               0x031B, 0x0345, 0x0328, 0x05B4, 0x05B7, 0x05BC, 0x05C1, 0x0334, 0x0335, 0x0951, 0x093C};
+// Starters that combine with some of the marks, or with each other (Hangul LV + T).
+constexpr QStringView kBases[] = {u"a", u"e", u"o", u"u", u"A", u"O", u"i", u"I", u"c", u"s", u"か", u"カ", u"ｶ", u"は",
+                                  u"ウ", u"가", u"א", u"ש", u"α", u"ω", u"и", u"न", u"ᄀ"};
+// Canonical singletons, composition exclusions and other compatibility forms.
+constexpr QStringView kCompatibility[] = {u"Å", u"Ω", u"K", u"क़", u"གྷ", u"ײַ", u"⫝̸", u"\U0001D15E",
+                                          u"\U0001D160", u"̈́", u"̀", u"ẛ", u"ϓ", u"¨", u"¯", u"µ",
+                                          u"ſ", u"Ǆ", u"Ĳ", u"‥", u"…", u"　", u" ", u" ",
+                                          u"ẛ̣", u"ཱི", u"ཱུ", u"ཱྀ", u"\U0001D7CF", u"\U0001F100", u"\U0001F190"};
+
+constexpr char32_t kFractionsAndScripts[] = {0x00BC, 0x00BD, 0x00BE, 0x00B2, 0x00B3, 0x00B9, 0x2070, 0x2075, 0x2089, 0x209C,
+                                             0x1D2C, 0x1D62, 0x2071, 0x207F, 0x2189, 0x00AA, 0x00BA};
+
+// The code points that Qt's Unicode (newer than JVM 21's 15.0) added with a decomposition or a non-zero combining class, and
+// the parts of those decompositions: the material that would show a kt::nfkc that forgot its barriers.
+const QList<char32_t>& newerUnicodeMaterial() {
+    static const QList<char32_t> material = [] {
+        QList<char32_t> out;
+        for (char32_t cp = 0; cp <= 0x10FFFF; ++cp) {
+            if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+            const QChar::UnicodeVersion version = QChar::unicodeVersion(cp);
+            if (version == QChar::Unicode_Unassigned || version <= QChar::Unicode_15_0) continue;
+            if (QChar::combiningClass(cp) == 0 && QChar::decompositionTag(cp) == QChar::NoDecomposition) continue;
+            out.append(cp);
+            const QString parts = QChar::decomposition(cp);
+            for (qsizetype i = 0; i < parts.size(); ++i) {
+                if (parts[i].isHighSurrogate() && i + 1 < parts.size()) {
+                    out.append(QChar::surrogateToUcs4(parts[i], parts[i + 1]));
+                    ++i;
+                } else {
+                    out.append(parts[i].unicode());
+                }
+            }
+        }
+        return out;
+    }();
+    return material;
+}
+
+QString nfkcPiece(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.08) return codePointIn(rng, 0x1100, 0x1112) + codePointIn(rng, 0x1161, 0x1175) +
+                            (rng.chance(0.6) ? codePointIn(rng, 0x11A8, 0x11C2) : QString());          // L V (T)
+    if (roll < 0.12) return codePointIn(rng, 0xAC00, 0xD7A3) + codePointIn(rng, 0x11A8, 0x11C2);       // LV(T) + T
+    if (roll < 0.17) {                                                                                 // a lone jamo
+        const double which = rng.next();
+        if (which < 0.3) return codePointIn(rng, 0x1100, 0x11FF);
+        if (which < 0.8) return codePointIn(rng, 0x3131, 0x318E);                                      // compatibility jamo
+        if (which < 0.9) return codePointIn(rng, 0xA960, 0xA97C);
+        return codePointIn(rng, 0xD7B0, 0xD7FB);
+    }
+    if (roll < 0.27) {                                                                                 // full and half width
+        const double which = rng.next();
+        if (which < 0.5) return codePointIn(rng, 0xFF01, 0xFF5E);
+        if (which < 0.8) return codePointIn(rng, 0xFF61, 0xFF9F);
+        if (which < 0.95) return codePointIn(rng, 0xFFA0, 0xFFDC);
+        return codePointIn(rng, 0xFFE0, 0xFFEE);
+    }
+    if (roll < 0.42) {                                                                                 // a base and shuffled marks
+        QString out = rng.chance(0.85) ? pick(rng, kBases).toString() : QString();
+        const int marks = rng.between(1, 4);
+        for (int i = 0; i < marks; ++i) out += QChar(pick(rng, kMarks));
+        return out;
+    }
+    if (roll < 0.47) return QString(QChar(pick(rng, kMarks)));                                         // a mark on its own
+    if (roll < 0.55) {                                                                                 // ligatures, circled, fractions
+        const double which = rng.next();
+        if (which < 0.2) return codePointIn(rng, 0xFB00, 0xFB06);
+        if (which < 0.45) return codePointIn(rng, 0x2460, 0x24FF);
+        if (which < 0.7) return codePointIn(rng, 0x3200, 0x33FF);
+        if (which < 0.85) return codePointIn(rng, 0x2150, 0x218B);
+        return codePointText(pick(rng, kFractionsAndScripts));
+    }
+    if (roll < 0.62) {                                                                                 // Arabic and Hebrew forms
+        const double which = rng.next();
+        if (which < 0.45) return codePointIn(rng, 0xFB50, 0xFDFF);
+        if (which < 0.75) return codePointIn(rng, 0xFE70, 0xFEFC);
+        return codePointIn(rng, 0xFB1D, 0xFB4F);
+    }
+    if (roll < 0.68) return pick(rng, kCompatibility).toString();
+    if (roll < 0.71) return rng.chance(0.7) ? codePointIn(rng, 0xF900, 0xFAD9) : codePointIn(rng, 0x2F800, 0x2FA1D);   // CJK compatibility
+    if (roll < 0.76) {                                                                                 // newer than JVM 21
+        // after a base that composes with kMarks, and now and then a code point twice or next to its neighbour in the list
+        // (a decomposition is listed right before its parts): shapes that would compose or reorder if Unicode 15.0 were
+        // not obeyed
+        const QList<char32_t>& material = newerUnicodeMaterial();
+        QString out = rng.chance(0.5) ? pick(rng, kBases).toString() : QString();
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) {
+            const int at = rng.between(0, int(material.size()) - 1);
+            out += codePointText(material.at(at));
+            if (rng.chance(0.25)) out += codePointText(material.at(rng.chance(0.5) || at + 1 >= material.size() ? at : at + 1));
+        }
+        if (rng.chance(0.4)) out += QChar(pick(rng, kMarks));
+        return out;
+    }
+    return token(rng);
+}
+
+QString generateH(Rng& rng) {
+    if (rng.chance(0.03)) return hex(QString());
+    QString value;
+    const int pieces = rng.between(1, 10);
+    for (int i = 0; i < pieces; ++i) value += nfkcPiece(rng);
+    return hex(value);
+}
+
+// ---- kind O: Kotlin's String.toDoubleOrNull() ----
+QString digitsOf(Rng& rng, int low, int high, QStringView set = u"0123456789") {
+    QString out;
+    const int count = rng.between(low, high);
+    for (int i = 0; i < count; ++i) out += set[rng.between(0, int(set.size()) - 1)];
+    return out;
+}
+
+QString signOf(Rng& rng, double p) {
+    if (!rng.chance(p)) return QString();
+    return rng.chance(0.5) ? QStringLiteral("-") : QStringLiteral("+");
+}
+
+constexpr char16_t kSuffixes[] = {u'f', u'F', u'd', u'D'};
+
+QString suffixOf(Rng& rng, double p) {
+    if (!rng.chance(p)) return QString();
+    return QString(QChar(pick(rng, kSuffixes)));
+}
+
+QString exponentDigits(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.75) return digitsOf(rng, 1, 3);
+    if (roll < 0.9) return QStringLiteral("0").repeated(rng.between(1, 25)) + digitsOf(rng, 1, 3);   // leading zeros
+    return digitsOf(rng, 4, 25);                                                                     // far out of range
+}
+
+QString decimalLiteral(Rng& rng) {
+    QString body;
+    switch (rng.between(0, 3)) {
+    case 0: body = digitsOf(rng, 1, 18); break;
+    case 1: body = digitsOf(rng, 1, 10) + u'.'; break;
+    case 2: body = digitsOf(rng, 1, 10) + u'.' + digitsOf(rng, 1, 20); break;
+    default: body = u'.' + digitsOf(rng, 1, 20); break;
+    }
+    if (rng.chance(0.4)) body += QString(QChar(rng.chance(0.5) ? u'e' : u'E')) + signOf(rng, 0.5) + exponentDigits(rng);
+    return signOf(rng, 0.3) + body + suffixOf(rng, 0.12);
+}
+
+QString hexLiteral(Rng& rng) {
+    constexpr QStringView hexDigits = u"0123456789abcdefABCDEF";
+    QString body;
+    switch (rng.between(0, 2)) {
+    case 0: body = digitsOf(rng, 1, 15, hexDigits); break;
+    case 1: body = digitsOf(rng, 1, 8, hexDigits) + u'.' + digitsOf(rng, 0, 15, hexDigits); break;
+    default: body = u'.' + digitsOf(rng, 1, 15, hexDigits); break;
+    }
+    const QString exponent = QString(QChar(rng.chance(0.5) ? u'p' : u'P')) + signOf(rng, 0.6) + exponentDigits(rng);
+    return signOf(rng, 0.3) + QString(rng.chance(0.7) ? u"0x" : u"0X") + body + exponent + suffixOf(rng, 0.12);
+}
+
+QString specialLiteral(Rng& rng) {
+    return signOf(rng, 0.5) + (rng.chance(0.5) ? QStringLiteral("NaN") : QStringLiteral("Infinity"));
+}
+
+// Many digits: correct rounding needs all of them; some land near the largest double or in the subnormal range.
+QString longLiteral(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.3) return digitsOf(rng, 300, 1200);
+    if (roll < 0.55) return QStringLiteral("0.") + QStringLiteral("0").repeated(rng.between(300, 330)) + digitsOf(rng, 1, 800);
+    if (roll < 0.75) return digitsOf(rng, 1, 3) + u'.' + digitsOf(rng, 300, 900) + u'e' + QString::number(rng.between(-345, -300));
+    return QStringLiteral("17976931348623157") + digitsOf(rng, 0, 400) + u'e' + QString::number(rng.between(290, 292));
+}
+
+// Boundaries of the double format and of the grammar, as they are.
+constexpr QStringView kEdgeLiterals[] = {
+    u"4.9e-324", u"2.4703282292062327e-324", u"2.4703282292062328e-324", u"2e-324", u"1e-400", u"2.2250738585072011e-308",
+    u"2.2250738585072014e-308", u"1.7976931348623157e308", u"1.7976931348623158e308", u"1.7976931348623159e308", u"1e309",
+    u"0x1p-1074", u"0x1p-1075", u"0x1.8p-1075", u"0x1p-1076", u"0x1.fffffffffffffp1023", u"0x1.fffffffffffff8p1023",
+    u"0x1.fffffffffffff7ffp1023", u"0x0.0000000000001p-1022", u"0x1p1024", u"0x.8p1", u"0X1P3", u"0x1.p0", u"0x.p1",
+    u"0x1p", u"0x", u"0xp1", u"0x1pf", u"0x1p1f", u"0x1p1d", u"0x10", u"0x1e3", u"1.", u".5", u".", u"-", u"+", u"+.", u"-.e1",
+    u"1e", u"1e+", u"1e-", u"1e+5", u"1E-3", u"1.e5", u".e5", u"e5", u"00012", u"-0", u"+0", u"-0.0", u"0e99999", u"1f", u"1d",
+    u"1F", u"1D", u"1ff", u"1fd", u"NaN", u"-NaN", u"+NaN", u"Infinity", u"-Infinity", u"+Infinity", u"NaNd", u"Infinityf",
+    u"infinity", u"nan", u"NAN", u"Inf", u"inf", u"INFINITY", u"Infinit", u"NA", u"N/A", u"1,5", u"1 000", u"1_000", u"12.5%",
+    u"3.2MiB", u"--1", u"+-1", u"1..2", u"1.2.3", u"1e1.5", u"0b101", u"1L", u"1.5f5"};
+
+// Ten digit sets that are not ASCII: Arabic-Indic, extended Arabic-Indic, Devanagari, Thai, full width, NKo, Bengali,
+// mathematical bold (supplementary), Myanmar, Khmer.
+constexpr char32_t kOtherZeros[] = {0x0660, 0x06F0, 0x0966, 0x0E50, 0xFF10, 0x07C0, 0x09E6, 0x1D7CE, 0x1040, 0x17E0};
+
+QString otherScriptDigits(Rng& rng, const QString& literal) {
+    const char32_t zero = pick(rng, kOtherZeros);
+    const bool all = rng.chance(0.6);
+    QString out;
+    for (const QChar c : literal) {
+        if (c >= u'0' && c <= u'9' && (all || rng.chance(0.5))) out += codePointText(zero + char32_t(c.unicode() - u'0'));
+        else out += c;
+    }
+    return out;
+}
+
+// One character replaced, inserted, removed or doubled.
+QString corrupt(Rng& rng, const QString& literal) {
+    constexpr QStringView noise = u"0123456789.eExXpP+- ,_aAfFdDnNIi١ ";
+    const int at = rng.between(0, int(literal.size()));
+    const QChar other = noise[rng.between(0, int(noise.size()) - 1)];
+    switch (rng.between(0, 3)) {
+    case 0: return at < literal.size() ? literal.left(at) + other + literal.mid(at + 1) : literal + other;
+    case 1: return literal.left(at) + other + literal.mid(at);
+    case 2: return at < literal.size() ? literal.left(at) + literal.mid(at + 1) : literal.chopped(literal.isEmpty() ? 0 : 1);
+    default: return at < literal.size() ? literal.left(at + 1) + literal.mid(at) : literal + literal.right(1);
+    }
+}
+
+// Characters up to U+0020 (which Double.valueOf drops) and other white space (which it keeps).
+constexpr QStringView kAsciiPads[] = {u" ", u"\t", u"\n", u"\r", u"\u000b", u"\u000c", QStringView(u"\0", 1), u"\u001f", u"  "};
+constexpr QStringView kOtherPads[] = {u" ", u"　", u" ", u"\u0085", u"﻿", u"​", u" ", u"\u007f"};
+
+QString padded(Rng& rng, const QString& literal) {
+    const auto pad = [&rng] { return rng.chance(0.7) ? pick(rng, kAsciiPads).toString() : pick(rng, kOtherPads).toString(); };
+    const int where = rng.between(0, 2);
+    return (where != 1 ? pad() : QString()) + literal + (where != 0 ? pad() : QString());
+}
+
+QString generateO(Rng& rng) {
+    const double roll = rng.next();
+    QString literal;
+    if (roll < 0.03) return hex(QString());
+    if (roll < 0.33) literal = decimalLiteral(rng);
+    else if (roll < 0.43) literal = hexLiteral(rng);
+    else if (roll < 0.49) literal = specialLiteral(rng);
+    else if (roll < 0.53) literal = longLiteral(rng);
+    else if (roll < 0.63) literal = pick(rng, kEdgeLiterals).toString();
+    else if (roll < 0.85) {
+        const double which = rng.next();
+        literal = corrupt(rng, which < 0.5 ? decimalLiteral(rng) : which < 0.75 ? hexLiteral(rng) : specialLiteral(rng));
+    } else if (roll < 0.91) {
+        literal = otherScriptDigits(rng, decimalLiteral(rng));
+    } else {
+        literal = text(rng, 6);
+    }
+    if (rng.chance(0.2)) literal = padded(rng, literal);
+    return hex(literal);
+}
+
 }  // namespace
 
 void registerKind(char kind, Generator gen) {
@@ -1056,6 +1313,8 @@ void registerGenerators() {
     registerKind('Y', generateY);
     registerKind('R', generateR);
     registerKind('N', generateN);
+    registerKind('H', generateH);
+    registerKind('O', generateO);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).

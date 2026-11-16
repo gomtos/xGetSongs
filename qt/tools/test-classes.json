@@ -1,0 +1,27 @@
+[
+  {
+    "kotlin": "shared/src/commonTest/kotlin/com/xgetsongs/shared/input/InputClassifierTest.kt",
+    "exe": "tst_input_classifier",
+    "added": []
+  },
+  {
+    "kotlin": "shared/src/commonTest/kotlin/com/xgetsongs/shared/filename/FilenameFormatterTest.kt",
+    "exe": "tst_filename_formatter",
+    "added": []
+  },
+  {
+    "kotlin": "shared/src/commonTest/kotlin/com/xgetsongs/shared/title/TitleParserTest.kt",
+    "exe": "tst_title_parser",
+    "added": ["leadingNonBmpLettersAreDroppedLikeEmoji"]
+  },
+  {
+    "kotlin": "shared/src/commonTest/kotlin/com/xgetsongs/shared/lyrics/LyricsExtractorTest.kt",
+    "exe": "tst_lyrics_extractor",
+    "added": ["extractOnOneMegabyteDescriptionFinishesQuickly"]
+  },
+  {
+    "kotlin": "shared/src/commonTest/kotlin/com/xgetsongs/shared/log/LogRedactionTest.kt",
+    "exe": "tst_log_redaction",
+    "added": ["redactPathsWithFiveThousandPartsFinishesQuickly"]
+  }
+]

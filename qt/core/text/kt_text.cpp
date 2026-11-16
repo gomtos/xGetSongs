@@ -2,7 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <charconv>
 #include <iterator>
+#include <limits>
+#include <string>
+#include <string_view>
 
 namespace xgs::kt {
 
@@ -28,6 +33,11 @@ struct SupplementaryCase {      // Character.toUpperCase(int)/toLowerCase(int) o
     char32_t upper;
     char32_t lower;
 };
+struct LetterOrDigitRange {     // code points above U+FFFF where Qt's letter-or-digit answer differs from JVM 21's; the JVM's
+    char32_t first;
+    char32_t last;
+    bool letterOrDigit;
+};
 
 #include "kt_tables.inc"
 
@@ -35,7 +45,9 @@ struct SupplementaryCase {      // Character.toUpperCase(int)/toLowerCase(int) o
 template <typename Table>
 constexpr bool isStrictlyAscending(const Table& table) {
     for (std::size_t i = 1; i < table.size(); ++i) {
-        if constexpr (requires { table[i].unit; }) {
+        if constexpr (requires { table[i].first; }) {
+            if (!(table[i - 1].last < table[i].first)) return false;
+        } else if constexpr (requires { table[i].unit; }) {
             if (!(table[i - 1].unit < table[i].unit)) return false;
         } else {
             if (!(table[i - 1].codePoint < table[i].codePoint)) return false;
@@ -47,6 +59,24 @@ static_assert(isStrictlyAscending(kCharExceptions), "kt_tables.inc: kCharExcepti
 static_assert(isStrictlyAscending(kUpperSpecials), "kt_tables.inc: kUpperSpecials must be sorted by unit");
 static_assert(isStrictlyAscending(kLowerSpecials), "kt_tables.inc: kLowerSpecials must be sorted by unit");
 static_assert(isStrictlyAscending(kSupplementaryCases), "kt_tables.inc: kSupplementaryCases must be sorted by code point");
+static_assert(isStrictlyAscending(kSupplementaryLetterOrDigit), "kt_tables.inc: kSupplementaryLetterOrDigit must be sorted, disjoint");
+constexpr bool rangesAreWellFormed() {
+    for (const LetterOrDigitRange& range : kSupplementaryLetterOrDigit) {
+        if (range.first > range.last || range.first <= 0xFFFF) return false;
+    }
+    return true;
+}
+static_assert(rangesAreWellFormed(), "kt_tables.inc: a range of kSupplementaryLetterOrDigit is reversed or not above U+FFFF");
+
+// The range of a sorted, disjoint range table that holds `codePoint`, or nullptr.
+template <typename Table>
+auto findRange(const Table& table, char32_t codePoint) -> decltype(&table[0]) {
+    const auto it = std::upper_bound(table.begin(), table.end(), codePoint,
+                                     [](char32_t value, const auto& range) { return value < range.first; });
+    if (it == table.begin()) return nullptr;
+    const auto& range = *(it - 1);
+    return codePoint <= range.last ? &range : nullptr;
+}
 
 template <typename Table, typename Key>
 auto findEntry(const Table& table, Key key) -> decltype(&table[0]) {
@@ -231,6 +261,20 @@ bool isLetterOrDigit(QChar c) {
     return detail::qtCharFacts(c.unicode()).letterOrDigit;
 }
 
+// Above U+FFFF Qt's categories decide, except where JVM 21's answer differs (kSupplementaryLetterOrDigit: mostly letters of
+// scripts that Qt's newer Unicode has and JVM 21's has not).
+bool isLetterOrDigit(char32_t codePoint) {
+    if (codePoint <= 0xFFFF) return isLetterOrDigit(QChar(char16_t(codePoint)));
+    if (codePoint > 0x10FFFF) return false;
+    if (const LetterOrDigitRange* range = findRange(kSupplementaryLetterOrDigit, codePoint)) return range->letterOrDigit;
+    return detail::qtLetterOrDigit(codePoint);
+}
+
+bool isAsciiSpace(QChar c) {
+    const char16_t unit = c.unicode();
+    return unit == u' ' || unit == u'\t' || unit == u'\n' || unit == 0x000B || unit == u'\f' || unit == u'\r';
+}
+
 bool isHighSurrogate(QChar c) {
     return isHigh(c.unicode());
 }
@@ -323,6 +367,143 @@ bool isBlank(const QString& s) {
     return std::all_of(s.begin(), s.end(), [](QChar c) { return isWhitespace(c); });
 }
 
+// Qt's NFKC, told to follow Unicode 15.0, the Unicode version of JVM 21 (the Javadoc of java.lang.Character for Java 21).
+// QString::normalized documents the version argument as the version of the standard to normalize by; with it, the code
+// points that Qt's newer Unicode added are left alone exactly as JVM 21 leaves its unassigned code points (no decomposition,
+// no reordering, no composition across them), and unpaired surrogates stay as they are. The differential kinds Z (every code
+// point) and H (strings, with the decompositions and combining marks added after Unicode 15.0) find no difference, so no
+// exception table is needed; the one call of QString::normalized in the port is here (qt/tools/forbidden-calls.ps1).
+QString nfkc(const QString& s) {
+    return s.normalized(QString::NormalizationForm_KC, QChar::Unicode_15_0);
+}
+
+namespace {
+
+// Ignoring the sign, a magnitude estimate of a literal whose conversion over- or underflowed: true when it overflowed. The
+// literal is digits with an optional point and the exponent, all checked already; `radixLog2` is 0 for decimal (the exponent
+// counts powers of 10 and the digits are decimal) and 4 for hexadecimal (the digits are hex and the exponent counts powers
+// of 2). The first non-zero digit fixes the order of magnitude. MSVC's std::from_chars reports result_out_of_range only for
+// a result that rounds to infinity or to zero (subnormal results come back as values; kind O checks the edges of both), so
+// far from 1 that the sign of this estimate cannot be wrong.
+bool overflowed(std::string_view digits, long long exponent, int radixLog2) {
+    const std::size_t point = digits.find('.');
+    const std::string_view integer = digits.substr(0, point);
+    const std::size_t firstNonZero = digits.find_first_not_of("0.");
+    if (firstNonZero == std::string_view::npos) return false;
+    const long long place = firstNonZero < integer.size() ? (long long)(integer.size() - firstNonZero) - 1
+                                                          : -(long long)(firstNonZero - integer.size());
+    return (radixLog2 == 0 ? place : place * radixLog2) + exponent > 0;
+}
+
+// Decimal digits as an exponent value, saturated far beyond any double's range.
+long long exponentValue(std::string_view digits, bool negative) {
+    long long value = 0;
+    for (const char c : digits) value = std::min<long long>(value * 10 + (c - '0'), 1'000'000'000LL);
+    return negative ? -value : value;
+}
+
+constexpr bool isDecimalDigit(char c) { return c >= '0' && c <= '9'; }
+constexpr bool isHexDigit(char c) { return isDecimalDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+
+// Digits with at most one point and at least one digit; returns the length taken from `text` (0 when there are no digits).
+template <typename IsDigit>
+std::size_t significandLength(std::string_view text, IsDigit isDigit) {
+    std::size_t length = 0;
+    bool point = false;
+    bool digit = false;
+    for (; length < text.size(); ++length) {
+        const char c = text[length];
+        if (isDigit(c)) digit = true;
+        else if (c == '.' && !point) point = true;
+        else break;
+    }
+    return digit ? length : 0;
+}
+
+// The unsigned part of a floating-point literal of java.lang.Double.valueOf(String) without its suffix: a decimal literal
+// (Digits . Digits? Exponent? | . Digits Exponent? | Digits Exponent?) or a hexadecimal one (0x HexDigits . HexDigits? or
+// 0x . HexDigits, then p/P, an optional sign and Digits).
+std::optional<double> unsignedLiteral(std::string_view text) {
+    const bool hex = text.size() >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
+    const std::string_view body = hex ? text.substr(2) : text;
+    const std::size_t length = significandLength(body, hex ? isHexDigit : isDecimalDigit);
+    if (length == 0) return std::nullopt;
+    const std::string_view significand = body.substr(0, length);
+    std::string_view rest = body.substr(length);
+    long long exponent = 0;
+    std::string_view exponentDigits;
+    bool exponentNegative = false;
+    if (!rest.empty()) {
+        if (rest[0] != (hex ? 'p' : 'e') && rest[0] != (hex ? 'P' : 'E')) return std::nullopt;
+        rest.remove_prefix(1);
+        if (!rest.empty() && (rest[0] == '+' || rest[0] == '-')) {
+            exponentNegative = rest[0] == '-';
+            rest.remove_prefix(1);
+        }
+        if (rest.empty() || !std::all_of(rest.begin(), rest.end(), isDecimalDigit)) return std::nullopt;
+        exponentDigits = rest;
+        exponent = exponentValue(exponentDigits, exponentNegative);
+    } else if (hex) {
+        return std::nullopt;   // a hexadecimal literal needs its binary exponent
+    }
+    // std::from_chars wants the literal without "0x"; its "e"/"p" exponent reads the same digits.
+    std::string literal(significand);
+    if (!exponentDigits.empty()) {
+        literal += hex ? 'p' : 'e';
+        if (exponentNegative) literal += '-';
+        literal += exponentDigits;
+    }
+    double value = 0;
+    const auto [end, error] = std::from_chars(literal.data(), literal.data() + literal.size(), value,
+                                              hex ? std::chars_format::hex : std::chars_format::general);
+    if (error == std::errc::result_out_of_range) {
+        return overflowed(significand, exponent, hex ? 4 : 0) ? std::numeric_limits<double>::infinity() : 0.0;
+    }
+    if (error != std::errc() || end != literal.data() + literal.size()) return std::nullopt;
+    return value;
+}
+
+}  // namespace
+
+// Which strings are numbers follows the documented grammar of java.lang.Double.valueOf(String) (its Javadoc) and the answers
+// that Kotlin's String.toDoubleOrNull() gives on the JVM of the sidecar image (differential kind O): leading and trailing
+// characters up to U+0020 are dropped (as String.trim), then an optional sign and "NaN", "Infinity" or a floating-point
+// literal with an optional f/F/d/D suffix (which does not change the value). Only ASCII counts as digits, and nothing here
+// reads the locale (std::from_chars does not).
+std::optional<double> toDoubleOrNull(const QString& s) {
+    qsizetype begin = 0;
+    qsizetype end = s.size();
+    while (begin < end && s[begin].unicode() <= 0x20) ++begin;
+    while (end > begin && s[end - 1].unicode() <= 0x20) --end;
+    std::string ascii;
+    ascii.reserve(std::size_t(end - begin));
+    for (qsizetype i = begin; i < end; ++i) {
+        const char16_t unit = s[i].unicode();
+        if (unit > 0x7E) return std::nullopt;
+        ascii += char(unit);
+    }
+    std::string_view text = ascii;
+    bool negative = false;
+    if (!text.empty() && (text[0] == '+' || text[0] == '-')) {
+        negative = text[0] == '-';
+        text.remove_prefix(1);
+    }
+    if (text == "NaN") return std::numeric_limits<double>::quiet_NaN();
+    if (text == "Infinity") return negative ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
+    if (!text.empty() && (text.back() == 'f' || text.back() == 'F' || text.back() == 'd' || text.back() == 'D')) text.remove_suffix(1);
+    const std::optional<double> value = unsignedLiteral(text);
+    if (!value) return std::nullopt;
+    return negative ? -*value : *value;
+}
+
+QString hexBits(double value) {
+    static constexpr char16_t digits[] = u"0123456789abcdef";
+    const quint64 bits = std::bit_cast<quint64>(value);
+    QString out(16, u'0');
+    for (int i = 0; i < 16; ++i) out[i] = QChar(digits[(bits >> (60 - 4 * i)) & 15]);
+    return out;
+}
+
 bool startsWith(QStringView s, QStringView prefix, qsizetype from, CaseMode mode) {
     return regionMatchesImpl(s, from, prefix, 0, prefix.size(), mode == CaseMode::Ignore);
 }
@@ -395,6 +576,20 @@ CharFacts qtCharFacts(char16_t unit) {
                             category == QChar::Separator_Paragraph || (unit >= 0x0009 && unit <= 0x000D) ||
                             (unit >= 0x001C && unit <= 0x001F);
     return {whitespace, letter, letter || category == QChar::Number_DecimalDigit, c.toUpper().unicode(), c.toLower().unicode()};
+}
+
+bool qtLetterOrDigit(char32_t codePoint) {
+    switch (QChar::category(codePoint)) {
+    case QChar::Letter_Uppercase:
+    case QChar::Letter_Lowercase:
+    case QChar::Letter_Titlecase:
+    case QChar::Letter_Modifier:
+    case QChar::Letter_Other:
+    case QChar::Number_DecimalDigit:
+        return true;
+    default:
+        return false;
+    }
 }
 
 }  // namespace detail
