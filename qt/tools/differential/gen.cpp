@@ -2050,8 +2050,9 @@ QString winPath(Rng& rng) {
 
 // The video id of a `dl` case: text(), so `* ? " < > |` and control characters occur and the port's refusal is checked against
 // Kotlin's ERR. Left out are the inputs on which the port throws and Kotlin does not (downloadCommand's header): an empty id
-// (replaced by "id"), `\`, `/` and `:` (removed), and control characters when the id has no ASCII letter or digit (Kotlin accepts
-// an id of control characters only; with a letter beside them it throws; removed otherwise).
+// (replaced by "id"), `\`, `/` and `:` (removed). Control characters are also removed when the id has no ASCII letter or digit:
+// that exclusion is wider than needed (the oracle answers ERR for every id with a U+0000..U+001F unit, alone or not; Q2a final
+// review), kept so that the generated cases stay the same.
 QString videoIdText(Rng& rng) {
     QString id = text(rng, 12);
     id.remove(u'\\').remove(u'/').remove(u':');

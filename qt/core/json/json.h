@@ -29,6 +29,9 @@
 //     state: 1000 nested arrays always parsed, 60000 never did); deep objects alone parsed at any depth tried (10^6).
 //     Here more than 1000 arrays open at once is an error and objects do not count. The reader and the destructor, copy
 //     and dump of a Value use no recursion, so no depth overflows the C++ stack.
+//
+// Resources: objects are not depth-counted and each open object costs a frame of the reader, so a hostile multi-megabyte
+// chain of `{"a":` can take a great deal of memory; std::bad_alloc is not caught. `find` is a linear scan of the object.
 namespace xgs::json {
 
 struct Value;

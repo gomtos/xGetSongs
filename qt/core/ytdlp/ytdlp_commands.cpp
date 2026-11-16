@@ -67,7 +67,10 @@ QStringList resolveVideoCommand(const ToolPaths& tools, const QString& url) {
 QStringList downloadCommand(const ToolPaths& tools, const QString& url, const QString& outputDir, const QString& videoId) {
     const QString progress = u"download:"_s + ProgressPrefix + u"|%(progress.status)s|%(progress.downloaded_bytes)s|"_s +
                              u"%(progress.total_bytes)s|%(progress.total_bytes_estimate)s"_s;
-    QStringList command{ytDlp(tools)};   // throws first, as the Kotlin original
+    // The order of the two checks differs from Kotlin's (there the path resolve of the id runs before the yt-dlp check), but
+    // both are std::invalid_argument here and both are IllegalArgumentException kinds there, so a caller sees the same kind
+    // whichever input is wrong.
+    QStringList command{ytDlp(tools)};
     if (!isPlainFileNamePart(videoId)) throw std::invalid_argument("video id is not a plain file name part");
     const QString output = outputDir + u'\\' + videoId + u".%(ext)s"_s;
     command += common();

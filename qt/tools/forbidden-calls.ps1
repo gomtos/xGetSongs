@@ -6,7 +6,8 @@
 #    functions whose meaning differs from Kotlin's or that depend on the locale or on Qt's Unicode version (case, category,
 #    folding, locale-aware comparison), unless the match is `kt::<name>(` (the Q1 list, $forbidden).
 # 2. Under all of qt/core, the xgs::kt layer and qt/core/json included (the Q2a list, $forbiddenQ2a): Qt's JSON classes,
-#    number parsing (toDouble/toInt/toLongLong), QString::number with a floating-point format ('e', 'f', 'g'),
+#    number parsing (toDouble/toInt/toLongLong and the siblings toUInt/toLong/toULong/toULongLong/toShort/toUShort/
+#    toFloat), setNum, QString::number with a floating-point format ('e', 'f', 'g'),
 #    normalization (normalized), and path clean-up (cleanPath, absoluteFilePath, absolutePath, canonicalPath,
 #    canonicalFilePath). The same work is done by xgs::kt and xgs::json. One exception, $allowedQ2a: `normalized(` in
 #    qt/core/text/kt_text.cpp, which implements kt::nfkc with it. (A QString::number of a double without a format argument
@@ -22,7 +23,7 @@ $spike = Join-Path $qt 'spike'
 $self = $MyInvocation.MyCommand.Path
 
 $forbidden = [regex]::new('isSpace\(|isLetterOrNumber\(|isLetter\(|isDigit\(|toLower\(|toUpper\(|trimmed\(|simplified\(|CaseInsensitive|QRegularExpression|isUpper\(|isLower\(|isNumber\(|isPunct\(|toCaseFolded\(|localeAwareCompare|QLocale', 'Compiled')
-$forbiddenQ2a = [regex]::new("QJsonDocument|QJsonObject|QJsonValue|QJsonArray|toDouble\(|toInt\(|toLongLong\(|QString::number\([^;]*?,\s*'[eEfFgG]'|normalized\(|cleanPath|absoluteFilePath|absolutePath|canonicalPath|canonicalFilePath", 'Compiled')
+$forbiddenQ2a = [regex]::new("QJsonDocument|QJsonObject|QJsonValue|QJsonArray|toDouble\(|toInt\(|toLongLong\(|toUInt\(|toLong\(|toULong\(|toULongLong\(|toShort\(|toUShort\(|toFloat\(|setNum\(|QString::number\([^;]*?,\s*'[eEfFgG]'|normalized\(|cleanPath|absoluteFilePath|absolutePath|canonicalPath|canonicalFilePath", 'Compiled')
 # file (relative to qt/core, with /) -> the $forbiddenQ2a matches it may contain
 $allowedQ2a = @{ 'text/kt_text.cpp' = @('normalized(') }
 $internals = [regex]::new('compareToCI|StringUTF16|regionMatchesCI|BreakIterator|sun\.text|jdk\.internal', 'Compiled')

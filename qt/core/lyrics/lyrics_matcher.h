@@ -10,8 +10,12 @@
 
 // Port of engine/.../lyrics/LyricsMatcher.kt: decides whether a record of the lyrics service is the song that was asked for,
 // and which of several is the best. The order of the checks, the constants and the tie-breaking are Kotlin's. Lengths and
-// indexes are UTF-16 units, as in Kotlin. The eight Kotlin regular expressions are hand-written scanners with the meaning of
-// a Java regular expression without flags (lyrics_matcher.cpp).
+// indexes are UTF-16 units, as in Kotlin. The six Kotlin regular expressions are hand-written scanners with the meaning of
+// the Java regular expressions. Only CREDIT is case-insensitive, and Kotlin's IGNORE_CASE folds Unicode case; the scanner folds
+// ASCII only, which is the same for CREDIT's letters but would not be for a pattern with s, k or i (lyrics_matcher.cpp).
+//
+// Cost: bracket removal repeats a scan of the whole title once per nesting level (nesting depth x length). Callers that pass
+// text from the network (Q2c: candidate fields of the lyrics service) should cap the field lengths.
 //
 // One deliberate divergence from Kotlin (a user decision of 2026-11-15): in matching, the Greek letters σ (U+03C3) and ς
 // (U+03C2) are the same letter. The normalisation lowercases and then writes ς as σ, so a title typed with σ at the end of a
@@ -38,7 +42,7 @@ QStringList artistVariants(const QString& artist);
 QString normalizeForMatching(const QString& text);
 // True when the candidate can be the song of the query (lyrics, titles, artists and lengths agree).
 bool isMatch(const LyricsQuery& query, const LyricsCandidate& candidate);
-/// 고른 후보의 인덱스. 맞는 것이 없으면 -1. (Kotlin pick은 후보를 돌려준다)
+// The index of the chosen candidate, or -1 when none matches. (Kotlin's pick returns the candidate itself.)
 qsizetype pick(const LyricsQuery& query, const QList<LyricsCandidate>& candidates);
 
 }  // namespace xgs::lyrics

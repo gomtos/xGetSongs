@@ -220,6 +220,13 @@ private slots:
         row(u"Infinity", "7ff0000000000000");
         row(u"-Infinity", "fff0000000000000");
         row(u"+1", "3ff0000000000000");
+        // out of range for std::from_chars (it reports result_out_of_range); the bits are the oracle's answers
+        row(u"4.9e-324", "0000000000000001");   // the smallest subnormal
+        row(u"1e-310", "000012688b70e62b");     // a subnormal in the middle
+        row(u"1e-400", "0000000000000000");     // rounds to zero
+        row(u"-1e-400", "8000000000000000");
+        row(u"1e400", "7ff0000000000000");      // overflows to infinity
+        row(u"-1e400", "fff0000000000000");
     }
 
     void toDoubleOrNullAcceptsWhatKotlinAccepts() {

@@ -9,13 +9,14 @@
 // Plain data types of the engine, from shared/.../api/ApiModels.kt (ResolvedItem, ResolveResponse, JobOptions, Stage, JobStatus,
 // JobSummary, LyricsOutcome, JobEvent, ToolInfo, ToolsStatus), engine/.../tools/ToolLocator.kt (ToolPaths) and
 // engine/.../lyrics/LyricsProvider.kt (LyricsQuery). Field names, defaults and enum order are Kotlin's. The HTTP and JSON parts
-// (requests, error bodies, SSE names, browser commands) do not exist in the Qt version.
+// (requests, error bodies, SSE names, browser commands) do not exist in the Qt version. Every member has an initialiser (0,
+// false or the first enumerator where Kotlin has no default), so a default-constructed value is determinate.
 namespace xgs {
 
 enum class InputKind { Playlist, Video };
 
 struct ResolvedItem {
-    int rank;
+    int rank = 0;
     QString videoId;
     QString title;
     std::optional<QString> channel;
@@ -31,7 +32,7 @@ struct ResolvedItem {
 // Kotlin ResolveResponse.
 struct ResolveResult {
     QString resolveId;
-    InputKind kind;
+    InputKind kind = InputKind::Playlist;
     std::optional<QString> playlistTitle;
     QList<ResolvedItem> items;
     bool truncated = false;
@@ -53,49 +54,49 @@ enum class Stage { Downloading, Finishing };
 enum class JobStatus { Completed, Cancelled, Failed };
 
 struct JobSummary {
-    int succeeded;
-    int skipped;
-    int failed;
+    int succeeded = 0;
+    int skipped = 0;
+    int failed = 0;
     bool operator==(const JobSummary&) const = default;
 };
 
 enum class LyricsOutcome { Description, Online, NotFound, SearchOff };
 
 struct ItemStarted {
-    int rank;
+    int rank = 0;
     QString videoId;
     QString fileName;
     bool operator==(const ItemStarted&) const = default;
 };
 
 struct Progress {
-    int rank;
-    Stage stage;
+    int rank = 0;
+    Stage stage = Stage::Downloading;
     std::optional<double> percent;
     bool operator==(const Progress&) const = default;
 };
 
 struct ItemDone {
-    int rank;
+    int rank = 0;
     QString fileName;
     std::optional<LyricsOutcome> lyrics;
     bool operator==(const ItemDone&) const = default;
 };
 
 struct ItemSkipped {
-    int rank;
+    int rank = 0;
     QString reason;
     bool operator==(const ItemSkipped&) const = default;
 };
 
 struct ItemFailed {
-    int rank;
+    int rank = 0;
     QString message;
     bool operator==(const ItemFailed&) const = default;
 };
 
 struct JobDone {
-    JobStatus status;
+    JobStatus status = JobStatus::Completed;
     JobSummary summary;
     bool operator==(const JobDone&) const = default;
 };
@@ -103,7 +104,7 @@ struct JobDone {
 using JobEvent = std::variant<ItemStarted, Progress, ItemDone, ItemSkipped, ItemFailed, JobDone>;
 
 struct ToolInfo {
-    bool found;
+    bool found = false;
     std::optional<QString> version;
     std::optional<QString> path;
     bool operator==(const ToolInfo&) const = default;

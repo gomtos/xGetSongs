@@ -9,10 +9,22 @@
 
 #include "text/kt_text.h"
 
-// The regular expressions of LyricsMatcher.kt are scanners here. Their meaning was taken from the public documentation of
-// java.util.regex.Pattern (a Java regular expression without flags: `\s` is [ \t\n\x0B\f\r], CASE_INSENSITIVE alone compares
-// US-ASCII letters only, `[0-9]` is the ASCII digits, a match is the leftmost one and findAll/replace go on after it without
-// overlap) and was confirmed against the Kotlin original through qt/tools/differential (kind I).
+// The six regular expressions of LyricsMatcher.kt are scanners here. Their meaning was taken from the public documentation of
+// java.util.regex.Pattern (`\s` is [ \t\n\x0B\f\r], `[0-9]` is the ASCII digits, a match is the leftmost one and
+// findAll/replace go on after it without overlap) and was confirmed against the Kotlin original through qt/tools/differential
+// (kind I).
+//
+// Case: only CREDIT has RegexOption.IGNORE_CASE, and in Kotlin that option turns on Unicode case folding too (the compiled
+// Pattern's flags are CASE_INSENSITIVE | UNICODE_CASE). The scanner folds ASCII letters only, and that gives the same result
+// for CREDIT's words `feat`, `ft`, `prod`, `narr`: their letters are a d e f n o p r t, and no character outside ASCII has
+// one of these as its upper- or lowercase form (the non-ASCII characters that fold to an ASCII letter are ſ U+017F to s,
+// the Kelvin sign U+212A to k, and İ U+0130 / ı U+0131 to i). A pattern with s, k or i in it could NOT be ported this way.
+// The version words (VERSION_WORD, LIVE_LIKE_WORD) do contain s, k and i (`version`, `inst`, `korean`, `live`, `remix`...),
+// but Kotlin compiles them without IGNORE_CASE and matches them against the words of text that is already NFKC-normalised
+// and lowercased: NFKC turns ſ into s and the Kelvin sign into K (lowercased to k), and İ lowercases to i + U+0307, whose
+// combining dot is no letter and so ends the word; ı stays ı. The scanner does the same NFKC, lowercasing and word split and
+// compares exactly, so it agrees (oracle probes of ſ, U+212A, İ and ı inside version words through `match`, `norm` and `tv`
+// gave the same answers on both sides, Q2a final review).
 namespace xgs::lyrics {
 
 namespace {
@@ -102,7 +114,8 @@ QString replaceSpans(const QString& text, const QList<Span>& spans, QStringView 
     return out;
 }
 
-// One US-ASCII letter compared without case, as CASE_INSENSITIVE without UNICODE_CASE does: only A-Z and a-z fold.
+// One US-ASCII letter compared without case: only A-Z and a-z fold. Kotlin's IGNORE_CASE folds Unicode case too; for the
+// letters of CREDIT's words that changes nothing (see the comment at the top of this file).
 char16_t asciiFolded(char16_t unit) {
     return unit >= u'A' && unit <= u'Z' ? char16_t(unit - u'A' + u'a') : unit;
 }
@@ -119,7 +132,8 @@ bool isAsciiSpaceAt(const QString& text, qsizetype at) {
 }
 
 // CREDIT `\s+(?:feat\.?|ft\.?|prod\.?|narr\.?)\s+.*$` with IGNORE_CASE and DOT_MATCHES_ALL: the start of its leftmost match, or
-// nullopt. The match is a run of ASCII white space, one of the words (US-ASCII case-insensitively; a dot after it may be there),
+// nullopt. The match is a run of ASCII white space, one of the words (case-insensitively; ASCII folding is enough for these
+// letters, see the top of this file; a dot after it may be there),
 // at least one ASCII white space and everything up to the end (`.` takes line terminators too, so `.*` reaches the end and `$`
 // matches there). `\s+` must take its whole run (a letter follows), so a start inside a run reaches the same word as the run's
 // first unit, and the scan goes on after the run.
@@ -211,7 +225,8 @@ QStringList words(const QString& text) {
 }
 
 // Regex.matches: the whole word is one of the stems, one of the endings or none, and ASCII digits ([0-9]*). Every stem and
-// ending is tried (`ver` and `version` are both stems).
+// ending is tried (`ver` and `version` are both stems). Compared exactly, as Kotlin's patterns have no IGNORE_CASE: the word
+// comes from words(), already NFKC-normalised and lowercased (see the top of this file for ſ, K, İ and ı).
 template <std::size_t S, std::size_t E>
 bool wholeWordMatches(const QString& word, const QStringView (&stems)[S], const QStringView (&endings)[E]) {
     const auto onlyAsciiDigits = [](QStringView rest) {

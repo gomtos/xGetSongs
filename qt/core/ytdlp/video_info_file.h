@@ -25,7 +25,8 @@ struct VideoInfo {
 ///  - `duration`, a JSON number rounded to whole seconds (ties towards positive infinity); empty when it is absent, null,
 ///    not a number (a string such as "258" is not), not positive once rounded or larger than INT_MAX.
 /// All are empty when the file is missing, unreadable, a directory, not valid UTF-8 (a BOM is not skipped) or not valid
-/// JSON (xgs::json), or its root is not an object. Never throws.
+/// JSON (xgs::json), or its root is not an object. Never throws, except when memory runs out (std::bad_alloc is not
+/// caught; see xgs::json for what a hostile file can cost).
 VideoInfo readVideoInfo(const QString& filePath);
 
 /// The same from the bytes of a file (what readVideoInfo does once it has read the file).

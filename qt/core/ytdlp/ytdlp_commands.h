@@ -22,9 +22,11 @@ QStringList resolveVideoCommand(const ToolPaths& tools, const QString& url);    
 // converted to JPEG as `<outputDir>\<videoId>.jpg` and the video's info as `<outputDir>\<videoId>.info.json`.
 // Also throws std::invalid_argument when videoId is empty or contains one of `\ / : * ? " < > |` or a code unit below U+0020: the
 // id comes from yt-dlp's output and is joined into a file path. Kotlin (Path.resolve) throws for `* ? " < > |`, for `:` alone and
-// for most control characters next to other text; this port is STRICTER where Kotlin does not throw: for an empty id, `\`, `/`
-// (Kotlin changes the directory or the separators) and `:` or a control character inside an id (Kotlin reads `a:b` as a drive-
-// relative path and drops outputDir).
+// for every code unit U+0000..U+001F (alone or next to other text, as the oracle answers); this port is STRICTER where Kotlin
+// does not throw: for an empty id, `\`, `/` (Kotlin changes the directory or the separators) and `:` inside an id (Kotlin reads
+// `a:b` as a drive-relative path and drops outputDir).
+// The `-o` value is a yt-dlp output template: a `%` in outputDir or in the id is read by yt-dlp as a template field. This
+// function does not escape it (neither does Kotlin); the caller owns that.
 QStringList downloadCommand(const ToolPaths& tools, const QString& url, const QString& outputDir, const QString& videoId);
 
 }  // namespace xgs::ytdlp
