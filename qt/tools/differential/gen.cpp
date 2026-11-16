@@ -1292,6 +1292,237 @@ QString generateO(Rng& rng) {
     return hex(literal);
 }
 
+// ---- kind J: kotlinx.serialization's Json.parseToJsonElement (xgs::json) ----
+// Documents from a grammar (objects, arrays, strings, literals; depth 0..6, sometimes a chain of 60, rarely the deep
+// families below), every category of the Step 2 observations, and in 30% one place broken.
+
+// Unquoted values: what Python writes, what JSON calls numbers and words that are neither (all literals for Kotlin).
+constexpr QStringView kJsonLiterals[] = {
+    u"NaN", u"Infinity", u"-Infinity", u"true", u"false", u"null", u"TRUE", u"NULL", u"True", u"Null", u"nul", u"tru",
+    u"1e", u"01", u"+1", u".5", u"1.", u"0x10", u"1e999", u"-1e999", u"123456789012345678901234567890", u"-0", u"1.5e-400",
+    u"abc", u"-", u"'a'", u"1/*c*/", u"nullx", u"null1", u"가나", u"😀", u"1\x00a0", u"\xFEFF", u"\xD83D", u"a-b_c$d",
+    u"1.2.3", u"--1", u"#", u"//", u"NA", u"None", u"undefined", u"0", u"42", u"-2.5E-3", u"258.5"};
+// Keys written as they stand between the quotes: few, so that keys repeat; the escape of U+0061 is another spelling of `a`.
+constexpr QStringView kJsonKeys[] = {u"a", u"b", u"id", u"album", u"description", u"duration", u"", u"한", u"\\u0061",
+                                     u"A", u"a ", u"😀", u"\xDC00", u"\\n", u"title"};
+constexpr QStringView kJsonWhite[] = {u" ", u"\t", u"\n", u"\r", u"\r\n", u"  \n  "};
+// White space Kotlin does not skip (form feed, vertical tab, no-break space, line separator, ideographic space, next
+// line, BOM, U+001F, NUL)
+constexpr QStringView kJsonOtherWhite[] = {u"\u000c", u"\u000b", u"\x00A0", u"\x2028", u"\x3000", u"\u0085", u"\xFEFF",
+                                           u"\u001f", QStringView(u"\0", 1)};
+constexpr QStringView kJsonShortEscapes[] = {u"\\\"", u"\\\\", u"\\/", u"\\b", u"\\f", u"\\n", u"\\r", u"\\t"};
+constexpr QStringView kJsonBadEscapes[] = {u"\\x41", u"\\'", u"\\U0041", u"\\a", u"\\0", u"\\u12G4", u"\\u004", u"\\\n",
+                                           u"\\u", u"\\u00", u"\\uＡ000"};
+constexpr char16_t kJsonEscapedUnits[] = {0x0000, 0x001f, 0x0022, 0x005c, 0x0041, 0x00e9, 0xd83d, 0xde00, 0xdbff, 0xdfff,
+                                          0xac00, 0xfeff, 0x2028, 0x007f};
+
+QString jsonSpace(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.55) return QString();
+    if (roll < 0.8) return u" "_s;
+    if (roll < 0.99) return pick(rng, kJsonWhite).toString();
+    return pick(rng, kJsonOtherWhite).toString();
+}
+
+QString hex4Of(Rng& rng, char16_t unit) {
+    QString out = u"%1"_s.arg(int(unit), 4, 16, QChar(u'0'));
+    if (rng.chance(0.4)) {
+        for (QChar& c : out) {
+            if (c >= u'a' && c <= u'f') c = QChar(char16_t(c.unicode() - u'a' + u'A'));
+        }
+    }
+    return out;
+}
+
+// The text between the quotes of a string: token() material (its `"` and `\` escaped, now and then left raw), escapes
+// valid and not, raw control characters.
+QString jsonStringBody(Rng& rng) {
+    QString out;
+    const int pieces = rng.chance(0.15) ? 0 : rng.between(1, 6);
+    for (int i = 0; i < pieces; ++i) {
+        const double roll = rng.next();
+        if (roll < 0.45) {
+            QString piece = token(rng);
+            if (!rng.chance(0.03)) piece.replace(u'\\', u"\\\\"_s).replace(u'"', u"\\\""_s);
+            out += piece;
+        } else if (roll < 0.62) {
+            out += pick(rng, kJsonShortEscapes);
+        } else if (roll < 0.76) {
+            const char16_t unit = rng.chance(0.8) ? pick(rng, kJsonEscapedUnits) : char16_t(rng.between(0, 0xFFFF));
+            out += u"\\u"_s + hex4Of(rng, unit);
+        } else if (roll < 0.8) {
+            out += u"\\u"_s + hex4Of(rng, 0xd83d) + u"\\u"_s + hex4Of(rng, 0xde00);
+        } else if (roll < 0.815) {
+            out += pick(rng, kJsonBadEscapes);
+        } else if (roll < 0.87) {
+            out += pick(rng, kControl);
+        } else {
+            out += charOf(rng, kAscii).repeated(rng.between(1, 5));
+        }
+    }
+    return out;
+}
+
+QString jsonLiteral(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.35) return decimalLiteral(rng);
+    if (roll < 0.9) return pick(rng, kJsonLiterals).toString();
+    // token() material as it comes (it may hold a character that ends a literal, or white space)
+    QString out;
+    const int count = rng.between(1, 3);
+    for (int i = 0; i < count; ++i) out += token(rng);
+    return out;
+}
+
+QString jsonKey(Rng& rng, QStringList& used) {
+    QString key;
+    if (!used.isEmpty() && rng.chance(0.15)) key = used[rng.between(0, int(used.size()) - 1)];   // a repeated key
+    else if (rng.chance(0.85)) key = pick(rng, kJsonKeys).toString();
+    else key = jsonStringBody(rng);
+    used.append(key);
+    return u"\""_s + key + u"\"";
+}
+
+QString jsonValue(Rng& rng, int depth, int maxDepth);
+
+QString jsonObject(Rng& rng, int depth, int maxDepth, const QString& forcedChild = QString()) {
+    QString out = u"{"_s + jsonSpace(rng);
+    QStringList used;
+    const int count = rng.chance(0.1) ? rng.between(5, 9) : rng.between(0, 4);
+    const int forcedAt = forcedChild.isNull() ? -1 : rng.between(0, count);
+    const int total = forcedChild.isNull() ? count : count + 1;
+    for (int i = 0; i < total; ++i) {
+        if (i > 0) out += jsonSpace(rng) + u"," + jsonSpace(rng);
+        const QString value = i == forcedAt ? forcedChild : jsonValue(rng, depth + 1, maxDepth);
+        out += jsonKey(rng, used) + jsonSpace(rng) + u":" + jsonSpace(rng) + value;
+    }
+    return out + jsonSpace(rng) + u"}";
+}
+
+QString jsonArray(Rng& rng, int depth, int maxDepth, const QString& forcedChild = QString()) {
+    QString out = u"["_s + jsonSpace(rng);
+    const int count = rng.chance(0.1) ? rng.between(5, 9) : rng.between(0, 4);
+    const int forcedAt = forcedChild.isNull() ? -1 : rng.between(0, count);
+    const int total = forcedChild.isNull() ? count : count + 1;
+    for (int i = 0; i < total; ++i) {
+        if (i > 0) out += jsonSpace(rng) + u"," + jsonSpace(rng);
+        out += i == forcedAt ? forcedChild : jsonValue(rng, depth + 1, maxDepth);
+    }
+    return out + jsonSpace(rng) + u"]";
+}
+
+QString jsonValue(Rng& rng, int depth, int maxDepth) {
+    const double roll = depth >= maxDepth ? 0.4 + 0.6 * rng.next() : rng.next();
+    if (roll < 0.22) return jsonObject(rng, depth, maxDepth);
+    if (roll < 0.4) return jsonArray(rng, depth, maxDepth);
+    if (roll < 0.68) return u"\""_s + jsonStringBody(rng) + u"\"";
+    return jsonLiteral(rng);
+}
+
+// A chain of [levels] containers (each an object or an array at random, with siblings), a value at the bottom.
+QString jsonChain(Rng& rng, int levels) {
+    QString inner = jsonValue(rng, 0, 1);
+    for (int i = 0; i < levels; ++i) inner = rng.chance(0.5) ? jsonObject(rng, 5, 6, inner) : jsonArray(rng, 5, 6, inner);
+    return inner;
+}
+
+// The deep families. Kotlin's answer is certain only up to 1000 open arrays (with at most one object between two of
+// them) and from 60000; between those it depends on the JVM's state, so nothing here nests arrays deeper than 1000 and
+// shallower than 60000. Object chains of any depth parse in Kotlin.
+QString jsonDeep(Rng& rng) {
+    const auto nest = [](QStringView open, const QString& inner, QStringView close, int n) {
+        return open.toString().repeated(n) + inner + close.toString().repeated(n);
+    };
+    switch (rng.between(0, 10)) {
+    case 9:
+    case 10: return nest(u"[", rng.chance(0.5) ? QString() : jsonLiteral(rng), u"]", 60000);   // Kotlin: always a stack overflow
+    case 0: return nest(u"[", rng.chance(0.5) ? QString() : jsonLiteral(rng), u"]", 1000);
+    case 1: return nest(u"[{\"a\":", u"1"_s, u"}]", rng.chance(0.5) ? 1000 : rng.between(990, 999));
+    case 2: return u"["_s + nest(u"[", QString(), u"]", 999) + u"," + nest(u"[", u"\"x\""_s, u"]", 999) + u"]";
+    case 3: return nest(u"{\"a\":", jsonValue(rng, 0, 2), u"}", rng.between(1001, 3000));
+    case 4: return nest(u"{\"k\":1,\"a\":", nest(u"[", u"0"_s, u"]", 1000), u"}", rng.between(1, 2000));
+    case 5: return nest(u"[", nest(u"{\"a\":", u"null"_s, u"}", rng.between(1001, 3000)), u"]", 1000);
+    case 6: return rng.chance(0.5) ? u"["_s.repeated(rng.between(500, 1000)) : u"{\"a\":"_s.repeated(rng.between(1000, 3000));   // unclosed
+    case 7: return nest(u"[", QString(), u"]", 1000) + u"]";   // one bracket too many
+    default: return nest(u"[", QString(), u"]", rng.between(1, 1000));
+    }
+}
+
+// One place broken: a character deleted, inserted or replaced, a key's quotes removed, a comma added, the text cut,
+// garbage after it, a BOM or a comment in front, single quotes, other white space, a comma turned into `]`.
+QString jsonBreak(Rng& rng, const QString& doc) {
+    constexpr QStringView noise = u"{}[],:\"\\' /#*\n\tax0-\x00A0";
+    const int at = rng.between(0, int(doc.size()));
+    switch (rng.between(0, 10)) {
+    case 10: {
+        // a comma turned into `]` (which, after an array item and before a value, Kotlin takes for a comma)
+        QList<qsizetype> commas;
+        for (qsizetype i = 0; i < doc.size(); ++i) {
+            if (doc[i] == u',') commas.append(i);
+        }
+        if (commas.isEmpty()) return doc + u"]x]"_s;
+        QString out = doc;
+        out[commas[rng.between(0, int(commas.size()) - 1)]] = u']';
+        return out;
+    }
+    case 0: return at < doc.size() ? doc.left(at) + doc.mid(at + 1) : doc.chopped(doc.isEmpty() ? 0 : 1);
+    case 1: return doc.left(at) + noise[rng.between(0, int(noise.size()) - 1)] + doc.mid(at);
+    case 2: return at < doc.size() ? doc.left(at) + noise[rng.between(0, int(noise.size()) - 1)] + doc.mid(at + 1) : doc + u"x";
+    case 3: {
+        // the quotes around the first key (or around the first string)
+        const qsizetype open = doc.indexOf(u'"');
+        const qsizetype close = open < 0 ? -1 : doc.indexOf(u'"', open + 1);
+        if (close < 0) return doc + u",";
+        return doc.left(open) + doc.mid(open + 1, close - open - 1) + doc.mid(close + 1);
+    }
+    case 4: {
+        // a trailing or doubled comma before a closing bracket or after a comma
+        QList<qsizetype> places;
+        for (qsizetype i = 0; i < doc.size(); ++i) {
+            if (doc[i] == u']' || doc[i] == u'}' || doc[i] == u',') places.append(i);
+        }
+        if (places.isEmpty()) return u","_s + doc;
+        const qsizetype place = places[rng.between(0, int(places.size()) - 1)];
+        return doc.left(place) + u"," + doc.mid(place);
+    }
+    case 5: return doc.left(at);
+    case 6: {
+        constexpr QStringView garbage[] = {u" x", u"]", u"}", u",", u"//c", u"/*c*/", QStringView(u"\0", 1), u" 1", u" \"y\"", u"\xFEFF"};
+        return doc + pick(rng, garbage);
+    }
+    case 7: return (rng.chance(0.5) ? u"\xFEFF"_s : u"/*c*/"_s) + doc;
+    case 8: {
+        QString out = doc;
+        const qsizetype first = out.indexOf(u'"');
+        const qsizetype second = first < 0 ? -1 : out.indexOf(u'"', first + 1);
+        if (second < 0) return out + u"'";
+        out[first] = u'\'';
+        out[second] = u'\'';
+        return out;
+    }
+    default: return doc.left(at) + jsonSpace(rng) + pick(rng, kJsonOtherWhite) + doc.mid(at);
+    }
+}
+
+QString generateJ(Rng& rng) {
+    const double roll = rng.next();
+    QString doc;
+    if (roll < 0.008) return hex(jsonDeep(rng));
+    if (roll < 0.018) {
+        // nothing, white space only, or white space Kotlin does not skip
+        const int count = rng.between(0, 3);
+        for (int i = 0; i < count; ++i) doc += rng.chance(0.7) ? pick(rng, kJsonWhite) : pick(rng, kJsonOtherWhite);
+        return hex(doc);
+    }
+    if (roll < 0.03) doc = jsonChain(rng, 60);
+    else if (roll < 0.75) doc = jsonObject(rng, 0, rng.chance(0.75) ? rng.between(1, 3) : rng.between(4, 6));
+    else if (roll < 0.85) doc = jsonArray(rng, 0, rng.between(1, 6));
+    else doc = jsonValue(rng, 0, 0);   // a string or a literal at the top
+    if (rng.chance(0.15)) doc = jsonSpace(rng) + doc + jsonSpace(rng);
+    if (rng.chance(0.3)) doc = jsonBreak(rng, doc);
+    return hex(doc);
+}
+
 }  // namespace
 
 void registerKind(char kind, Generator gen) {
@@ -1315,6 +1546,7 @@ void registerGenerators() {
     registerKind('N', generateN);
     registerKind('H', generateH);
     registerKind('O', generateO);
+    registerKind('J', generateJ);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).

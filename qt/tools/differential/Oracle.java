@@ -16,6 +16,12 @@ import java.util.Locale;
 import java.util.TreeMap;
 import kotlin.text.CharsKt;
 import kotlin.text.StringsKt;
+import kotlinx.serialization.json.Json;
+import kotlinx.serialization.json.JsonArray;
+import kotlinx.serialization.json.JsonElement;
+import kotlinx.serialization.json.JsonNull;
+import kotlinx.serialization.json.JsonObject;
+import kotlinx.serialization.json.JsonPrimitive;
 
 /**
  * The Kotlin side of the Qt port's differential test (qt/tools/differential/run.ps1): the answers of the Kotlin originals
@@ -58,6 +64,8 @@ import kotlin.text.StringsKt;
  *         H text                             Normalizer.normalize(text, Normalizer.Form.NFKC)  -> OK hex
  *         O text                             String.toDoubleOrNull()  -> NULL | the 16 hex digits of
  *                                            Double.doubleToRawLongBits
+ *         J text                             Json.Default.parseToJsonElement(text)  -> ERR (anything thrown) | the
+ *                                            canonical dump (dumpJson)
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
@@ -175,6 +183,48 @@ public class Oracle {
         }
     }
 
+    // The canonical dump of kind J (the same on both sides): N (JsonNull), S<hex> (a string primitive), L<hex> (the content
+    // of any other primitive), O{<key hex>:<value>,...} in the order of entries, A[<value>,...]. Iterative, so that the
+    // dump of a deep document cannot overflow the stack.
+    static String dumpJson(JsonElement root) {
+        StringBuilder out = new StringBuilder();
+        java.util.ArrayDeque<Object> work = new java.util.ArrayDeque<>();
+        work.push(root);
+        while (!work.isEmpty()) {
+            Object item = work.pop();
+            if (item instanceof String text) {
+                out.append(text);
+            } else if (item instanceof JsonNull) {
+                out.append('N');
+            } else if (item instanceof JsonPrimitive primitive) {
+                out.append(primitive.isString() ? 'S' : 'L').append(enc(primitive.getContent()));
+            } else if (item instanceof JsonObject object) {
+                java.util.List<Object> parts = new java.util.ArrayList<>();
+                parts.add("O{");
+                boolean first = true;
+                for (var entry : object.entrySet()) {
+                    parts.add((first ? "" : ",") + enc(entry.getKey()) + ":");
+                    parts.add(entry.getValue());
+                    first = false;
+                }
+                parts.add("}");
+                for (int k = parts.size() - 1; k >= 0; k--) work.push(parts.get(k));
+            } else if (item instanceof JsonArray array) {
+                java.util.List<Object> parts = new java.util.ArrayList<>();
+                parts.add("A[");
+                for (int k = 0; k < array.size(); k++) {
+                    if (k > 0) parts.add(",");
+                    parts.add(array.get(k));
+                }
+                parts.add("]");
+                for (int k = parts.size() - 1; k >= 0; k--) work.push(parts.get(k));
+            } else {
+                out.append('?');
+            }
+        }
+        return out.toString();
+    }
+
     public static void main(String[] args) throws Exception {
         StringBuilder out = new StringBuilder();
         if (args.length > 0) {
@@ -268,6 +318,17 @@ public class Oracle {
                     // String.toDoubleOrNull() is an ordinary function of the kotlin.text.StringsKt facade.
                     Double value = StringsKt.toDoubleOrNull(dec(part[1]));
                     out.append(value == null ? "NULL" : String.format(Locale.ROOT, "%016x", Double.doubleToRawLongBits(value)));
+                    break;
+                }
+                case "J": {
+                    String dumped;
+                    try {
+                        dumped = dumpJson(Json.Default.parseToJsonElement(dec(part[1])));
+                    } catch (Throwable e) {
+                        // any exception (and an error such as a stack overflow, should a document be deep enough)
+                        dumped = "ERR";
+                    }
+                    out.append(dumped);
                     break;
                 }
                 case "C": {

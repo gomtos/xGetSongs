@@ -32,6 +32,7 @@
 #include "filename/filename_formatter.h"
 #include "gen.h"
 #include "input/input_classifier.h"
+#include "json/json.h"
 #include "log/log_redaction.h"
 #include "lyrics/lyrics_extractor.h"
 #include "text/kt_text.h"
@@ -215,6 +216,14 @@ QString answerO(const QStringList& fields) {
     return value ? kt::hexBits(*value) : QStringLiteral("NULL");
 }
 
+// ---- kind J ----
+// J text -> ERR | the canonical dump (json::parse, json::dump)
+QString answerJ(const QStringList& fields) {
+    if (fields.size() < 1) return QStringLiteral("?");
+    const std::optional<json::Value> value = json::parse(textOf(fields.at(0)));
+    return value ? json::dump(*value) : QStringLiteral("ERR");
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -239,6 +248,7 @@ void registerAnswers() {
     registerAnswer('N', answerN);
     registerAnswer('H', answerH);
     registerAnswer('O', answerO);
+    registerAnswer('J', answerJ);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).

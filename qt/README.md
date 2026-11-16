@@ -66,12 +66,13 @@ pwsh qt/tools/differential/run.ps1 -PerKind 100000 -Seed <아무 값>
 - `core/`: 정적 라이브러리 `xgscore`(Qt Core만, 네임스페이스 `xgs`)
   - `core/text/`: `xgs::kt`, Kotlin/JVM 21의 문자·문자열 의미(공백, 글자, 대소문자, trim, 대소문자 무시 비교, 코드 포인트 글자 판정, NFKC, `toDoubleOrNull`, 정규식 `\s`의 ASCII 공백). 이식 코드는 `QChar`/`QString`의 공백·대소문자 함수 대신 이것을 쓴다. Kotlin의 `ignoreCase`는 `kt::CaseMode`(`Sensitive`/`Ignore`)이고 인자 순서는 Kotlin과 같다: `(…, from = 0, mode = CaseMode::Sensitive)`
   - `core/log/`: `xgs::redaction`(`LogRedaction.kt`의 이식. 로그 기능 자체는 뒤 단계에서 온다)
+  - `core/json/`: `xgs::json`, kotlinx.serialization의 기본 `Json.parseToJsonElement`가 받아들이는 것을 똑같이 받아들이는 읽기 전용 파서(따옴표 없는 `NaN` 같은 리터럴, 중복 키는 뒤 값이 앞 자리에, 배열 항목 뒤의 `]`+값은 쉼표처럼). 동작은 대조 도구로 관찰한 Kotlin의 답으로만 정했다(`json.h` 머리 주석). 배열이 1000개를 넘게 열리면 오류다(Kotlin은 그 사이 어딘가에서 JVM 상태에 따라 스택이 넘친다). 읽기·복사·소멸·덤프 모두 재귀가 없다
 - `tests/`: Qt Test. `xgs_add_test(<이름> <소스…>)`로 실행 파일 하나를 만들고 ctest에 등록한다
 - `tools/differential/`: 대조 도구. `Oracle.java`(Kotlin 쪽, 사이드카 이미지의 JVM과 jar)와 `xgs-diff.exe`(C++ 쪽)에 같은 사례를 주고 답을 줄마다 비교한다
 
 ## 대조 도구
 
-`run.ps1`이 종류마다 사례를 만들고(`xgs-diff gen`), 두 쪽의 답을 비교하고, 종류별 통계 문턱을 본다(측정값도 찍는다). 줄 수가 다르거나, 한 줄이라도 다르거나, 문턱을 못 넘거나, 통계가 정의되지 않은 종류가 있으면 종료 코드 1이다. 기본 종류는 모든 종류(`UXMSCFDGTLYRNBZHO`)다. 시작하기 전에 오라클이 쓰는 `server/build/sidecar-image/lib/shared-jvm.jar`가 `shared/src/commonMain`의 가장 새 파일보다, 또는 `lib/engine.jar`가 `engine/src/main`의 가장 새 파일보다 오래됐으면 사이드카 이미지를 다시 만들라는 말과 함께 실패한다(`run.ps1`의 `$OracleJars`).
+`run.ps1`이 종류마다 사례를 만들고(`xgs-diff gen`), 두 쪽의 답을 비교하고, 종류별 통계 문턱을 본다(측정값도 찍는다). 줄 수가 다르거나, 한 줄이라도 다르거나, 문턱을 못 넘거나, 통계가 정의되지 않은 종류가 있으면 종료 코드 1이다. 기본 종류는 모든 종류(`UXMSCFDGTLYRNBZHOJ`)다. 시작하기 전에 오라클이 쓰는 `server/build/sidecar-image/lib/shared-jvm.jar`가 `shared/src/commonMain`의 가장 새 파일보다, 또는 `lib/engine.jar`가 `engine/src/main`의 가장 새 파일보다 오래됐으면 사이드카 이미지를 다시 만들라는 말과 함께 실패한다(`run.ps1`의 `$OracleJars`).
 
 - `U`: U+0000~10FFFF의 각 코드 포인트(서로게이트 D800~DFFF 제외, 1,112,064개)마다 그 코드 포인트 하나짜리 문자열의 `lowercase()`와 `uppercase()`
 
@@ -87,6 +88,7 @@ pwsh qt/tools/differential/run.ps1 -PerKind 100000 -Seed <아무 값>
 - `Z`: 같은 코드 포인트마다 그 코드 포인트 하나짜리 문자열의 NFKC(`java.text.Normalizer.normalize(s, Form.NFKC)`와 `kt::nfkc`)
 - `H`: 문자열의 NFKC (`OK hex`). 생성기는 `token()`에 한글 자모(초·중·종성 조합, 완성형 + 종성, 낱자모, 호환 자모, 옛 자모), 전각·반각 문자, 바탕 글자 뒤에 결합 등급이 섞인 결합 문자 1~4개(U+0301, U+0308, U+3099, U+309A 등), 홀로 선 결합 문자, 합자·원문자·괄호 글자·분수·윗첨자, 아랍·히브리 표현형, 정준 단일 분해·조합 제외 글자, CJK 호환 한자, 그리고 Qt의 유니코드에만 있는(15.0 뒤에 생긴) 분해·결합 문자와 그 조각을 섞는다. 통계는 답이 입력과 다른 것, 한글 자모가 든 입력, 결합 문자가 든 입력을 본다
 - `O`: `String.toDoubleOrNull()` (`NULL` / 실수 비트 16자리). 생성기는 십진·16진 실수(지수, 접미사 `f`/`F`/`d`/`D`, 부호, 앞자리 0이 많은 지수, 범위를 한참 넘는 지수), `NaN`·`Infinity`, 수백~천 자리 숫자열(최대값·비정규 범위 근처 포함), 경계 문자열 목록, 그것을 한 글자 바꾸거나 넣거나 빼거나 겹친 것, 다른 문자 체계의 숫자, `text()`, 빈 문자열을 내고, 20%는 앞뒤에 U+0020 이하 글자나 그 밖의 공백을 붙인다. 통계는 `NULL`, 값, 무한·NaN을 본다
+- `J`: `Json.Default.parseToJsonElement` (`ERR` / 정규형 덤프: `N`, `S<hex>`, `L<hex>`, `O{<키hex>:<값>,…}`, `A[<값>,…]`, 빈 문자열은 `.`). 생성기는 문법에서 문서(객체·배열·문자열·리터럴, 깊이 0~6, 가끔 60단 사슬)를 짓고 30%는 한 군데를 망가뜨린다(문자 삭제·삽입·교체, 키 따옴표 제거, 쉼표 추가, 자르기, 꼬리 쓰레기, 앞 BOM·주석, 작은따옴표, Kotlin이 건너뛰지 않는 공백, 쉼표를 `]`로). 문자열에는 `token()`과 올바른·틀린 이스케이프, 짝 없는 서로게이트 이스케이프, 생 제어 문자를 섞는다. 드물게 깊은 문서: 배열 1000단(그 사이에 객체 0~1개), 객체 1001~3000단, 배열 60000단(Kotlin은 늘 스택 넘침). 배열 1001~59999단은 Kotlin의 답이 JVM 상태에 따라 달라서 만들지 않는다. 통계는 `ERR`, 성공, 비표준 리터럴이 든 성공, 중복 키, 범주별 입력(다른 공백, 서로게이트 이스케이프, 틀린 이스케이프, 1000단 이상, 값 앞의 `]`, 60000단)을 본다
 
 **끝 시그마 계약**: `kt::lowercase`는 Kotlin과 같다. 단 대문자 시그마(`Σ`)가 `σ`가 될지 `ς`가 될지는 유니코드의 `Final_Sigma` 규칙(Unicode Standard 3.13, SpecialCasing.txt)을 근사한다. 앞뒤 글자가 Cased인지는 Qt의 대문자·소문자·제목 글자 범주로 정하고, 무시하는 문장부호(case-ignorable)는 `kt_text.cpp`에 적은 목록으로 정하므로 규칙 전체를 구현한 것은 아니다(Kotlin/JVM은 단어 경계로 정해 일부 문맥에서 다르다). Q1의 이식 코드에서 `lowercase()`의 결과는 정해진 ASCII·한글·CJK 집합(잡음 토큰, 가사 표지, 구간 접두어, 호스트 이름, 장치 이름)과 비교될 뿐이라 이 차이는 어떤 출력에도 드러나지 않는다(다음 단계의 `engine`은 사용자 글을 소문자로 바꿔 서로 비교하므로 그 전에 정해야 한다). 그래서 대조 종류 `S`의 `lower`는 입력에 `Σ`(U+03A3)가 있는 사례에서만 두 답의 `ς`(U+03C2)를 `σ`(U+03C3)로 접어 비교한다(`run.ps1`의 `$Folding`). 입력에 `Σ`가 없으면 `ς`도 그대로 비교한다.
 
