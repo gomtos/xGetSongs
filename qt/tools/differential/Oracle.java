@@ -2,6 +2,8 @@ import com.xgetsongs.engine.ytdlp.ErrorClassifier;
 import com.xgetsongs.engine.ytdlp.Failure;
 import com.xgetsongs.engine.ytdlp.ProgressParser;
 import com.xgetsongs.engine.ytdlp.ProgressUpdate;
+import com.xgetsongs.engine.ytdlp.VideoInfo;
+import com.xgetsongs.engine.ytdlp.VideoInfoFile;
 import com.xgetsongs.shared.filename.FilenameFormatter;
 import com.xgetsongs.shared.input.ClassifyResult;
 import com.xgetsongs.shared.input.InputClassifier;
@@ -74,6 +76,10 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            space and the message as hex (no lines: a case with no fields)
  *         Q line                             ProgressParser.parse(line)  -> NULL | P - (percent null) | P and the 16 hex
  *                                            digits of Double.doubleToRawLongBits(percent)
+ *         V bytes                            VideoInfoFile.read(file) of a temporary file holding the bytes (2 hex digits
+ *                                            each, "." for none)  -> album description duration (the strings as hex, "-"
+ *                                            for null; the duration in decimal or "-"), or THROW and the class of what
+ *                                            read threw
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
@@ -89,6 +95,17 @@ public class Oracle {
         for (int i = 0; i < hex.length(); i += 4) out.append((char) Integer.parseInt(hex.substring(i, i + 4), 16));
         return out.toString();
     }
+
+    // the bytes of a kind V case: 2 hex digits each, "." for none
+    static byte[] decBytes(String hex) {
+        if (hex.equals(".")) return new byte[0];
+        byte[] out = new byte[hex.length() / 2];
+        for (int i = 0; i < out.length; i++) out[i] = (byte) Integer.parseInt(hex.substring(2 * i, 2 * i + 2), 16);
+        return out;
+    }
+
+    // kind V's temporary file (created at the first V case, deleted after the last)
+    static java.nio.file.Path videoInfoFile;
 
     static String enc(String text) {
         if (text == null) return "-";
@@ -354,6 +371,20 @@ public class Oracle {
                     else out.append("P ").append(String.format(Locale.ROOT, "%016x", Double.doubleToRawLongBits(update.getPercent())));
                     break;
                 }
+                case "V": {
+                    // one temporary file under the JVM's temp directory, rewritten for each case and deleted at the end
+                    if (videoInfoFile == null) videoInfoFile = java.nio.file.Files.createTempFile("xgs-diff-", ".info.json");
+                    java.nio.file.Files.write(videoInfoFile, decBytes(part[1]));
+                    try {
+                        VideoInfo info = VideoInfoFile.INSTANCE.read(videoInfoFile);
+                        out.append(enc(info.getAlbum())).append(' ').append(enc(info.getDescription())).append(' ')
+                            .append(info.getDuration() == null ? "-" : info.getDuration().toString());
+                    } catch (Throwable e) {
+                        // read promises never to throw; should it (an Error such as a stack overflow), say what it threw
+                        out.append("THROW ").append(e.getClass().getName());
+                    }
+                    break;
+                }
                 case "C": {
                     ClassifyResult result = InputClassifier.INSTANCE.classify(dec(part[1]));
                     if (result instanceof ClassifyResult.Ok ok) {
@@ -370,6 +401,7 @@ public class Oracle {
             }
             out.append('\n');
         }
+        if (videoInfoFile != null) java.nio.file.Files.deleteIfExists(videoInfoFile);
         print(out);
     }
 

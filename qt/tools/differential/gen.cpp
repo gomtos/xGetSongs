@@ -1722,6 +1722,302 @@ QString generateJ(Rng& rng) {
     return hex(doc);
 }
 
+// ---- kind V: VideoInfoFile.read (the info.json that yt-dlp writes) ----
+// The bytes of a file: a root object from kind J's document generator with the keys album, description and duration put
+// in, in many shapes (strings that trim to nothing or to NA, descriptions with blank lines in front and white space behind,
+// numbers at the rounding and Int boundaries, strings of digits, null, booleans, containers, bare literals, repeated keys,
+// the same keys in nested objects), written as UTF-8; some files get bytes that are not UTF-8, valid but rare sequences,
+// a BOM, the UTF-16 encoding, or nothing at all. Nothing nests more than a few arrays (kind J's 1001+ zone stays out).
+
+// The JSON escape of one UTF-16 unit
+QString jsonEscapeOf(char16_t unit) {
+    return QString(QChar(u'\\')) + u"u"_s + u"%1"_s.arg(int(unit), 4, 16, QChar(u'0'));
+}
+
+// White space and look-alikes at the ends of a string, as they stand between the quotes: raw, as escapes, Kotlin white
+// space (U+3000, U+00A0, U+2028, U+001C..U+001F) and what Kotlin does not count (U+0085, U+FEFF, U+200B).
+QString infoPad(Rng& rng) {
+    constexpr QStringView pieces[] = {u" ", u"  ", u"\t", u"\\t", u"\\n", u"\\r", u"\\r\\n", u"\n", u"\r", u"\x3000", u"\x00A0",
+                                      u"\x2028", u"\x001C", u"\x001F", u"\x0085", u"\xFEFF", u"\x200B", u"\x000B", u"\\f"};
+    QString out;
+    const int count = rng.between(1, 3);
+    for (int i = 0; i < count; ++i) out += pick(rng, pieces);
+    return out;
+}
+
+// Kind J's white space between tokens without what Kotlin does not skip: a document broken that way is rarer here (jsonBreak,
+// the members from kind J's generator and the white space around the whole document still bring it).
+QString infoSpace(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.55) return QString();
+    if (roll < 0.8) return u" "_s;
+    return pick(rng, kJsonWhite).toString();
+}
+
+QString quoted(const QString& body) {
+    return u"\""_s + body + u"\"";
+}
+
+// A value that is not a string (for any of the three keys)
+QString infoNonString(Rng& rng) {
+    constexpr QStringView values[] = {u"null", u"true", u"false", u"2024", u"NA", u"Palette", u"[\"Palette\"]", u"[258]",
+                                      u"{\"name\":\"Palette\"}", u"{\"seconds\":258}", u"[]", u"{}", u"0", u"258"};
+    return rng.chance(0.7) ? pick(rng, values).toString() : jsonValue(rng, 1, rng.between(1, 3));
+}
+
+QString albumValue(Rng& rng) {
+    if (rng.chance(0.2)) return infoNonString(rng);
+    constexpr QStringView albums[] = {u"Palette", u"Love poem", u"NA", u"NA", u"na", u"Na", u"N A", u"NA Nights", u"NAN",
+                                      u"사랑의 시", u"", u"Love \\\"poem\\\"", u"N\\u0041", u"\x00A0NA\x00A0", u"A"};
+    QString body;
+    const double roll = rng.next();
+    if (roll < 0.75) {
+        body = pick(rng, albums).toString();
+    } else if (roll < 0.85) {
+        body = jsonEscapeOf(u'N') + jsonEscapeOf(u'A');
+    } else {
+        body = jsonStringBody(rng);
+    }
+    if (rng.chance(0.4)) body = infoPad(rng) + body;
+    if (rng.chance(0.4)) body += infoPad(rng);
+    return quoted(body);
+}
+
+QString lineBreakOf(Rng& rng) {
+    constexpr QStringView breaks[] = {u"\\n", u"\\n", u"\\r\\n", u"\\r", u"\n", u"\r\n", u"\r"};
+    return pick(rng, breaks).toString();
+}
+
+QString descriptionValue(Rng& rng) {
+    if (rng.chance(0.2)) return infoNonString(rng);
+    const double roll = rng.next();
+    if (roll < 0.1) return quoted(jsonStringBody(rng));
+    if (roll < 0.18) return quoted(rng.chance(0.3) ? QString() : infoPad(rng) + lineBreakOf(rng) + infoPad(rng));   // blank
+    constexpr QStringView lines[] = {u"[Lyrics]", u"Line one", u"Line two", u"첫 줄", u"\\\"둘째\\\" 줄", u"é 🎵", u"a  b",
+                                     u"Some text", u"가사", u"x"};
+    QString body;
+    const int blankLines = rng.chance(0.5) ? 0 : rng.between(1, 3);
+    for (int i = 0; i < blankLines; ++i) body += (rng.chance(0.5) ? infoPad(rng) : QString()) + lineBreakOf(rng);
+    if (rng.chance(0.5)) body += infoPad(rng);   // the first text's own indentation (or white space before it on its line)
+    const int count = rng.between(1, 5);
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) body += lineBreakOf(rng) + (rng.chance(0.2) ? lineBreakOf(rng) : QString()) + (rng.chance(0.2) ? infoPad(rng) : QString());
+        body += rng.chance(0.75) ? pick(rng, lines).toString() : text(rng, 6).replace(u'\\', u"\\\\"_s).replace(u'"', u"\\\""_s);
+    }
+    if (rng.chance(0.6)) {
+        const int tail = rng.between(1, 3);
+        for (int i = 0; i < tail; ++i) body += rng.chance(0.5) ? infoPad(rng) : lineBreakOf(rng);
+    }
+    return quoted(body);
+}
+
+// Durations as written: the rounding ties, the ends of the Int range, what the Long range clamps, and what is no number.
+constexpr QStringView kDurationLiterals[] = {
+    u"258", u"1", u"258.4", u"258.5", u"258.6", u"19.0", u"2.584E2", u"0.5", u"1.5", u"2.5", u"-0.5", u"-1.5", u"0", u"0.0",
+    u"-0", u"-0.0", u"-5", u"-0.4", u"0.4", u"0.49999999999999994", u"0.5000000000000001", u"1.4999999999999998", u"1e3",
+    u"1E3", u"1e0", u"2147483647", u"2147483647.4", u"2147483647.5", u"2147483646.5", u"2147483646.4999", u"2147483648",
+    u"-2147483648", u"4294967296", u"4294967297.5", u"1e30", u"-1e30", u"1e308", u"1e309", u"-1e309", u"9223372036854775807",
+    u"9223372036854775808", u"9.223372036854775807E18", u"-9223372036854775809", u"1e19", u"4503599627370495.5",
+    u"4503599627370496.5", u"9007199254740993", u"NaN", u"-NaN", u"Infinity", u"-Infinity", u"258f", u"258d", u"258F",
+    u"0x1p8", u"0x10", u"+5", u".5", u"5.", u"01", u"1_0", u"true", u"false", u"null", u"NA", u"1.5e-400", u"4.9e-324",
+    u"2147483647.49999997", u"2147483646.50000001", u"3.5", u"0.5f", u"0x1.8p0"};
+
+QString durationValue(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.25) return pick(rng, kDurationLiterals).toString();
+    if (roll < 0.7) {
+        constexpr QStringView fractions[] = {u"", u"", u".0", u".5", u".4", u".6", u".49999", u".50001", u".25", u"e0", u"E1"};
+        const qint64 whole = rng.chance(0.85) ? rng.between(0, 20000) : 2147483647LL - rng.between(0, 3);
+        return (rng.chance(0.08) ? u"-"_s : QString()) + QString::number(whole) + pick(rng, fractions);
+    }
+    if (roll < 0.77) return decimalLiteral(rng);
+    if (roll < 0.79) return hexLiteral(rng);
+    if (roll < 0.86) {
+        constexpr QStringView strings[] = {u"\"258\"", u"\"NA\"", u"\"\"", u"\"258.5\"", u"\" 258 \"", u"\"1e3\""};
+        return pick(rng, strings).toString();
+    }
+    return infoNonString(rng);
+}
+
+QString keySpelling(Rng& rng, QStringView name) {
+    const double roll = rng.next();
+    if (roll < 0.9) return name.toString();
+    if (roll < 0.95) {
+        // the same key with one letter escaped
+        const int at = rng.between(0, int(name.size()) - 1);
+        return name.left(at).toString() + jsonEscapeOf(name[at].unicode()) + name.mid(at + 1).toString();
+    }
+    constexpr QStringView nearMisses[] = {u"Album", u"album ", u"albums", u"ALBUM", u"descriptio", u"Description", u"durations",
+                                          u"Duration", u" duration"};
+    return pick(rng, nearMisses).toString();
+}
+
+QString infoMember(Rng& rng, QStringView name, const QString& value) {
+    return quoted(keySpelling(rng, name)) + infoSpace(rng) + u":" + infoSpace(rng) + value;
+}
+
+QString valueFor(Rng& rng, int which) {
+    return which == 0 ? albumValue(rng) : which == 1 ? descriptionValue(rng) : durationValue(rng);
+}
+
+constexpr QStringView kInfoKeys[] = {u"album", u"description", u"duration"};
+
+// An object (a format or a meta entry) holding the same keys, which mean something else there
+QString nestedInfo(Rng& rng) {
+    QStringList members;
+    for (int which = 0; which < 3; ++which)
+        if (rng.chance(0.6)) members.append(infoMember(rng, kInfoKeys[which], valueFor(rng, which)));
+    return u"{"_s + members.join(u",") + u"}";
+}
+
+QString infoDocument(Rng& rng) {
+    QStringList members;
+    QStringList used;
+    const int others = rng.chance(0.6) ? 0 : rng.between(1, 3);
+    for (int i = 0; i < others; ++i) members.append(jsonKey(rng, used) + infoSpace(rng) + u":" + infoSpace(rng) + jsonValue(rng, 1, rng.between(1, 2)));
+    for (int which = 0; which < 3; ++which) {
+        if (!rng.chance(0.88)) continue;
+        members.append(infoMember(rng, kInfoKeys[which], valueFor(rng, which)));
+        if (rng.chance(0.12)) members.append(infoMember(rng, kInfoKeys[which], valueFor(rng, which)));   // a repeated key
+    }
+    if (rng.chance(0.25)) {
+        QStringList formats;
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) formats.append(nestedInfo(rng));
+        members.append(u"\"formats\":["_s + formats.join(u",") + u"]");
+    }
+    if (rng.chance(0.15)) members.append(u"\"meta\":"_s + nestedInfo(rng));
+    for (qsizetype i = members.size() - 1; i > 0; --i) members.swapItemsAt(i, rng.between(0, int(i)));
+    QString out = u"{"_s + infoSpace(rng);
+    for (qsizetype i = 0; i < members.size(); ++i) {
+        if (i > 0) out += infoSpace(rng) + u"," + infoSpace(rng);
+        out += members[i];
+    }
+    return out + infoSpace(rng) + u"}";
+}
+
+// UTF-8; an unpaired surrogate becomes the three bytes of its code unit (which is not UTF-8) or U+FFFD.
+QByteArray utf8Of(const QString& text, bool keepLoneSurrogates) {
+    QByteArray out;
+    out.reserve(text.size() * 3);
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        char32_t cp = text[i].unicode();
+        if (QChar::isHighSurrogate(cp) && i + 1 < text.size() && text[i + 1].isLowSurrogate()) {
+            cp = QChar::surrogateToUcs4(char16_t(cp), text[i + 1].unicode());
+            ++i;
+        } else if (QChar::isSurrogate(cp) && !keepLoneSurrogates) {
+            cp = 0xFFFD;
+        }
+        if (cp < 0x80) {
+            out += char(cp);
+        } else if (cp < 0x800) {
+            out += char(0xC0 | (cp >> 6));
+            out += char(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            out += char(0xE0 | (cp >> 12));
+            out += char(0x80 | ((cp >> 6) & 0x3F));
+            out += char(0x80 | (cp & 0x3F));
+        } else {
+            out += char(0xF0 | (cp >> 18));
+            out += char(0x80 | ((cp >> 12) & 0x3F));
+            out += char(0x80 | ((cp >> 6) & 0x3F));
+            out += char(0x80 | (cp & 0x3F));
+        }
+    }
+    return out;
+}
+
+QByteArray utf16Of(const QString& text, bool littleEndian, bool bom) {
+    QByteArray out;
+    const auto put = [&out, littleEndian](char16_t unit) {
+        const char low = char(unit & 0xFF);
+        const char high = char(unit >> 8);
+        out += littleEndian ? low : high;
+        out += littleEndian ? high : low;
+    };
+    if (bom) put(0xFEFF);
+    for (const QChar c : text) put(c.unicode());
+    return out;
+}
+
+// Byte sequences that are not UTF-8: stray continuation bytes, overlong forms, encoded surrogates (alone and as a CESU-8
+// pair), code points above U+10FFFF, bytes that never occur, the old 5- and 6-byte forms and truncated sequences.
+const QByteArray& notUtf8(Rng& rng) {
+    static const QByteArray sequences[] = {
+        QByteArray("\x80", 1), QByteArray("\xBF", 1), QByteArray("\xC0\x80", 2), QByteArray("\xC1\xBF", 2),
+        QByteArray("\xC0\xAF", 2), QByteArray("\xC2", 1), QByteArray("\xE0\x80\x80", 3), QByteArray("\xE0\x9F\xBF", 3),
+        QByteArray("\xED\xA0\x80", 3), QByteArray("\xED\xBF\xBF", 3), QByteArray("\xED\xA0\xBD\xED\xB8\x80", 6),
+        QByteArray("\xF0\x80\x80\x80", 4), QByteArray("\xF0\x8F\xBF\xBF", 4), QByteArray("\xF4\x90\x80\x80", 4),
+        QByteArray("\xF5\x80\x80\x80", 4), QByteArray("\xF8\x88\x80\x80\x80", 5), QByteArray("\xFC\x84\x80\x80\x80\x80", 6),
+        QByteArray("\xFE", 1), QByteArray("\xFF", 1), QByteArray("\xE2\x82", 2), QByteArray("\xF0\x9F\x98", 3),
+        QByteArray("\xC3\x28", 2), QByteArray("\xE2\x28\xA1", 3), QByteArray("\xFF\xFE", 2), QByteArray("\xE0\xA0", 2),
+        QByteArray("\xC2\xC2\x80", 3), QByteArray("\xF4\x8F\xBF", 3)};
+    return pick(rng, sequences);
+}
+
+// Valid sequences that a decoder might get wrong: noncharacters, the ends of the planes and of the surrogate gap, the
+// smallest forms of each length, a BOM inside the text, no-break and ideographic space.
+const QByteArray& rareUtf8(Rng& rng) {
+    static const QByteArray sequences[] = {
+        QByteArray("\xEF\xBF\xBE", 3), QByteArray("\xEF\xBF\xBF", 3), QByteArray("\xEF\xB7\x90", 3),
+        QByteArray("\xF4\x8F\xBF\xBF", 4), QByteArray("\xF0\x9F\xBF\xBE", 4), QByteArray("\xED\x9F\xBF", 3),
+        QByteArray("\xEE\x80\x80", 3), QByteArray("\xC2\x80", 2), QByteArray("\xDF\xBF", 2), QByteArray("\xE0\xA0\x80", 3),
+        QByteArray("\xF0\x90\x80\x80", 4), QByteArray("\xEF\xBB\xBF", 3), QByteArray("\xC2\xA0", 2),
+        QByteArray("\xE3\x80\x80", 3), QByteArray("\x7F", 1), QByteArray("\xEF\xBF\xBD", 3)};
+    return pick(rng, sequences);
+}
+
+// A place to put bytes: mostly just inside a string value (after `:"`), so that only the decoding decides the answer.
+qsizetype insertionPoint(Rng& rng, const QByteArray& bytes) {
+    QList<qsizetype> places;
+    for (qsizetype i = 0; i + 1 < bytes.size(); ++i) {
+        if (bytes[i] == ':' && bytes[i + 1] == '"') places.append(i + 2);
+    }
+    if (!places.isEmpty() && rng.chance(0.85)) return places[rng.between(0, int(places.size()) - 1)];
+    return rng.between(0, int(bytes.size()));
+}
+
+QString bytesField(const QByteArray& bytes) {
+    return bytes.isEmpty() ? u"."_s : QString::fromLatin1(bytes.toHex());
+}
+
+QString generateV(Rng& rng) {
+    const double roll = rng.next();
+    QString doc;
+    if (roll < 0.02) return bytesField(QByteArray());   // an empty file
+    if (roll < 0.03) {
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) doc += rng.chance(0.7) ? pick(rng, kJsonWhite) : pick(rng, kJsonOtherWhite);
+    } else if (roll < 0.06) {
+        // a root that is not an object
+        doc = rng.chance(0.5) ? u"["_s + infoDocument(rng) + u"]" : jsonValue(rng, 0, rng.chance(0.5) ? 0 : 2);
+    } else {
+        doc = infoDocument(rng);
+        if (rng.chance(0.05)) doc = jsonBreak(rng, doc);
+    }
+    if (rng.chance(0.1)) doc = jsonSpace(rng) + doc + jsonSpace(rng);
+
+    const double encoding = rng.next();
+    QByteArray bytes;
+    if (encoding < 0.08) {
+        bytes = utf8Of(doc, false);
+        const QByteArray& bad = notUtf8(rng);
+        if (rng.chance(0.1)) bytes += bad;   // at the very end (often a truncated sequence)
+        else bytes.insert(insertionPoint(rng, bytes), bad);
+    } else if (encoding < 0.11) {
+        bytes = QByteArray("\xEF\xBB\xBF", 3) + utf8Of(doc, false);   // a BOM
+    } else if (encoding < 0.14) {
+        bytes = utf16Of(doc, rng.chance(0.5), rng.chance(0.5));
+    } else if (encoding < 0.22) {
+        bytes = utf8Of(doc, false);
+        const int count = rng.between(1, 2);
+        for (int i = 0; i < count; ++i) bytes.insert(insertionPoint(rng, bytes), rareUtf8(rng));
+    } else {
+        bytes = utf8Of(doc, rng.chance(0.1));
+    }
+    return bytesField(bytes);
+}
+
 }  // namespace
 
 void registerKind(char kind, Generator gen) {
@@ -1748,6 +2044,7 @@ void registerGenerators() {
     registerKind('J', generateJ);
     registerKind('E', generateE);
     registerKind('Q', generateQ);
+    registerKind('V', generateV);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).

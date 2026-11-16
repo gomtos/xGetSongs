@@ -10,6 +10,7 @@ add_library(xgscore STATIC
     json/json.h json/json.cpp
     ytdlp/error_classifier.h ytdlp/error_classifier.cpp
     ytdlp/progress_parser.h ytdlp/progress_parser.cpp
+    ytdlp/video_info_file.h ytdlp/video_info_file.cpp
     job/download_concurrency.h job/download_concurrency.cpp)
 target_include_directories(xgscore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(xgscore PUBLIC Qt6::Core)

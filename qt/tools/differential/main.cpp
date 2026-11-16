@@ -39,6 +39,7 @@
 #include "title/title_parser.h"
 #include "ytdlp/error_classifier.h"
 #include "ytdlp/progress_parser.h"
+#include "ytdlp/video_info_file.h"
 
 namespace xgs::diff {
 
@@ -252,6 +253,16 @@ QString answerQ(const QStringList& fields) {
     return update->percent ? QStringLiteral("P ") + kt::hexBits(*update->percent) : QStringLiteral("P -");
 }
 
+// ---- kind V ----
+// V bytes -> album description duration (VideoInfoFile.read of a file holding the bytes; the bytes as 2 hex digits each,
+// "." for none; the strings as hex, "-" when empty; the duration in decimal or "-")
+QString answerV(const QStringList& fields) {
+    if (fields.size() < 1) return QStringLiteral("?");
+    const QByteArray bytes = fields.at(0) == u"." ? QByteArray() : QByteArray::fromHex(fields.at(0).toLatin1());
+    const ytdlp::VideoInfo info = ytdlp::parseVideoInfo(bytes);
+    return hex(info.album) + u' ' + hex(info.description) + u' ' + (info.duration ? QString::number(*info.duration) : QStringLiteral("-"));
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -279,6 +290,7 @@ void registerAnswers() {
     registerAnswer('J', answerJ);
     registerAnswer('E', answerE);
     registerAnswer('Q', answerQ);
+    registerAnswer('V', answerV);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).

@@ -38,5 +38,10 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/job/DownloadConcurrencyTest.kt",
     "exe": "tst_download_concurrency",
     "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/VideoInfoFileTest.kt",
+    "exe": "tst_video_info_file",
+    "added": ["readsATenMegabyteInfoFileQuickly"]
   }
 ]
