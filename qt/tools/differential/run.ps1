@@ -188,6 +188,23 @@ $SigmaHexPattern = [regex]::new('^(?:[0-9a-f]{4})*?03(?:a3|c2|c3)', 'Compiled')
 # a version word of LyricsMatcher (VERSION_WORD as a whole word, or a Korean version word anywhere), on the text after .NET's
 # NFKC and lowercasing (close enough to Java's for counting; the answers are compared exactly)
 $VersionWordPattern = [regex]::new('(?<![\p{L}\p{Nd}])(?:ver|version|japanese|english|chinese|korean|inst|instrumental|remix|live|acoustic|cover|edit|mix|remaster|demo)(?:ed|es|s)?[0-9]*(?![\p{L}\p{Nd}])|반주|일본어|영어|중국어|한국어|라이브|리믹스|어쿠스틱|버전|커버|데모|리마스터|믹스|에디트|인스트', 'Compiled')
+# Two artists of which one holds the other's letters and digits (after .NET's NFKC and lowercasing) but no word of the
+# shorter is a word of the longer, such as `IU` and `Liu` (LyricsMatcher's word-boundary rule; for counting only)
+function Get-ArtistWords([string]$text) {
+    if ([string]::IsNullOrEmpty($text)) { return @() }
+    try { $text = $text.Normalize([System.Text.NormalizationForm]::FormKC) } catch { }
+    return @($LetterOrDigitRuns.Matches($text.ToLowerInvariant()) | ForEach-Object { $_.Value })
+}
+$LetterOrDigitRuns = [regex]::new('[\p{L}\p{Nd}]+', 'Compiled')
+function Test-SubstringNotWord([string]$a, [string]$b) {
+    $wa = Get-ArtistWords $a; $wb = Get-ArtistWords $b
+    $ka = -join $wa; $kb = -join $wb
+    if ($ka.Length -lt 2 -or $kb.Length -lt 2 -or $ka -ceq $kb) { return $false }
+    if ($ka.Length -gt $kb.Length) { $short = $wb; $longKey = $ka; $long = $wa } else { $short = $wa; $longKey = $kb; $long = $wb }
+    if (-not $longKey.Contains((-join $short), [StringComparison]::Ordinal)) { return $false }
+    foreach ($word in $short) { if ($long -ccontains $word) { return $false } }
+    return $true
+}
 function Test-VersionWordText([string]$text) {
     if ([string]::IsNullOrEmpty($text)) { return $false }
     try { $text = $text.Normalize([System.Text.NormalizationForm]::FormKC) } catch { }   # (an unpaired surrogate: as it is)
@@ -407,7 +424,9 @@ $Statistics = [ordered]@{
     I = @{
         # fields: op (tv, av, norm, match, pick) and the op's arguments. Each op 15%; of the match cases, answer 1 20% and 0 30%;
         # of the pick cases, answer -1 15% and an index other than 0 15%; of the tv cases, 1, 2, 3 and 4 variants 5% each; of the
-        # av cases, 3 variants 5%; cases with a version word 20%; and no case with Σ, σ or ς (the sigma divergence, qt/README.md)
+        # av cases, 3 variants 5%; cases with a version word 20%; of the match cases, a substring-not-word artist pair 5%; of the
+        # pick cases, two or more candidates with a NaN length among them 10%; and no case with Σ, σ or ς (the sigma divergence,
+        # qt/README.md)
         Check = {
             param($cases, $answers)
             $total = $cases.Count
@@ -416,12 +435,23 @@ $Statistics = [ordered]@{
             }
             $matchCases = 0; $matchYes = 0; $matchNo = 0; $pickCases = 0; $pickNone = 0; $pickLater = 0
             $tvCases = 0; $tvCounts = @{ 1 = 0; 2 = 0; 3 = 0; 4 = 0 }; $avCases = 0; $avThree = 0; $version = 0; $sigma = 0
+            $substringPairs = 0; $nanTies = 0
             for ($i = 0; $i -lt $total; $i++) {
                 $case = $cases[$i]
                 $answer = "$($answers[$i])"
                 switch -CaseSensitive ($case[0]) {
-                    'match' { $matchCases++; if ($answer -ceq '1') { $matchYes++ } elseif ($answer -ceq '0') { $matchNo++ } }
-                    'pick' { $pickCases++; if ($answer -ceq '-1') { $pickNone++ } elseif ($answer -cmatch '^[1-9][0-9]*$') { $pickLater++ } }
+                    'match' {
+                        $matchCases++
+                        if ($answer -ceq '1') { $matchYes++ } elseif ($answer -ceq '0') { $matchNo++ }
+                        if (Test-SubstringNotWord (ConvertFrom-HexText $case[1]) (ConvertFrom-HexText $case[6])) { $substringPairs++ }
+                    }
+                    'pick' {
+                        $pickCases++
+                        if ($answer -ceq '-1') { $pickNone++ } elseif ($answer -cmatch '^[1-9][0-9]*$') { $pickLater++ }
+                        if ($case.Count -ge 18) {
+                            for ($at = 9; $at -lt $case.Count; $at += 6) { if ($case[$at] -ceq '7ff8000000000000') { $nanTies++; break } }
+                        }
+                    }
                     'tv' { $tvCases++; $n = ($answer -split ' ').Count - 1; if ($tvCounts.ContainsKey($n)) { $tvCounts[$n]++ } }
                     'av' { $avCases++; if ((($answer -split ' ').Count - 1) -eq 3) { $avThree++ } }
                 }
@@ -441,6 +471,8 @@ $Statistics = [ordered]@{
             foreach ($n in 1, 2, 3, 4) { Test-Share 'I' "tv answer with $n variants (of the tv cases)" $tvCounts[$n] $tvCases 0.05 }
             Test-Share 'I' 'av answer with 3 variants (of the av cases)' $avThree $avCases 0.05
             Test-Share 'I' 'case with a version word' $version $total 0.20
+            Test-Share 'I' 'match case with a substring-not-word artist pair (of the match cases)' $substringPairs $matchCases 0.05
+            Test-Share 'I' 'pick case with 2+ candidates, one of NaN length (of the pick cases)' $nanTies $pickCases 0.10
             Write-Host ('  I: cases with Σ, σ or ς: {0} (needs 0)' -f $sigma)
             if ($sigma -gt 0) { "I: $sigma cases contain Σ, σ or ς (needs 0: the sigma divergence)" }
         }

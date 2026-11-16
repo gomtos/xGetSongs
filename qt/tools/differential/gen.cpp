@@ -2200,7 +2200,10 @@ constexpr QStringView kVersionPhrases[] = {u"Japanese Ver.", u"Remixes", u"Remas
                                            u"Club Mix", u"Instrumental", u"English Version", u"Cover", u"Demo", u"Lives",
                                            u"Acoustics", u"Acousticd", u"Liveds", u"Remix2", u"Live2023", u"Mixture", u"Lively",
                                            u"Remix٣", u"LIVE", u"acousticed", u"remixes", u"versions", u"Ver.", u"live at Somewhere",
-                                           u"2011 Remaster", u"Korean ver", u"Live١", u"Ver१", u"Remix²", u"Mix２", u"ıns", u"Remıx", u"ＲＥＭＩＸ"};
+                                           u"2011 Remaster", u"Korean ver", u"Live١", u"Ver१", u"Remix²", u"Mix２", u"ıns", u"Remıx", u"ＲＥＭＩＸ",
+                                           // bare `s` forms of the stems
+                                           u"Covers", u"Demos", u"Edits", u"Mixs", u"Vers", u"Insts", u"Remasters", u"Koreans",
+                                           u"Englishs", u"Versions", u"Instrumentals", u"Covers2"};
 constexpr QStringView kKoreanVersionPhrases[] = {u"일본어 버전", u"라이브", u"반주", u"어쿠스틱", u"밴드 버전", u"리믹스", u"한국어Ver",
                                                  u"AR 반주", u"라이브 버전", u"어쿠스틱 라이브", u"인스트", u"커버", u"영어"};
 constexpr QStringView kPlainPhrases[] = {u"Official Audio", u"MV", u"LOVE ATTACK", u"B", u"feat. X", u"with X", u"Prod. Y", u"Love poem",
@@ -2342,7 +2345,7 @@ TitlePieces titlePieces(Rng& rng) {
     TitlePieces t;
     t.body = songWords(rng, 1, 4);
     t.quotedBody = t.body;
-    if (rng.chance(0.45)) {
+    if (rng.chance(0.5)) {
         const int kind = rng.between(0, int(std::size(kQuoteOpen)) - 1);
         if (kind == 6) t.quotedBody = u"Don"_s + kQuoteClose[kind].left(1) + u"t "_s + t.body;   // an apostrophe in a word
         else t.quotedBody = kQuoteOpen[kind].toString() + t.body + kQuoteClose[kind];
@@ -2380,9 +2383,19 @@ QString candidateTitle(Rng& rng, const TitlePieces& t, double fromQuery = 0.6) {
     else if (roll < 0.86) title = asciiToFullWidth(composeTitle(rng, t));
     else if (roll < 0.90) title = composeTitle(rng, t).replace(u' ', rng.chance(0.5) ? u"  "_s : u"\t"_s);
     else {
-        const QString added = rng.chance(0.7) ? pick(rng, kVersionPhrases).toString() : pick(rng, kKoreanVersionPhrases).toString();
+        // an added part: a version part half the time, otherwise a plain part or a credit (a shortening only the candidate
+        // needs: title rank 2)
+        const QString base = rng.chance(0.5) ? t.quotedBody : composeTitle(rng, t);
+        const double what = rng.next();
         const int kind = rng.between(0, 3);
-        title = (rng.chance(0.5) ? t.quotedBody : composeTitle(rng, t)) + u' ' + kOpenBrackets[kind] + added + kCloseBrackets[kind];
+        if (what < 0.5) {
+            const QString added = rng.chance(0.7) ? pick(rng, kVersionPhrases).toString() : pick(rng, kKoreanVersionPhrases).toString();
+            title = base + u' ' + kOpenBrackets[kind] + added + kCloseBrackets[kind];
+        } else if (what < 0.8) {
+            title = base + u' ' + kOpenBrackets[kind] + pick(rng, kPlainPhrases) + kCloseBrackets[kind];
+        } else {
+            title = base + pick(rng, kCredits);
+        }
     }
     return title;
 }
@@ -2538,6 +2551,100 @@ QString candidateFields(const CandidatePieces& c) {
            instrumental + u'\t' + lyricsField(c.plainLyrics);
 }
 
+// ---- kind I: inputs that reach the decisions most responsible for wrong lyrics ----
+// Pairs of artists where one is inside the other as letters but not as a word (`IU` in `Liu`): never the same artist.
+constexpr QStringView kSubstringArtists[][2] = {{u"IU", u"Liu"}, {u"Rain", u"Rainbow"}, {u"Jin", u"Jinx"}, {u"BTS", u"Abtsa"},
+                                                {u"AKMU", u"AKMUX"}, {u"Band", u"Bandit"}, {u"소연", u"소연희"}, {u"IOI", u"IOIS"},
+                                                {u"Taylor", u"Taylors"}, {u"아이유", u"아이유나"}, {u"Ｉ Ｕ", u"LIU"}};
+// Plain titles, parts a query may lose (no version marker for the query), parts only a candidate may lose (title rank 2), and
+// parts with a bare-`s` version word that a candidate may not lose.
+constexpr QStringView kPlainTitles[] = {u"Love poem", u"Hello", u"Golden", u"Stay", u"사랑의 시", u"Night Rain", u"Ｌｏｖｅ ｐｏｅｍ",
+                                        u"Don't Stop", u"\u201CGolden\u201D", u"\u1112\u1161\u11AB\u1100\u1173\u11AF"};
+constexpr QStringView kQueryRemovable[] = {u" (feat. X)", u" (Official)", u" [MV]", u" {Editor's Note}", u" <Verse 2>", u" (with X)",
+                                           u" (Lived)", u" feat. X", u" ft. Y", u" (Live)", u" (라이브)"};
+constexpr QStringView kCandidateRemovable[] = {u" (Official Audio)", u" (MV)", u" feat. X", u" [Lyric Video]", u" (Discover)",
+                                               u" {Mixture}", u" <with Y>", u" Prod. Z"};
+constexpr QStringView kBareSParts[] = {u" (Covers)", u" (Demos)", u" (Edits)", u" (Vers)", u" [Insts]", u" (Mixs)", u" (Remasters)",
+                                       u" {Versions}"};
+
+// A query artist and a name that holds it as letters but not as a word, either way round, sometimes with more words.
+std::pair<QString, QString> substringArtists(Rng& rng) {
+    const int at = rng.between(0, int(std::size(kSubstringArtists)) - 1);
+    const bool swap = rng.chance(0.4);
+    const QString inner = kSubstringArtists[at][0].toString();
+    QString outer = kSubstringArtists[at][1].toString();
+    const double shape = rng.next();
+    if (shape < 0.2) outer += u" Yifei";
+    else if (shape < 0.3) outer = u"The "_s + outer;
+    else if (shape < 0.4) outer = asciiCaseShuffle(rng, outer);
+    return swap ? std::pair{outer, inner} : std::pair{inner, outer};
+}
+
+CandidatePieces acceptableCandidate(const QString& title, const QString& artist) {
+    return CandidatePieces{title, artist, std::nullopt, std::nullopt, false, u"La la la\nLa la\nLa"_s};
+}
+
+// A match case whose title and lyrics agree and whose artists are a substring-not-word pair (Kotlin answers 0).
+QString substringArtistMatch(Rng& rng) {
+    QueryPieces query = queryPieces(rng);
+    const auto [wanted, found] = substringArtists(rng);
+    query.artist = {wanted, {wanted}};
+    CandidatePieces c = acceptableCandidate(rng.chance(0.7) ? query.titleText : asciiCaseShuffle(rng, query.titleText), found);
+    if (rng.chance(0.3)) c.instrumental = std::nullopt;
+    if (query.duration && rng.chance(0.5)) c.duration = double(*query.duration) + 1.0;
+    c.albumName = query.album;
+    return u"match\t"_s + queryFields(query) + u'\t' + candidateFields(c);
+}
+
+// A pick case whose candidates mostly are acceptable and tie: the whole title, the query's title without its removable part
+// (title rank 1), the title with a part only the candidate may lose (rank 2), a part with a bare-`s` version word, another
+// song, and now and then a substring-not-word artist; lengths null, NaN, equal or close; albums equal or not.
+QString orderedPick(Rng& rng) {
+    QueryPieces query = queryPieces(rng);
+    const QString body = pick(rng, kPlainTitles).toString();
+    const QString removable = rng.chance(0.75) ? pick(rng, kQueryRemovable).toString() : QString();
+    query.titleText = body + removable;
+    if (!query.duration || rng.chance(0.4)) query.duration = rng.between(150, 300);
+    QString partner;
+    if (rng.chance(0.5)) {
+        const auto [wanted, found] = substringArtists(rng);
+        query.artist = {wanted, {wanted}};
+        partner = found;
+    } else {
+        query.artist = {pick(rng, kArtistNames).toString(), {}};
+        partner = pick(rng, kArtistNames).toString();
+    }
+    if (!query.album || rng.chance(0.3)) query.album = pick(rng, kAlbums).toString();
+    const int count = rng.between(2, 6);
+    QString line = u"pick\t"_s + queryFields(query) + u'\t' + QString::number(count);
+    for (int i = 0; i < count; ++i) {
+        const double kind = rng.next();
+        QString title;
+        if (kind < 0.25) title = query.titleText;
+        else if (kind < 0.45) title = body;
+        else if (kind < 0.70) title = (rng.chance(0.5) ? body : query.titleText) + pick(rng, kCandidateRemovable);
+        else if (kind < 0.85) title = body + pick(rng, kBareSParts);
+        else if (kind < 0.92) title = asciiCaseShuffle(rng, query.titleText);
+        else title = pick(rng, kPlainTitles).toString();
+        CandidatePieces c = acceptableCandidate(title, rng.chance(0.2) ? partner : query.artist.text);
+        const double album = rng.next();
+        if (album < 0.45) c.albumName = query.album;
+        else if (album < 0.75) c.albumName = pick(rng, kAlbums).toString();
+        const double length = rng.next();
+        if (length < 0.2) c.duration = std::nullopt;
+        else if (length < 0.45) c.duration = std::numeric_limits<double>::quiet_NaN();
+        else if (length < 0.65) c.duration = double(*query.duration);
+        else if (length < 0.90) c.duration = double(*query.duration) + (rng.chance(0.5) ? 3.0 : -3.0);
+        else c.duration = double(*query.duration) + 20.0;
+        const double flags = rng.next();
+        if (flags < 0.04) c.instrumental = true;
+        else if (flags < 0.25) c.instrumental = std::nullopt;
+        if (rng.chance(0.06)) c.plainLyrics = u" \n "_s;
+        line += u'\t' + candidateFields(c);
+    }
+    return line;
+}
+
 QString generateI(Rng& rng) {
     const double op = rng.next();
     if (op < 0.19) {
@@ -2563,7 +2670,11 @@ QString generateI(Rng& rng) {
         return u"norm\t"_s + lyricsField(value);
     }
     const QueryPieces query = queryPieces(rng);
-    if (op < 0.79) return u"match\t"_s + queryFields(query) + u'\t' + candidateFields(candidatePieces(rng, query, rng.chance(0.55)));
+    if (op < 0.79) {
+        if (rng.chance(0.1)) return substringArtistMatch(rng);
+        return u"match\t"_s + queryFields(query) + u'\t' + candidateFields(candidatePieces(rng, query, rng.chance(0.65)));
+    }
+    if (rng.chance(0.5)) return orderedPick(rng);
     // pick: 0 to 6 candidates, half of them copies of one candidate with another length, album or title, so ranks tie
     const int count = rng.between(0, 6);
     const CandidatePieces base = candidatePieces(rng, query, rng.chance(0.75));
