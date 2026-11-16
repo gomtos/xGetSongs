@@ -25,6 +25,19 @@ QString fileNameOf(const QString& path) {
     return path.mid(path.lastIndexOf(u'\\') + 1);
 }
 
+// A video id is joined into a file path, so it must be a plain file name part: not empty, none of the characters Windows forbids in
+// a file name or reads as a separator, no control character.
+bool isPlainFileNamePart(const QString& id) {
+    if (id.isEmpty()) return false;
+    for (const QChar c : id) {
+        const char16_t unit = c.unicode();
+        if (unit < 0x20 || unit == u'\\' || unit == u'/' || unit == u':' || unit == u'*' || unit == u'?' || unit == u'"' ||
+            unit == u'<' || unit == u'>' || unit == u'|')
+            return false;
+    }
+    return true;
+}
+
 QStringList jsRuntimeArgs(const ToolPaths& tools) {
     if (!tools.jsRuntime) return {};
     const QString& path = *tools.jsRuntime;
@@ -54,8 +67,9 @@ QStringList resolveVideoCommand(const ToolPaths& tools, const QString& url) {
 QStringList downloadCommand(const ToolPaths& tools, const QString& url, const QString& outputDir, const QString& videoId) {
     const QString progress = u"download:"_s + ProgressPrefix + u"|%(progress.status)s|%(progress.downloaded_bytes)s|"_s +
                              u"%(progress.total_bytes)s|%(progress.total_bytes_estimate)s"_s;
+    QStringList command{ytDlp(tools)};   // throws first, as the Kotlin original
+    if (!isPlainFileNamePart(videoId)) throw std::invalid_argument("video id is not a plain file name part");
     const QString output = outputDir + u'\\' + videoId + u".%(ext)s"_s;
-    QStringList command{ytDlp(tools)};
     command += common();
     command += jsRuntimeArgs(tools);
     if (tools.ffmpeg) command += {u"--ffmpeg-location"_s, *tools.ffmpeg};

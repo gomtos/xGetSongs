@@ -2022,8 +2022,7 @@ QString generateV(Rng& rng) {
 // Paths are normalised Windows absolute paths only (a drive letter, `\`, one to four parts of ASCII letters and digits, Korean,
 // space, `.`, `(`, `)`, `&` and `%`; never a trailing space or dot, never an empty part), which java.nio.file.Path gives back
 // unchanged. The tool paths are absent now and then (an absent yt-dlp makes the answer ERR); the js runtime's file name is one of
-// the spellings that do and do not count as Deno or Node. A video id is text() without `\ / : * ? " < > |` and the control
-// characters U+0000..U+001F: Path.resolve would throw for them or read them as separators (a real id is [A-Za-z0-9_-]).
+// the spellings that do and do not count as Deno or Node. The video id of a `dl` case is described at videoIdText.
 constexpr QStringView kPathPartChars = u"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789가나다라마바사아자차카타파하 .()&%";
 constexpr QStringView kDriveLetters = u"CCCDEc";
 constexpr QStringView kJsRuntimeNames[] = {u"node.exe", u"NODE.EXE", u"deno", u"Deno.exe", u"deno.EXE", u"node", u"Node.Exe.exe",
@@ -2046,15 +2045,25 @@ QString winPath(Rng& rng) {
     return path;
 }
 
+// The video id of a `dl` case: text(), so `* ? " < > |` and control characters occur and the port's refusal is checked against
+// Kotlin's ERR. Left out are the inputs on which the port throws and Kotlin does not (downloadCommand's header): an empty id
+// (replaced by "id"), `\`, `/` and `:` (removed), and control characters when the id has no ASCII letter or digit (Kotlin accepts
+// an id of control characters only; with a letter beside them it throws; removed otherwise).
 QString videoIdText(Rng& rng) {
-    QString raw = text(rng, 12);
-    QString id;
-    for (const QChar c : raw) {
+    QString id = text(rng, 12);
+    id.remove(u'\\').remove(u'/').remove(u':');
+    bool hasAlnum = false;
+    for (const QChar c : id) {
         const char16_t unit = c.unicode();
-        if (unit < 0x20 || QStringView(u"\\/:*?\"<>|").contains(c)) continue;
-        id += c;
+        if ((unit >= u'a' && unit <= u'z') || (unit >= u'A' && unit <= u'Z') || (unit >= u'0' && unit <= u'9')) hasAlnum = true;
     }
-    return id;
+    if (!hasAlnum) {
+        QString kept;
+        for (const QChar c : id)
+            if (c.unicode() >= 0x20) kept += c;
+        id = kept;
+    }
+    return id.isEmpty() ? QStringLiteral("id") : id;
 }
 
 QString optionalPathField(Rng& rng, double absent) {

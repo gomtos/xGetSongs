@@ -47,7 +47,7 @@
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/YtDlpCommandsTest.kt",
     "exe": "tst_ytdlp_commands",
-    "added": []
+    "added": ["downloadRejectsAVideoIdThatIsNotAPlainFileNamePart"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/FfmpegCommandsTest.kt",

@@ -104,6 +104,28 @@ private slots:
         tools.ytDlp = std::nullopt;
         QVERIFY_THROWS_EXCEPTION(std::invalid_argument, xgs::ytdlp::resolveVideoCommand(tools, url));
     }
+
+    // Not in Kotlin: the id is joined into a file path, so this port refuses an id that is not a plain file name part.
+    void downloadRejectsAVideoIdThatIsNotAPlainFileNamePart() {
+        QStringList rejected{QString(), u"\\"_s, u"/"_s, u":"_s, u"*"_s, u"?"_s, u"\""_s, u"<"_s, u">"_s, u"|"_s,
+                             u"a\\b"_s, u"a/b"_s, u"a:b"_s, u"..\\x"_s};
+        for (char16_t unit = 0; unit < 0x20; ++unit) rejected.append(u"a"_s + QChar(unit) + u"b"_s);
+        rejected.append(QString(1, QChar(char16_t(0))));
+        for (const QString& id : rejected) {
+            bool threw = false;
+            try {
+                xgs::ytdlp::downloadCommand(testTools(), url, u"C:\\work\\job-1"_s, id);
+            } catch (const std::invalid_argument&) {
+                threw = true;
+            }
+            QVERIFY2(threw, qPrintable(u"video id accepted, "_s + QString::number(id.size()) + u" units, first unit "_s +
+                                       QString::number(id.isEmpty() ? 0 : id.at(0).unicode(), 16)));
+        }
+        for (const QString& id : {u"dQw4w9WgXcQ"_s, u"a_b-c"_s, u"a.b"_s, u"가나"_s}) {
+            const QStringList command = xgs::ytdlp::downloadCommand(testTools(), url, u"C:\\work\\job-1"_s, id);
+            QVERIFY(command.at(command.indexOf(u"-o"_s) + 1).endsWith(id + u".%(ext)s"_s));
+        }
+    }
 };
 
 QTEST_APPLESS_MAIN(YtDlpCommandsTest)
