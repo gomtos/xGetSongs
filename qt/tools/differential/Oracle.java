@@ -1,3 +1,7 @@
+import com.xgetsongs.engine.ytdlp.ErrorClassifier;
+import com.xgetsongs.engine.ytdlp.Failure;
+import com.xgetsongs.engine.ytdlp.ProgressParser;
+import com.xgetsongs.engine.ytdlp.ProgressUpdate;
 import com.xgetsongs.shared.filename.FilenameFormatter;
 import com.xgetsongs.shared.input.ClassifyResult;
 import com.xgetsongs.shared.input.InputClassifier;
@@ -66,6 +70,10 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            Double.doubleToRawLongBits
  *         J text                             Json.Default.parseToJsonElement(text)  -> ERR (anything thrown) | the
  *                                            canonical dump (dumpJson)
+ *         E line1 [line2 ...]                ErrorClassifier.classify(lines)  -> FATAL | UNAVAILABLE | TRANSIENT | OTHER, a
+ *                                            space and the message as hex (no lines: a case with no fields)
+ *         Q line                             ProgressParser.parse(line)  -> NULL | P - (percent null) | P and the 16 hex
+ *                                            digits of Double.doubleToRawLongBits(percent)
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
@@ -329,6 +337,21 @@ public class Oracle {
                         dumped = "ERR";
                     }
                     out.append(dumped);
+                    break;
+                }
+                case "E": {
+                    // the stderr lines (a field is one line; the empty field of a case without lines is skipped)
+                    java.util.List<String> lines = new java.util.ArrayList<>();
+                    for (int k = 1; k < part.length; k++) if (!part[k].isEmpty()) lines.add(dec(part[k]));
+                    Failure failure = ErrorClassifier.INSTANCE.classify(lines);
+                    out.append(failure.getKind().name()).append(' ').append(enc(failure.getMessage()));
+                    break;
+                }
+                case "Q": {
+                    ProgressUpdate.Downloading update = ProgressParser.INSTANCE.parse(dec(part[1]));
+                    if (update == null) out.append("NULL");
+                    else if (update.getPercent() == null) out.append("P -");
+                    else out.append("P ").append(String.format(Locale.ROOT, "%016x", Double.doubleToRawLongBits(update.getPercent())));
                     break;
                 }
                 case "C": {

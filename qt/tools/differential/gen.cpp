@@ -1292,6 +1292,205 @@ QString generateO(Rng& rng) {
     return hex(literal);
 }
 
+// ---- kind E: ErrorClassifier.classify (the stderr lines of yt-dlp) ----
+// Lines of 0..6: noise, lines carrying a phrase of one of the lists (the phrases of several lists in one case make the order
+// of the checks show), ERROR: lines (leading white space, several, empty after the prefix), white-space-only lines and long
+// lines whose cut at 300 units lands in an emoji. Phrases are written in mixed case and with look-alike letters.
+constexpr QStringView kFatalPhrases[] = {u"no space left on device", u"not enough space on the disk", u"disk quota exceeded",
+                                         u"permission denied"};
+constexpr QStringView kRatePhrases[] = {u"try again later", u"rate-limited", u"rate limited"};
+constexpr QStringView kUnavailablePhrases[] = {
+    u"private video", u"sign in to confirm your age", u"age-restricted", u"available in your country",
+    u"blocked it in your country", u"who has blocked it", u"members-only", u"join this channel", u"copyright",
+    u"has been removed", u"account associated with this video has been terminated", u"video unavailable",
+    u"this video is not available"};
+constexpr QStringView kTransientPhrases[] = {
+    u"http error 429", u"http error 403", u"http error 500", u"http error 502", u"http error 503", u"http error 504",
+    u"timed out", u"connection reset", u"connection aborted", u"remote end closed", u"incompleteread",
+    u"temporary failure in name resolution", u"getaddrinfo failed", u"network is unreachable", u"unable to download"};
+constexpr QStringView kFormatPhrases[] = {u"requested format is not available"};
+// Near misses: they must not match (a letter changed, a word dropped, another spelling)
+constexpr QStringView kErrorNearMisses[] = {
+    u"no space left", u"permision denied", u"private  video", u"video  unavailable", u"rate-limit", u"http error 404",
+    u"http error 42", u"timeout", u"timed-out", u"age restricted", u"members only", u"copy right",
+    u"sign in to confirm you're not a bot", u"unable to extract", u"ERROR", u"requested format", u"format is not available",
+    u"try again", u"connection refused"};
+constexpr QStringView kLinePrefixes[] = {u"ERROR: [youtube] abc: ", u"WARNING: ", u"", u"OSError: [Errno 28] ", u"[download] ",
+                                         u"ERROR: ", u"  ERROR: ", u"\tERROR:", u"ERROR:", u"yt_dlp.utils.DownloadError: ",
+                                         u"error: ", u"Error: ", u" ERROR : "};
+constexpr QStringView kLineSuffixes[] = {u"", u"", u".", u". Use --list-formats", u" (caused by ...)", u"!", u"\r", u"  ",
+                                         u"　", u" \t"};
+
+// ASCII letters swapped for the look-alikes that Kotlin's lowercase() treats differently: U+0130 (lowercases to i + U+0307,
+// so "private" stops matching), U+017F (stays), U+212A KELVIN SIGN (lowercases to k, so a phrase with k still matches).
+QString decoratedPhrase(Rng& rng, QStringView phrase) {
+    QString out = phrase.toString();
+    const double roll = rng.next();
+    if (roll < 0.35) return out;
+    if (roll < 0.5) return out.toUpper();
+    if (roll < 0.6) return out.at(0).toUpper() + out.mid(1);
+    if (roll < 0.8) {
+        for (QChar& c : out)
+            if (rng.chance(0.5)) c = c.toUpper();
+        return out;
+    }
+    if (roll < 0.9) {
+        for (QChar& c : out) {
+            if (!rng.chance(0.3)) continue;
+            if (c == u'i' || c == u'I') c = QChar(0x0130);
+            else if (c == u's') c = QChar(0x017F);
+            else if (c == u'k') c = QChar(0x212A);
+        }
+        return out;
+    }
+    // exactly one look-alike (when the phrase has one of the letters)
+    QList<int> candidates;
+    for (int i = 0; i < out.size(); ++i)
+        if (out.at(i) == u'i' || out.at(i) == u's' || out.at(i) == u'k') candidates.append(i);
+    if (!candidates.isEmpty()) {
+        const int at = candidates.at(rng.between(0, int(candidates.size()) - 1));
+        const QChar c = out.at(at);
+        out[at] = QChar(c == u'i' ? 0x0130 : c == u's' ? 0x017F : 0x212A);
+    }
+    return out;
+}
+
+QString phraseOfList(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.14) return decoratedPhrase(rng, pick(rng, kFatalPhrases));
+    if (roll < 0.24) return decoratedPhrase(rng, pick(rng, kRatePhrases));
+    if (roll < 0.52) return decoratedPhrase(rng, pick(rng, kUnavailablePhrases));
+    if (roll < 0.80) return decoratedPhrase(rng, pick(rng, kTransientPhrases));
+    if (roll < 0.90) return decoratedPhrase(rng, pick(rng, kFormatPhrases));
+    return decoratedPhrase(rng, pick(rng, kErrorNearMisses));
+}
+
+// A line of more than 300 units after the prefix, an emoji (a surrogate pair) where the cut falls (299|300 or a bit away).
+QString longErrorLine(Rng& rng) {
+    const QString prefix = rng.chance(0.7) ? QStringLiteral("ERROR: ") : (rng.chance(0.5) ? QStringLiteral("  ERROR:   ") : QString());
+    const int cutAt = rng.between(296, 302);
+    QString body = rng.chance(0.3) ? QStringLiteral("가").repeated(cutAt) : QStringLiteral("x").repeated(cutAt);
+    body += rng.chance(0.85) ? QStringLiteral("😀") : QString(QChar(0xD83D));   // a pair, or an unpaired high surrogate
+    body += QStringLiteral("tail").repeated(rng.between(0, 10));
+    if (rng.chance(0.2)) body += pick(rng, kSpaces).toString();
+    return prefix + body;
+}
+
+QString errorLineOf(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.1) return QStringLiteral("ERROR:");
+    if (roll < 0.2) return pick(rng, kSpaces).toString() + u"ERROR:" + pick(rng, kSpaces).toString();   // empty after the prefix
+    if (roll < 0.3) return u"ERROR:" + QString(u' ').repeated(rng.between(0, 3)) + u"ERROR:" + text(rng, 3);   // the prefix twice
+    return pick(rng, kLinePrefixes).toString() + text(rng, 8);
+}
+
+QString lineOfE(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.28) return pick(rng, kLinePrefixes).toString() + phraseOfList(rng) + pick(rng, kLineSuffixes).toString();
+    if (roll < 0.40) return pick(rng, kLinePrefixes).toString() + text(rng, 6) + u' ' + phraseOfList(rng) + u' ' + text(rng, 4);
+    if (roll < 0.52) return errorLineOf(rng);
+    if (roll < 0.58) return QString();
+    if (roll < 0.66) {
+        QString blank;
+        const int count = rng.between(1, 4);
+        for (int i = 0; i < count; ++i) blank += pick(rng, kSpaces).toString();
+        return blank;
+    }
+    if (roll < 0.70) return longErrorLine(rng);
+    if (roll < 0.73) return text(rng, 120);   // long and without a prefix
+    if (roll < 0.75) return phraseOfList(rng) + u"\n" + phraseOfList(rng);   // a line with a line break inside
+    return text(rng, 10);
+}
+
+QString generateE(Rng& rng) {
+    if (rng.chance(0.06)) return QString();   // no lines at all
+    int count = rng.between(1, 6);
+    if (rng.chance(0.2)) count = 1;
+    const bool noiseOnly = rng.chance(0.2);   // few phrases, so the classification often falls to OTHER
+    QStringList fields;
+    for (int i = 0; i < count; ++i) {
+        QString line = lineOfE(rng);
+        if (noiseOnly && rng.chance(0.7)) line = pick(rng, kLinePrefixes).toString() + text(rng, 8);
+        fields.append(hex(line));
+    }
+    return fields.join(u'\t');
+}
+
+// ---- kind Q: ProgressParser.parse ----
+// `XGSP|status|downloaded|total|estimated total` in a few spellings. Field values come from the generator of kind O (every
+// grammar of toDoubleOrNull) or are built to give a percent: a total, a downloaded amount as a share of it, "NA".
+constexpr QStringView kStatusOther[] = {u"started", u"Downloading", u"FINISHED", u"Finished", u"downloading ", u" finished", u"",
+                                        u"error", u"fınished", u"downloadıng", u"paused", u"finished|", u"NA"};
+constexpr QStringView kBadHeads[] = {u"XGSPP|downloading|1|2|3", u"xgsp|downloading|1|2|3", u"XGSP downloading|1|2|3", u"XGSP",
+                                     u"XGSP|", u"XGS|downloading|1|2|3", u"XGSPX|finished", u"[youtube] Extracting URL", u"",
+                                     u"|XGSP|finished", u"XGSP:finished", u"XGSP||downloading|1|2", u"ZGSP|finished",
+                                     u"XGSPP|started|ExtractAudio", u"\u0001XGSP|finished", u"XGSP|downloading", u"XGSP|finished"};
+
+QString numberField(Rng& rng) {
+    // a field of O's generator: any literal of toDoubleOrNull, many of them not numbers
+    return unhex(generateO(rng)).value_or(QString());
+}
+
+QString structuredNumber(Rng& rng, qint64 value) {
+    const double roll = rng.next();
+    if (roll < 0.7) return QString::number(value);
+    if (roll < 0.8) return QString::number(value) + u".0";
+    if (roll < 0.85) return QString::number(value) + u".5";
+    if (roll < 0.9) return QString::number(value) + u"e0";
+    if (roll < 0.95) return u" " + QString::number(value) + u" ";
+    return QStringLiteral("+") + QString::number(value);
+}
+
+// The fields downloaded, total, estimated total of a downloading line that mostly gives a percent.
+void percentFields(Rng& rng, QStringList& parts) {
+    constexpr qint64 totals[] = {100, 100, 100, 1000, 1, 2, 3, 7, 29, 4096, 1048576, 123456789, 2000000000, 0, 0, -5};
+    const qint64 total = pick(rng, totals);
+    const double roll = rng.next();
+    qint64 downloaded;
+    if (roll < 0.08) downloaded = 0;
+    else if (roll < 0.2) downloaded = total;
+    else if (roll < 0.3) downloaded = total + rng.between(1, 1000);
+    else if (roll < 0.35) downloaded = -rng.between(1, 1000);
+    else if (total == 100) downloaded = rng.between(1, 99);
+    else downloaded = total > 1 ? rng.between(1, int(std::min<qint64>(total, 2000000000)) - 1) : 0;
+    const bool known = rng.chance(0.55);   // the total is the third field; else "NA" there and the estimate in the fourth
+    parts.append(structuredNumber(rng, downloaded));
+    parts.append(known ? structuredNumber(rng, total) : (rng.chance(0.8) ? QStringLiteral("NA") : numberField(rng)));
+    parts.append(!known || rng.chance(0.25) ? (rng.chance(0.85) ? structuredNumber(rng, total) : QStringLiteral("NA"))
+                                           : QStringLiteral("NA"));
+}
+
+QString generateQ(Rng& rng) {
+    QString line;
+    if (rng.chance(0.08)) {
+        line = pick(rng, kBadHeads).toString();
+    } else {
+        QStringList parts;
+        parts.append(QStringLiteral("XGSP"));
+        const double statusRoll = rng.next();
+        QString status;
+        if (statusRoll < 0.2) status = QStringLiteral("finished");
+        else if (statusRoll < 0.8) status = QStringLiteral("downloading");
+        else status = pick(rng, kStatusOther).toString();
+        parts.append(status);
+        if (status == u"downloading" && rng.chance(0.75)) {
+            percentFields(rng, parts);
+        } else {
+            const int count = rng.between(0, 5);
+            for (int i = 0; i < count; ++i)
+                parts.append(rng.chance(0.4) ? numberField(rng) : (rng.chance(0.4) ? QStringLiteral("NA") : text(rng, 2)));
+        }
+        if (rng.chance(0.1) && parts.size() > 2) parts[rng.between(2, int(parts.size()) - 1)] = numberField(rng);   // one field from O
+        line = parts.join(u'|');
+    }
+    if (rng.chance(0.25)) {
+        const QString pad = rng.chance(0.7) ? pick(rng, kSpaces).toString() : (rng.chance(0.5) ? QStringLiteral("\r\n") : QStringLiteral("\t \r"));
+        const int where = rng.between(0, 2);
+        line = (where != 1 ? pad : QString()) + line + (where != 0 ? pad : QString());
+    }
+    return hex(line);
+}
+
 // ---- kind J: kotlinx.serialization's Json.parseToJsonElement (xgs::json) ----
 // Documents from a grammar (objects, arrays, strings, literals; depth 0..6, sometimes a chain of 60, rarely the deep
 // families below), every category of the Step 2 observations, and in 30% one place broken.
@@ -1547,6 +1746,8 @@ void registerGenerators() {
     registerKind('H', generateH);
     registerKind('O', generateO);
     registerKind('J', generateJ);
+    registerKind('E', generateE);
+    registerKind('Q', generateQ);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).

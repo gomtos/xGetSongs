@@ -37,6 +37,8 @@
 #include "lyrics/lyrics_extractor.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
+#include "ytdlp/error_classifier.h"
+#include "ytdlp/progress_parser.h"
 
 namespace xgs::diff {
 
@@ -224,6 +226,32 @@ QString answerJ(const QStringList& fields) {
     return value ? json::dump(*value) : QStringLiteral("ERR");
 }
 
+// ---- kinds E and Q ----
+// E line1 [line2 ...] -> FATAL|UNAVAILABLE|TRANSIENT|OTHER <message hex> (ErrorClassifier.classify; a case without lines has
+// one empty field, which is no line)
+QString answerE(const QStringList& fields) {
+    QStringList lines;
+    for (const QString& field : fields)
+        if (!field.isEmpty()) lines.append(textOf(field));
+    const ytdlp::Failure failure = ytdlp::classifyError(lines);
+    QString kind;
+    switch (failure.kind) {
+    case ytdlp::FailureKind::Fatal: kind = QStringLiteral("FATAL"); break;
+    case ytdlp::FailureKind::Unavailable: kind = QStringLiteral("UNAVAILABLE"); break;
+    case ytdlp::FailureKind::Transient: kind = QStringLiteral("TRANSIENT"); break;
+    case ytdlp::FailureKind::Other: kind = QStringLiteral("OTHER"); break;
+    }
+    return kind + u' ' + hexText(failure.message);
+}
+
+// Q line -> NULL | P - | P <16 hex digits of the percent's bits> (ProgressParser.parse)
+QString answerQ(const QStringList& fields) {
+    if (fields.size() < 1) return QStringLiteral("?");
+    const std::optional<ytdlp::DownloadProgress> update = ytdlp::parseProgress(textOf(fields.at(0)));
+    if (!update) return QStringLiteral("NULL");
+    return update->percent ? QStringLiteral("P ") + kt::hexBits(*update->percent) : QStringLiteral("P -");
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -249,6 +277,8 @@ void registerAnswers() {
     registerAnswer('H', answerH);
     registerAnswer('O', answerO);
     registerAnswer('J', answerJ);
+    registerAnswer('E', answerE);
+    registerAnswer('Q', answerQ);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).

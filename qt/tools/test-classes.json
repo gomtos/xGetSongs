@@ -23,5 +23,20 @@
     "kotlin": "shared/src/commonTest/kotlin/com/xgetsongs/shared/log/LogRedactionTest.kt",
     "exe": "tst_log_redaction",
     "added": ["redactPathsWithFiveThousandPartsFinishesQuickly"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/ErrorClassifierTest.kt",
+    "exe": "tst_error_classifier",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/ProgressParserTest.kt",
+    "exe": "tst_progress_parser",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/job/DownloadConcurrencyTest.kt",
+    "exe": "tst_download_concurrency",
+    "added": []
   }
 ]
