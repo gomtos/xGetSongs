@@ -19,7 +19,7 @@ ctest --test-dir build/qt --output-on-failure
 pwsh qt/tools/differential/run.ps1 -Kinds <글자들> [-PerKind 10000] [-Seed 20261115]
 ```
 
-세 번째는 대조 도구다(아래). 관문 점검(아래 "Q1 관문")은 이 명령들에 두 스크립트를 더한다. 실행 파일(테스트 포함)은 `build/qt/` 바로 아래에 생긴다(`CMAKE_RUNTIME_OUTPUT_DIRECTORY`).
+세 번째는 대조 도구다(아래). 관문 점검(아래 "관문")은 이 명령들에 두 스크립트를 더한다. 실행 파일(테스트 포함)은 `build/qt/` 바로 아래에 생긴다(`CMAKE_RUNTIME_OUTPUT_DIRECTORY`).
 
 ### 디버그 빌드
 
@@ -32,9 +32,9 @@ ctest --test-dir build/qt-debug --output-on-failure
 
 대조 도구와 두 관문 스크립트는 `build/qt`(릴리스)의 실행 파일을 쓴다.
 
-## Q1 관문
+## 관문
 
-Q1(`shared` 이식)의 관문은 설계 §4의 두 조건이다: 이식 대상 Kotlin 테스트가 같은 이름으로 모두 통과하고, 대조에서 불일치가 0이다. 빌드한 뒤 저장소 루트에서 차례로 돌린다. 하나라도 실패하면 C++을 고치고 처음부터 다시 돌린다(Kotlin 코드, 기대값, 문턱은 바꾸지 않는다).
+Q1(`shared` 이식)과 Q2a(`engine`의 순수 로직)의 관문은 설계 §4의 두 조건이다: 이식 대상 Kotlin 테스트가 같은 이름으로 모두 통과하고, 대조에서 불일치가 0이다. 대조는 모든 종류(Q1의 것과 Q2a의 것)를 돈다. 우리 대상을 깨끗이 다시 빌드한 뒤(아래 "깨끗한 빌드", 릴리스와 디버그 둘 다) 저장소 루트에서 차례로 돌린다. 하나라도 실패하면 C++을 고치고 처음부터 다시 돌린다(Kotlin 코드, 기대값, 문턱, 생성기의 강도는 바꾸지 않는다).
 
 ```
 ctest --test-dir build/qt --output-on-failure
@@ -47,10 +47,10 @@ pwsh qt/tools/differential/run.ps1 -PerKind 10000 -Seed 987654321
 pwsh qt/tools/differential/run.ps1 -PerKind 100000 -Seed <아무 값>
 ```
 
-- `test-names.ps1`: `qt/tools/test-classes.json`에 적힌 Kotlin 테스트 클래스마다 `@Test` 함수 이름과 `build/qt/<exe>.exe -functions`의 이름을 비교한다. 이 파일은 배열이고 항목마다 `kotlin`(저장소 기준 Kotlin 테스트 파일), `exe`(Qt 테스트 실행 파일 이름), `added`(Kotlin에 없지만 일부러 더한 이름)를 둔다. 테스트 클래스를 이식하면 여기에 항목을 더한다. 빠진 이름이 있거나, 그 클래스의 `added` 밖의 이름이 더해졌거나, `added`의 이름이 그 실행 파일에 없거나, Kotlin 테스트 파일에서 이름이 하나도 안 나오면 종료 코드 1이다. 지금 `added`는 Q1의 세 이름(`extractOnOneMegabyteDescriptionFinishesQuickly`, `redactPathsWithFiveThousandPartsFinishesQuickly`, `leadingNonBmpLettersAreDroppedLikeEmoji`)과 Q2a의 `readsATenMegabyteInfoFileQuickly`, `sigmaFormsAreTheSameLetterInMatching`(가사 매칭의 시그마 결정, 아래 "끝 시그마 계약")다. `tst_kt_text`(Kotlin 짝이 없음)는 대조하지 않는다.
+- `test-names.ps1`: `qt/tools/test-classes.json`에 적힌 Kotlin 테스트 클래스마다 `@Test` 함수 이름과 `build/qt/<exe>.exe -functions`의 이름을 비교한다. 이 파일은 배열이고 항목마다 `kotlin`(저장소 기준 Kotlin 테스트 파일), `exe`(Qt 테스트 실행 파일 이름), `added`(Kotlin에 없지만 일부러 더한 이름)를 둔다. 테스트 클래스를 이식하면 여기에 항목을 더한다. 빠진 이름이 있거나, 그 클래스의 `added` 밖의 이름이 더해졌거나, `added`의 이름이 그 실행 파일에 없거나, Kotlin 테스트 파일에서 이름이 하나도 안 나오면 종료 코드 1이다. 지금 `added`는 Q1의 세 이름(`extractOnOneMegabyteDescriptionFinishesQuickly`, `redactPathsWithFiveThousandPartsFinishesQuickly`, `leadingNonBmpLettersAreDroppedLikeEmoji`)과 Q2a의 세 이름 `readsATenMegabyteInfoFileQuickly`(10MB `info.json`), `downloadRejectsAVideoIdThatIsNotAPlainFileNamePart`(파일 이름으로 못 쓰는 영상 ID를 거절, 아래 종류 `K`), `sigmaFormsAreTheSameLetterInMatching`(가사 매칭의 시그마 결정, 아래 "끝 시그마 계약")다. Kotlin 짝이 없는 실행 파일 `tst_kt_text`, `tst_json`, `tst_models`, `tst_smoke`는 대조하지 않는다.
 - `forbidden-calls.ps1`: `qt/core`(`kt_text.*` 제외)에서 `QChar`/`QString`의 공백·글자·숫자·문장부호·대소문자·대소문자 접기·`trimmed`·`simplified`·`QRegularExpression`·`QLocale`·`localeAwareCompare` 호출(앞에 `kt::`가 붙은 것은 제외)을 찾고(Q1 목록), `qt/core` 전체(`kt_text.*`와 `qt/core/json` 포함)에서 Qt의 JSON 클래스(`QJsonDocument`·`QJsonObject`·`QJsonValue`·`QJsonArray`), `toDouble(`·`toInt(`·`toLongLong(`, 실수 형식(`'e'`·`'f'`·`'g'`)을 준 `QString::number(`, 정규화 `normalized(`, 경로 정리(`cleanPath`·`absoluteFilePath`·`absolutePath`·`canonicalPath`·`canonicalFilePath`)를 찾는다(Q2a 목록; 예외는 `kt::nfkc`를 구현하는 `kt_text.cpp`의 `normalized(` 하나). 형식 인자 없이 실수를 넘긴 `QString::number(`는 정수와 구별할 수 없어 리뷰에서 본다. 그리고 `qt/`(`qt/spike` 제외)의 모든 텍스트 파일(확장자와 상관없이, NUL 바이트가 든 파일은 이진으로 보고 건너뛰며 알린다)에서 JDK 내부 클래스·메서드 이름(스크립트의 `$internals`에 있다. 이 README에는 적지 않는다. 적으면 스크립트가 걸린다)을 찾는다. 하나라도 있으면 종료 코드 1이다. 이 프로젝트는 MIT 라이선스라서 OpenJDK에서 나온 코드를 넣지 않는다.
 - 사례 10만 건(`-PerKind 100000`)은 1만 건에서는 안 나오던 불일치를 드러낸 적이 있다(Task 3의 `regionMatches`, Task 4의 `trimEnd(' ')`). 모든 종류를 한 번은 이 크기로 돌린다. `run.ps1`은 종류를 하나씩 돌리고 다음 종류 전에 앞 종류의 데이터를 놓으므로 한 번에 모든 종류를 돌려도 된다(전에는 사례를 다 들고 있어서 묶어 돌려야 했다).
-- 깨끗한 빌드: `build/qt/vcpkg_installed`(Qt)를 지우지 말고 우리 쪽만 지운다: `cmake --build build/qt --target clean`.
+- 깨끗한 빌드: `build/qt/vcpkg_installed`·`build/qt-debug/vcpkg_installed`(Qt)를 지우지 말고 우리 쪽만 지운다: `cmake --build build/qt --target clean`, `cmake --build build/qt-debug --target clean`, 그다음 위의 빌드 명령.
 
 ## 켠 qtbase 기능
 
