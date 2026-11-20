@@ -16,6 +16,8 @@ bool isWhitespace(QChar c);        // Char.isWhitespace(): Zs, Zl, Zp, U+0009..0
 bool isLetter(QChar c);            // Char.isLetter()
 bool isLetterOrDigit(QChar c);     // Char.isLetterOrDigit(): a letter (L*) or Nd; a surrogate unit is neither
 bool isLetterOrDigit(char32_t codePoint);   // Character.isLetterOrDigit(int); a surrogate code point is neither
+bool isDigit(QChar c);             // Char.isDigit() (inline-only: Character.isDigit(char)): Nd; a surrogate unit is not
+int digitValue(QChar c);           // Character.digit(c, 10) of an isDigit unit (what toIntOrNull adds per digit), else -1
 bool isAsciiSpace(QChar c);        // \s of a Java regular expression without flags: ' ', \t, \n, U+000B, \f, \r
 bool isHighSurrogate(QChar c);
 bool isSurrogate(QChar c);

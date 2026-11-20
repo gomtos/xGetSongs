@@ -261,6 +261,17 @@ bool isLetterOrDigit(QChar c) {
     return detail::qtCharFacts(c.unicode()).letterOrDigit;
 }
 
+// The general categories are disjoint, so a letter or digit that is not a letter is exactly Nd; both answers are the JVM's
+// (kind X compares them for every unit).
+bool isDigit(QChar c) {
+    return isLetterOrDigit(c) && !isLetter(c);
+}
+
+int digitValue(QChar c) {
+    // Every Nd character belongs to a run of ten whose value Unicode gives; Qt's data has it (W st samples every Nd unit).
+    return isDigit(c) ? c.digitValue() : -1;
+}
+
 // Above U+FFFF Qt's categories decide, except where JVM 21's answer differs (kSupplementaryLetterOrDigit: mostly letters of
 // scripts that Qt's newer Unicode has and JVM 21's has not).
 bool isLetterOrDigit(char32_t codePoint) {

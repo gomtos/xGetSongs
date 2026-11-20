@@ -3,6 +3,8 @@ import com.xgetsongs.engine.lyrics.LyricsMatcher;
 import com.xgetsongs.engine.lyrics.LyricsQuery;
 import com.xgetsongs.engine.tags.Ffmetadata;
 import com.xgetsongs.engine.tags.TrackTags;
+import com.xgetsongs.engine.ToolException;
+import com.xgetsongs.engine.tools.DefaultToolManager;
 import com.xgetsongs.engine.tools.ToolPaths;
 import com.xgetsongs.engine.ytdlp.ErrorClassifier;
 import com.xgetsongs.engine.ytdlp.FfmpegCommands;
@@ -12,6 +14,9 @@ import com.xgetsongs.engine.ytdlp.ProgressParser;
 import com.xgetsongs.engine.ytdlp.ProgressUpdate;
 import com.xgetsongs.engine.ytdlp.VideoInfo;
 import com.xgetsongs.engine.ytdlp.VideoInfoFile;
+import com.xgetsongs.shared.api.ActionResult;
+import com.xgetsongs.shared.api.ToolInfo;
+import com.xgetsongs.shared.api.ToolsStatus;
 import com.xgetsongs.shared.filename.FilenameFormatter;
 import com.xgetsongs.shared.input.ClassifyResult;
 import com.xgetsongs.shared.input.InputClassifier;
@@ -103,7 +108,9 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            artistName albumName duration instrumental plainLyrics: hex or "-", the duration
  *                                            as the 16 hex digits of Double.doubleToRawLongBits or "-", instrumental 0 | 1 | -)
  *         W op fields...                     paths and files, one op per case (answerW): pn text, pc dir name, pf path,
- *                                            px path, ln bytes chunkSize... (the lines of a child's output, answerLines)
+ *                                            px path, ln bytes chunkSize... (the lines of a child's output, answerLines),
+ *                                            st and up (DefaultToolManager.status and updateYtDlp on a runner that plays
+ *                                            the case: answerTools)
  *
  * An observation, not a gate (Q2b Task 2 Step 4):
  *   xgs-diff arglists 2000 20261118 | ... Oracle.java argv <path of xgs-test-child.exe>
@@ -524,7 +531,7 @@ public class Oracle {
     //   pc dir name   Path.of(dir).resolve(name).toString()           -> hex | ERR
     //   pf path       Path.of(path).getFileName(), "-" for null       -> hex | - | ERR
     //   px path       kotlin.io.path nameWithoutExtension of Path.of(path)   -> hex | ERR
-    static String answerW(String[] part) {
+    static String answerW(String[] part) throws Exception {
         try {
             switch (part[1]) {
                 case "pn":
@@ -539,6 +546,9 @@ public class Oracle {
                     return enc(kotlin.io.path.PathsKt.getNameWithoutExtension(java.nio.file.Path.of(dec(part[2]))));
                 case "ln":
                     return answerLines(decBytes(part[2]));
+                case "st":
+                case "up":
+                    return answerTools(part);
                 default:
                     return "?";
             }
@@ -560,6 +570,81 @@ public class Oracle {
             return kotlin.Unit.INSTANCE;
         });
         return out.toString();
+    }
+
+    // W st / W up: DefaultToolManager on a ProcessRunner that plays the case. A tool is three fields: its path (hex, "-" when
+    // missing), its run (the exit code in decimal, or S: the runner throws IOException(START_FAILURE) as ProcessBuilder.start
+    // does for a program that cannot be started) and its output lines ("~" for none, else comma-separated items: o or e for
+    // stdout or stderr, then the line as hex). The output goes to the handlers in that order on the caller's thread.
+    //   st yt-dlp ffmpeg js (3 fields each)   status()  -> found version path for each tool (found 0 | 1, the strings as hex)
+    //   up yt-dlp (3 fields)                  updateYtDlp()  -> OK hex | ERR hex (the ToolException's message)
+    // Both answers end in " R" and every command the runner was given (its arguments as hex, comma-separated).
+    static final String START_FAILURE = "Cannot run program (start failure of the differential test)";
+
+    static final class CaseRunner implements com.xgetsongs.engine.process.ProcessRunner {
+        final java.util.Map<String, String[]> runs = new java.util.HashMap<>();   // path -> {run, lines}
+        final StringBuilder commands = new StringBuilder(" R");
+
+        @Override
+        public Object run(java.util.List<String> command, kotlin.jvm.functions.Function1<? super String, kotlin.Unit> onStdout,
+                          kotlin.jvm.functions.Function1<? super String, kotlin.Unit> onStderr,
+                          kotlin.coroutines.Continuation<? super Integer> continuation) {
+            commands.append(' ');
+            for (int k = 0; k < command.size(); k++) commands.append(k > 0 ? "," : "").append(enc(command.get(k)));
+            String[] behaviour = runs.get(command.get(0));
+            if (behaviour == null) return Integer.valueOf(1);
+            if (behaviour[0].equals("S")) Oracle.<RuntimeException>sneakyThrow(new java.io.IOException(START_FAILURE));
+            if (!behaviour[1].equals("~")) {
+                for (String item : behaviour[1].split(",", -1)) {
+                    String line = dec(item.substring(1));
+                    if (item.charAt(0) == 'o') onStdout.invoke(line);
+                    else onStderr.invoke(line);
+                }
+            }
+            return Integer.valueOf(Integer.parseInt(behaviour[0]));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    static <E extends Throwable> void sneakyThrow(Throwable e) throws E {
+        throw (E) e;
+    }
+
+    static String toolInfo(ToolInfo info) {
+        return bit(info.getFound()) + " " + enc(info.getVersion()) + " " + enc(info.getPath());
+    }
+
+    static String answerTools(String[] part) throws Exception {
+        CaseRunner runner = new CaseRunner();
+        int tools = part[1].equals("st") ? 3 : 1;
+        java.nio.file.Path[] paths = new java.nio.file.Path[3];
+        for (int t = 0; t < tools; t++) {
+            try {
+                paths[t] = path(part[2 + 3 * t]);
+            } catch (BadPath e) {
+                return "BADPATH";
+            }
+            if (paths[t] != null) runner.runs.put(paths[t].toString(), new String[] {part[3 + 3 * t], part[4 + 3 * t]});
+        }
+        ToolPaths toolPaths = new ToolPaths(paths[0], paths[1], paths[2]);
+        DefaultToolManager manager = new DefaultToolManager(() -> toolPaths, runner, java.nio.file.Path.of("C:\\xgs-diff-unused"),
+            (url, continuation) -> { throw new IllegalStateException("fetch is not used"); });
+        String answer;
+        if (part[1].equals("st")) {
+            ToolsStatus status = kotlinx.coroutines.BuildersKt.<ToolsStatus>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+                (scope, continuation) -> manager.status(continuation));
+            answer = toolInfo(status.getYtDlp()) + " " + toolInfo(status.getFfmpeg()) + " " + toolInfo(status.getJsRuntime());
+        } else {
+            try {
+                ActionResult result = kotlinx.coroutines.BuildersKt.<ActionResult>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+                    (scope, continuation) -> manager.updateYtDlp(continuation));
+                answer = "OK " + enc(result.getMessage());
+            } catch (Exception e) {
+                if (!(e instanceof ToolException)) throw e;
+                answer = "ERR " + enc(e.getMessage());
+            }
+        }
+        return answer + runner.commands;
     }
 
     // argv <helper>: an observation, not a gate (Q2b Task 2 Step 4). For each argument list on stdin (one per line, every

@@ -44,9 +44,11 @@
 #include "model/models.h"
 #include "paths/paths.h"
 #include "process/line_splitter.h"
+#include "process/process_runner.h"
 #include "tags/ffmetadata.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
+#include "tools/tool_manager.h"
 #include "ytdlp/error_classifier.h"
 #include "ytdlp/ffmpeg_commands.h"
 #include "ytdlp/progress_parser.h"
@@ -386,6 +388,7 @@ QString answerI(const QStringList& fields) {
 // W pf path -> hex of paths::fileName(fromText(path)), "-" for none | ERR
 // W px path -> hex of paths::nameWithoutExtension(fromText(path)) | ERR
 // W ln bytes chunkSize... -> OK <each line as hex> (answerLn)
+// W st yt-dlp ffmpeg js / W up yt-dlp -> tools::ToolManager on a runner that plays the case (answerSt, answerUp)
 // One answerer per op (kWAnswers); the op's fields follow the op.
 QString pathOrErr(const std::optional<QString>& path) {
     return path ? hexText(*path) : QStringLiteral("ERR");
@@ -435,11 +438,101 @@ QString answerLn(const QStringList& fields) {
     return answer;
 }
 
+// W st / W up: a tool is three fields: its path (hex, "-" when missing), its run (the exit code in decimal, or S: a start
+// failure with startFailureText) and its output lines ("~" for none, else comma-separated items: o or e for stdout or stderr,
+// then the line as hex), handed to the handlers in that order on the caller's thread. The answer ends in " R" and every
+// command the runner was given (its arguments as hex, comma-separated), as Oracle.java's answerTools.
+const QString startFailureText = QStringLiteral("Cannot run program (start failure of the differential test)");
+
+class CaseRunner final : public process::ProcessRunner {
+public:
+    QMap<QString, QStringList> runs;   // path -> {run, lines}
+    QString commands = QStringLiteral(" R");
+    bool bad = false;                  // a field that is not what the generator writes
+
+    process::RunResult run(const QStringList& command, const process::LineHandler& onStdout, const process::LineHandler& onStderr,
+                           std::stop_token) override {
+        commands += u' ';
+        for (qsizetype k = 0; k < command.size(); ++k) commands += (k > 0 ? QStringLiteral(",") : QString()) + hexText(command.at(k));
+        const auto found = runs.constFind(command.first());
+        if (found == runs.constEnd()) return {process::RunStatus::Exited, 1};
+        if (found->at(0) == u"S") return {process::RunStatus::StartFailed, -1, startFailureText};
+        if (found->at(1) != u"~") {
+            for (const QString& item : found->at(1).split(u',')) {
+                const QString line = textOf(item.sliced(1));
+                (item.startsWith(u'o') ? onStdout : onStderr)(line);
+            }
+        }
+        bool ok = false;
+        const int exitCode = found->at(0).toInt(&ok);
+        if (!ok) bad = true;
+        return {process::RunStatus::Exited, exitCode};
+    }
+};
+
+// The tool paths of a case (count tools from fields[0]) into runner; false when a path does not come back unchanged from
+// paths::fromText (Oracle.java answers BADPATH then).
+bool casePaths(const QStringList& fields, int count, CaseRunner& runner, ToolPaths& paths) {
+    std::optional<QString>* targets[] = {&paths.ytDlp, &paths.ffmpeg, &paths.jsRuntime};
+    for (int t = 0; t < count; ++t) {
+        if (fields.at(3 * t) == u"-") continue;
+        const QString text = textOf(fields.at(3 * t));
+        const std::optional<QString> path = paths::fromText(text);
+        if (path != text) return false;
+        *targets[t] = path;
+        runner.runs.insert(text, {fields.at(3 * t + 1), fields.at(3 * t + 2)});
+    }
+    return true;
+}
+
+// A ToolPathProvider of fixed paths.
+class CaseTools final : public tools::ToolPathProvider {
+public:
+    explicit CaseTools(ToolPaths paths) : m_paths(std::move(paths)) {}
+    ToolPaths current() const override { return m_paths; }
+
+private:
+    ToolPaths m_paths;
+};
+
+Outcome<QByteArray> unusedFetch(const QString&, std::stop_token) {
+    return Outcome<QByteArray>::failed(QStringLiteral("fetch is not used"));
+}
+
+QString toolInfoText(const ToolInfo& info) {
+    return flag(info.found) + u' ' + hex(info.version) + u' ' + hex(info.path);
+}
+
+// W st yt-dlp ffmpeg js (3 fields each) -> found version path of each tool (ToolManager::status)
+QString answerSt(const QStringList& fields) {
+    if (fields.size() != 9) return QStringLiteral("?");
+    CaseRunner runner;
+    ToolPaths paths;
+    if (!casePaths(fields, 3, runner, paths)) return QStringLiteral("BADPATH");
+    const CaseTools caseTools(paths);
+    const ToolsStatus status = tools::ToolManager(caseTools, runner, QStringLiteral("C:\\xgs-diff-unused"), unusedFetch).status({});
+    if (runner.bad) return QStringLiteral("?");
+    return toolInfoText(status.ytDlp) + u' ' + toolInfoText(status.ffmpeg) + u' ' + toolInfoText(status.jsRuntime) + runner.commands;
+}
+
+// W up yt-dlp (3 fields) -> OK hex | ERR hex (ToolManager::updateYtDlp)
+QString answerUp(const QStringList& fields) {
+    if (fields.size() != 3) return QStringLiteral("?");
+    CaseRunner runner;
+    ToolPaths paths;
+    if (!casePaths(fields, 1, runner, paths)) return QStringLiteral("BADPATH");
+    const CaseTools caseTools(paths);
+    const Outcome<QString> result = tools::ToolManager(caseTools, runner, QStringLiteral("C:\\xgs-diff-unused"), unusedFetch).updateYtDlp({});
+    if (runner.bad || result.status == OutcomeStatus::Cancelled) return QStringLiteral("?");
+    return (result.isOk() ? QStringLiteral("OK ") + hexText(*result.value) : QStringLiteral("ERR ") + hexText(result.error)) + runner.commands;
+}
+
 struct WAnswer {
     QStringView op;
     Answerer answer;   // gets the fields after the op (at least one)
 };
-constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}, {u"ln", answerLn}};
+constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}, {u"ln", answerLn},
+                                {u"st", answerSt}, {u"up", answerUp}};
 
 QString answerW(const QStringList& fields) {
     if (fields.size() < 2) return QStringLiteral("?");

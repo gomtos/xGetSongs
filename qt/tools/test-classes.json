@@ -77,5 +77,11 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tools/ToolLocatorTest.kt",
     "exe": "tst_tool_locator",
     "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tools/DefaultToolManagerTest.kt",
+    "exe": "tst_tool_manager",
+    "added": ["installIsCancelledWhenTheFetchIsCancelled", "cancelledInstallLeavesNoTemporaryFile",
+              "updateIsCancelledWhenTheRunIsCancelled"]
   }
 ]

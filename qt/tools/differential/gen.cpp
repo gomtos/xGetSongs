@@ -3009,11 +3009,211 @@ QString generateLn(Rng& rng) {
     return out;
 }
 
+// ---- kind W: tools (st up) ----
+// st yt-dlp ffmpeg js / up yt-dlp: the tools of ToolManager, three fields each: the path (hex, "-" when missing), the run (the
+// exit code, or S for a start failure) and the output lines ("~" for none, else comma-separated items: o or e for stdout or
+// stderr, then the line as hex). A version line is a real shape (`2025.01.15`, `ffmpeg version 7.1-full_build-www.gyan.dev
+// Copyright ...`, `deno 2.3.1 (stable, release, x86_64-pc-windows-msvc)`, `v22.11.0`) or a broken one: blank lines in front,
+// white space around (Kotlin's, and look-alikes Kotlin keeps), no prefix, parts that are not digits, too few or too many
+// parts, the js minimum +-1, other Unicode digits (any Nd unit of the BMP), numbers beyond Int. Runs exit with 0 or not, or do
+// not start; stderr lines are mixed in. The js runtime's file name decides between Deno's and Node's rules.
+constexpr QStringView kToolDirs[] = {u"C:\\t", u"C:\\tools", u"D:\\bin", u"C:\\Users\\가수\\AppData\\Roaming\\xGetSongs\\bin",
+                                     u"C:\\Program Files\\nodejs", u"C:\\x y\\(a)&%"};
+constexpr QStringView kJsNames[] = {u"deno.exe", u"node.exe", u"NODE.EXE", u"node", u"Deno.exe", u"DENO", u"deno", u"bun.exe",
+                                    u"deno.EXE", u"node.cmd.exe", u"deno.exe.bak"};
+// around a line: Kotlin white space (trimmed) and look-alikes that Kotlin keeps (U+00A0, U+200B, U+FEFF)
+constexpr QStringView kLineSpaces[] = {u" ", u"  ", u"\t", u"\u3000", u"\u000b", u"\u001f", u"\u00a0", u"\u200b", u"\ufeff", u"\u2028"};
+constexpr QStringView kBlankLines[] = {u"", u" ", u"\t", u"\u3000 ", u"\u00a0", u"\u001c", u"\u200b"};
+constexpr int kDenoMinimum[3] = {2, 3, 0};
+constexpr int kNodeMinimum[3] = {22, 0, 0};
+constexpr int kYtDlpVersion[3] = {2025, 1, 15};
+constexpr int kFfmpegVersion[3] = {7, 1, 0};
+
+// every BMP unit that is a decimal digit (kt::isDigit)
+const QList<char16_t>& digitUnits() {
+    static const QList<char16_t> units = [] {
+        QList<char16_t> out;
+        for (int u = 0; u <= 0xFFFF; ++u)
+            if (kt::isDigit(QChar(char16_t(u)))) out.append(char16_t(u));
+        return out;
+    }();
+    return units;
+}
+
+// n in decimal; now and then in the digits of another script (every digit of the number, from the run of ten of a random digit
+// unit), or with one digit replaced by a random digit unit.
+QString numberText(Rng& rng, qint64 n) {
+    QString out = QString::number(n);
+    const double roll = rng.next();
+    if (roll < 0.8) return out;
+    const QList<char16_t>& units = digitUnits();
+    const QChar any(units.at(rng.between(0, int(units.size()) - 1)));
+    if (roll < 0.92) {
+        static constexpr char16_t zeros[] = {u'\uff10', u'\u0660', u'\u06f0', u'\u0966', u'\u0e50', u'\u1040'};
+        const char16_t zero = rng.chance(0.4) ? pick(rng, zeros) : char16_t(any.unicode() - kt::digitValue(any));
+        for (QChar& c : out) c = QChar(char16_t(zero + (c.unicode() - u'0')));
+        return out;
+    }
+    out[rng.between(0, int(out.size()) - 1)] = any;
+    return out;
+}
+
+// A version near minimum (+-1 in one place, or exactly it), anywhere, or with a huge part; now and then with too few or too
+// many parts, another separator, a part that is not only digits, or something that is no version at all.
+QString versionText(Rng& rng, const int (&minimum)[3]) {
+    qint64 parts[3] = {minimum[0], minimum[1], minimum[2]};
+    const double roll = rng.next();
+    if (roll < 0.5) {
+        const int place = rng.between(0, 2);
+        parts[place] += rng.between(-1, 1);
+        if (rng.chance(0.4))
+            for (int k = place + 1; k < 3; ++k) parts[k] = rng.between(0, 12);
+    } else if (roll < 0.8) {
+        for (qint64& p : parts) p = rng.between(0, 30);
+    } else if (roll < 0.9) {
+        static constexpr qint64 huge[] = {2147483647LL, 2147483648LL, 4294967296LL, 99999999999LL, 9223372036854775807LL,
+                                          21474836470LL};
+        parts[rng.between(0, 2)] = pick(rng, huge);
+    } else {
+        parts[0] = rng.between(1, 25);
+        parts[1] = rng.between(0, 12);
+        parts[2] = rng.between(0, 12);
+    }
+    const int count = rng.chance(0.75) ? 3 : rng.between(1, 5);
+    QString out;
+    for (int k = 0; k < count; ++k) {
+        if (k > 0) out += rng.chance(0.95) ? u"."_s : pick(rng, {u".."_s, u","_s, u"-"_s});
+        out += numberText(rng, k < 3 ? std::max<qint64>(parts[k], 0) : rng.between(0, 99));
+        if (rng.chance(0.06)) out += pick(rng, {u"-rc1"_s, u"a"_s, u"x"_s, u"+build"_s, u" "_s, u"_1"_s});
+    }
+    if (rng.chance(0.04)) out = pick(rng, {u"x.3.0"_s, u"."_s, u""_s, u"..1"_s, u"-1.0.0"_s, u"+22.0.0"_s, u"0022.0.0"_s});
+    return out;
+}
+
+QString ytDlpLine(Rng& rng) {
+    static constexpr QStringView real[] = {u"2025.01.15", u"2026.10.01", u"2024.12.23.232653", u"stable@2025.02.19", u"1"};
+    return rng.chance(0.6) ? pick(rng, real).toString() : versionText(rng, kYtDlpVersion);
+}
+
+QString ffmpegLine(Rng& rng) {
+    static constexpr QStringView prefixes[] = {u"ffmpeg version ", u"ffmpeg version ", u"ffmpeg version ", u"ffmpeg version  ",
+                                               u"FFmpeg version ", u"ffmpeg  version ", u"", u"ffmpeg version", u"ffprobe version ",
+                                               u"ffmpeg version\t"};
+    static constexpr QStringView tails[] = {u"-full_build-www.gyan.dev Copyright (c) 2000-2024 the FFmpeg developers",
+                                            u"-essentials_build-www.gyan.dev", u" Copyright (c) 2000-2026", u"", u"\tx", u"  two",
+                                            u"\u3000x"};
+    const double roll = rng.next();
+    const QString version = roll < 0.4 ? u"7.1"_s : roll < 0.6 ? u"N-118000-g1234abcd"_s : versionText(rng, kFfmpegVersion);
+    return pick(rng, prefixes).toString() + version + pick(rng, tails).toString();
+}
+
+QString jsLine(Rng& rng, bool deno) {
+    if (rng.chance(0.12)) deno = !deno;   // now and then the other runtime's banner
+    const QString version = versionText(rng, deno ? kDenoMinimum : kNodeMinimum);
+    const double roll = rng.next();
+    if (deno) {
+        if (roll < 0.75) return u"deno "_s + version + pick(rng, {u" (stable, release, x86_64-pc-windows-msvc)"_s, u""_s, u" (canary)"_s});
+        return pick(rng, {u""_s, u"deno  "_s, u"Deno "_s, u"deno\t"_s, u"deno\u3000"_s, u"v8 "_s}) + version;
+    }
+    if (roll < 0.75) return u"v"_s + version;
+    return pick(rng, {u""_s, u"V"_s, u"vv"_s, u"v "_s, u"node v"_s, u"\u00a0v"_s}) + version;
+}
+
+QString lineItem(bool toStdout, const QString& line) {
+    return (toStdout ? u"o"_s : u"e"_s) + hex(line);
+}
+
+// The output of a version run: maybe a stderr line and blank lines in front, the version line (white space around it now and
+// then), maybe more lines after; sometimes nothing, or blank lines only.
+QString versionLines(Rng& rng, const QString& line) {
+    const double roll = rng.next();
+    if (roll < 0.06) return u"~"_s;
+    QStringList items;
+    if (roll < 0.12) {
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) items.append(lineItem(rng.chance(0.8), pick(rng, kBlankLines).toString()));
+        return items.join(u',');
+    }
+    if (rng.chance(0.15)) items.append(lineItem(false, rng.chance(0.5) ? u"WARNING: x"_s : text(rng, 6)));
+    if (rng.chance(0.2)) {
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) items.append(lineItem(true, pick(rng, kBlankLines).toString()));
+    }
+    QString main = line;
+    if (rng.chance(0.25)) {
+        if (rng.chance(0.6)) main = pick(rng, kLineSpaces).toString() + main;
+        if (rng.chance(0.6)) main += pick(rng, kLineSpaces).toString();
+    }
+    items.append(lineItem(true, main));
+    if (rng.chance(0.3)) {
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) items.append(lineItem(rng.chance(0.7), rng.chance(0.5) ? text(rng, 8) : u"2.0.0"_s));
+    }
+    return items.join(u',');
+}
+
+// A run: a start failure (S), an exit code other than 0, or 0.
+QString runField(Rng& rng, double startFailure, double nonZero) {
+    const double roll = rng.next();
+    if (roll < startFailure) return u"S"_s;
+    if (roll < startFailure + nonZero) {
+        static constexpr int codes[] = {1, 2, -1, 255, -1073741819, 101};
+        return QString::number(pick(rng, codes));
+    }
+    return u"0"_s;
+}
+
+// One tool of a st case: missing 12%, else its path, its run (start failure 8%, an exit code other than 0 10%) and its lines.
+QString statusTool(Rng& rng, const QString& path, const QString& line) {
+    if (rng.chance(0.12)) return u"-\t0\t~"_s;
+    return hex(path) + u'\t' + runField(rng, 0.08, 0.10) + u'\t' + versionLines(rng, line);
+}
+
+QString generateSt(Rng& rng) {
+    const QString dir = pick(rng, kToolDirs).toString();
+    const QString jsName = pick(rng, kJsNames).toString();
+    QString runtime = kt::lowercase(jsName);
+    if (runtime.endsWith(u".exe")) runtime.chop(4);
+    const QString jsDir = rng.chance(0.7) ? dir : pick(rng, kToolDirs).toString();
+    return statusTool(rng, dir + u"\\yt-dlp.exe"_s, ytDlpLine(rng)) + u'\t' + statusTool(rng, dir + u"\\ffmpeg.exe"_s, ffmpegLine(rng)) +
+           u'\t' + statusTool(rng, jsDir + u'\\' + jsName, jsLine(rng, runtime == u"deno"));
+}
+
+// The output of `yt-dlp -U`: 0 to 5 lines of what yt-dlp prints (or text()), blank and white-space-only lines among them, on
+// stdout and stderr.
+QString updateLines(Rng& rng) {
+    static constexpr QStringView messages[] = {u"Current version: stable@2025.01.15 from yt-dlp/yt-dlp",
+                                               u"Latest version: stable@2025.02.19 from yt-dlp/yt-dlp",
+                                               u"Updated yt-dlp to stable@2025.02.19 from yt-dlp/yt-dlp",
+                                               u"yt-dlp is up to date (stable@2025.01.15 from yt-dlp/yt-dlp)",
+                                               u"ERROR: Unable to write to C:\\t\\yt-dlp.exe; Try running as administrator",
+                                               u"ERROR: Unable to update",
+                                               u"WARNING: [youtube] x",
+                                               u"  Updated yt-dlp to 2026.11.02  ",
+                                               u"Current version: 2026.10.01"};
+    const int count = rng.between(0, 5);
+    if (count == 0) return u"~"_s;
+    QStringList items;
+    for (int i = 0; i < count; ++i) {
+        const double roll = rng.next();
+        const QString line = roll < 0.55 ? pick(rng, messages).toString() : roll < 0.75 ? pick(rng, kBlankLines).toString() : text(rng, 10);
+        items.append(lineItem(rng.chance(0.6), line));
+    }
+    return items.join(u',');
+}
+
+// up yt-dlp: missing 5%, else a start failure 8%, an exit code other than 0 37%, 0 for the rest
+QString generateUp(Rng& rng) {
+    if (rng.chance(0.05)) return u"-\t0\t~"_s;
+    return hex(pick(rng, kToolDirs).toString() + u"\\yt-dlp.exe"_s) + u'\t' + runField(rng, 0.08, 0.37) + u'\t' + updateLines(rng);
+}
+
 struct WOp {
     QStringView name;
     Generator fields;   // the fields after the op
 };
-constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn}};
+constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn},
+                         {u"st", generateSt}, {u"up", generateUp}};
 
 QString generateW(Rng& rng) {
     const WOp& op = pick(rng, kWOps);

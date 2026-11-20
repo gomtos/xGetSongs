@@ -362,6 +362,57 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'ln: input ending without a line ending' $bare $n 0.30
         Test-Share 'W' 'ln: a chunk boundary inside a multi-byte sequence or between \r and \n' $split $n 0.10
     }
+    # st yt-dlp ffmpeg js: per tool, found and not found 20% each (Kotlin's answer); a js runtime whose version is at the
+    # minimum of its runtime or just above/below it (the first part that differs from the minimum differs by one) 10%; a start
+    # failure among the tools 2%
+    st = {
+        param($cases, $answers, $indexes)
+        $found = @(0, 0, 0); $missing = @(0, 0, 0); $near = 0; $starts = 0
+        foreach ($i in $indexes) {
+            $tokens = $answers[$i] -split ' '
+            for ($t = 0; $t -lt 3; $t++) { if ($tokens[3 * $t] -ceq '1') { $found[$t]++ } else { $missing[$t]++ } }
+            if ($cases[$i][2] -ceq 'S' -or $cases[$i][5] -ceq 'S' -or $cases[$i][8] -ceq 'S') { $starts++ }
+            $version = ConvertFrom-HexText $tokens[7]
+            if ($null -ne $version -and $cases[$i][7] -cne '-') {
+                $name = (ConvertFrom-HexText $cases[$i][7]).Split('\')[-1].ToLowerInvariant()
+                if ($name.EndsWith('.exe')) { $name = $name.Substring(0, $name.Length - 4) }
+                $minimum = if ($name -ceq 'deno') { @(2, 3, 0) } else { @(22, 0, 0) }
+                $parts = @($version.Split('.') | ForEach-Object {
+                    $value = [long]0; $digits = 0
+                    foreach ($c in $_.ToCharArray()) {
+                        if (-not [char]::IsDigit($c)) { break }
+                        $value = $value * 10 + [long][char]::GetNumericValue($c); $digits++
+                        if ($value -gt [int]::MaxValue) { $value = 0; break }
+                    }
+                    $value
+                })
+                $isNear = $true
+                for ($k = 0; $k -lt 3; $k++) {
+                    $actual = if ($k -lt $parts.Count) { $parts[$k] } else { 0 }
+                    if ($actual -ne $minimum[$k]) { $isNear = [Math]::Abs($actual - $minimum[$k]) -eq 1; break }
+                }
+                if ($isNear) { $near++ }
+            }
+        }
+        $n = $indexes.Count
+        $names = @('yt-dlp', 'ffmpeg', 'js runtime')
+        for ($t = 0; $t -lt 3; $t++) {
+            Test-Share 'W' "st: $($names[$t]) found" $found[$t] $n 0.20
+            Test-Share 'W' "st: $($names[$t]) not found" $missing[$t] $n 0.20
+        }
+        Test-Share 'W' 'st: js runtime version at or just above/below the minimum' $near $n 0.10
+        Test-Share 'W' 'st: a tool that does not start' $starts $n 0.02
+    }
+    # up yt-dlp: OK 30%, ERR 30% (Kotlin's answer); a start failure 2%
+    up = {
+        param($cases, $answers, $indexes)
+        $ok = @($indexes | Where-Object { $answers[$_].StartsWith('OK ') }).Count
+        $err = @($indexes | Where-Object { $answers[$_].StartsWith('ERR ') }).Count
+        $starts = @($indexes | Where-Object { $cases[$_][2] -ceq 'S' }).Count
+        Test-Share 'W' 'up: answer OK' $ok $indexes.Count 0.30
+        Test-Share 'W' 'up: answer ERR' $err $indexes.Count 0.30
+        Test-Share 'W' 'up: yt-dlp does not start' $starts $indexes.Count 0.02
+    }
 }
 # Helpers of the W ln statistics, on the hex of the bytes (2 digits a byte, aligned): `\r\n`, a `\r` not before `\n`, a `\n`
 # not after `\r`; and (zero-width, every position, the caller keeps the aligned ones) a place where a boundary splits something
