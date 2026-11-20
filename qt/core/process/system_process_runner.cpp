@@ -3,6 +3,7 @@
 #include <QList>
 
 #include <algorithm>
+#include <exception>
 #include <memory>
 #include <string>
 #include <thread>
@@ -139,11 +140,13 @@ void readLines(HANDLE pipe, const LineHandler& handler) {
     splitter.finish();
 }
 
-// The two reading threads. Should run leave early (an exception), the destructor kills the job first, so that the pipes break
-// and the threads end, then joins them.
+// The two reading threads. A handler that throws (or a failure such as bad_alloc in a reader) ends its reader: the exception is
+// kept, the job is killed and the abort event set, so that run stops waiting, joins both readers and rethrows it (Kotlin: the
+// exception leaves coroutineScope, whose finally kills the process tree). Should run leave early (an exception of its own), the
+// destructor kills the job first, so that the pipes break and the threads end, then joins them.
 class Readers {
 public:
-    explicit Readers(HANDLE job) : m_job(job) {}
+    Readers(HANDLE job, HANDLE abort) : m_job(job), m_abort(abort) {}
     ~Readers() {
         if (!m_out.joinable() && !m_err.joinable()) return;
         TerminateJobObject(m_job, 1);
@@ -152,8 +155,13 @@ public:
     Readers(const Readers&) = delete;
     Readers& operator=(const Readers&) = delete;
     void start(HANDLE out, const LineHandler& onOut, HANDLE err, const LineHandler& onErr) {
-        m_out = std::thread(readLines, out, std::cref(onOut));
-        m_err = std::thread(readLines, err, std::cref(onErr));
+        m_out = std::thread(&Readers::read, this, out, std::cref(onOut), std::ref(m_outError));
+        m_err = std::thread(&Readers::read, this, err, std::cref(onErr), std::ref(m_errError));
+    }
+    // After both readers are joined: rethrows what a reader caught, the stdout reader's when both caught something.
+    void rethrowFailure() const {
+        if (m_outError) std::rethrow_exception(m_outError);
+        if (m_errError) std::rethrow_exception(m_errError);
     }
     void join() {
         if (m_out.joinable()) m_out.join();
@@ -187,7 +195,20 @@ public:
     }
 
 private:
+    void read(HANDLE pipe, const LineHandler& handler, std::exception_ptr& error) {
+        try {
+            readLines(pipe, handler);
+        } catch (...) {
+            error = std::current_exception();   // read by run only after join()
+            TerminateJobObject(m_job, 1);
+            SetEvent(m_abort);
+        }
+    }
+
     HANDLE m_job;
+    HANDLE m_abort;
+    std::exception_ptr m_outError;
+    std::exception_ptr m_errError;
     std::thread m_out;
     std::thread m_err;
 };
@@ -200,10 +221,11 @@ RunResult SystemProcessRunner::run(const QStringList& command, const LineHandler
     if (command.isEmpty() || command.first().isEmpty()) return startFailure(u"실행할 프로그램이 없습니다"_s);
     if (isBatchFile(command.first())) return startFailure(u"배치 파일(.cmd, .bat)은 실행하지 않습니다"_s);
 
-    // A stop request sets this event, so that one wait can watch the process (or the readers) and the stop together.
-    Handle stopEvent(CreateEventW(nullptr, TRUE, FALSE, nullptr));
-    if (!stopEvent.valid()) return startFailure(errorText(GetLastError()));
-    const std::stop_callback onStop(stop, [&stopEvent] { SetEvent(stopEvent.get()); });
+    // A stop request, or a reader whose handler threw, sets this event, so that one wait can watch the process (or the readers)
+    // and both together. (The caller's stop_token is never touched.)
+    Handle abortEvent(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    if (!abortEvent.valid()) return startFailure(errorText(GetLastError()));
+    const std::stop_callback onStop(stop, [&abortEvent] { SetEvent(abortEvent.get()); });
 
     // The job: every process in it dies when the last handle to it is closed (also when this process dies).
     Handle job(CreateJobObjectW(nullptr, nullptr));
@@ -264,18 +286,20 @@ RunResult SystemProcessRunner::run(const QStringList& command, const LineHandler
     const Handle process(info.hProcess);
     CloseHandle(info.hThread);
 
-    Readers readers(job.get());
+    Readers readers(job.get(), abortEvent.get());
     readers.start(outRead.get(), onStdout, errRead.get(), onStderr);
 
-    HANDLE waits[] = {process.get(), stopEvent.get()};
+    HANDLE waits[] = {process.get(), abortEvent.get()};
     const DWORD woke = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-    if (woke != WAIT_OBJECT_0 || !readers.waitUnlessStopped(stopEvent.get())) {
-        // Stopped (or the wait failed): the whole tree dies, so every pipe breaks and the readers end.
+    if (woke != WAIT_OBJECT_0 || !readers.waitUnlessStopped(abortEvent.get())) {
+        // Stopped, a handler threw (or the wait failed): the whole tree dies, so every pipe breaks and the readers end.
         TerminateJobObject(job.get(), 1);
         readers.joinAfterKill();
+        readers.rethrowFailure();
         return {RunStatus::Cancelled, -1, QString()};
     }
     readers.join();
+    readers.rethrowFailure();
     DWORD exitCode = 0;
     GetExitCodeProcess(process.get(), &exitCode);
     // Closing the job (at the end of the scope) kills what the child left running.

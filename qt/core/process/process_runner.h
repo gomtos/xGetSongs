@@ -27,6 +27,10 @@ public:
     /// Runs command (command[0] is the executable), never through a shell. Calls a handler once per output line (the two
     /// handlers may be called from different threads, never from the caller's). When run returns, neither handler is called
     /// again. When stop is requested, the whole process tree is killed and the result is Cancelled.
+    /// When a handler throws (as Kotlin, where the exception leaves run), the whole process tree is killed, both handlers have
+    /// stopped being called, and run rethrows that exception on the caller's thread; no further line is handed to the handler
+    /// that threw. When both handlers threw, the stdout handler's exception is rethrown. The exception wins over Cancelled
+    /// when a stop and a throw meet.
     virtual RunResult run(const QStringList& command, const LineHandler& onStdout, const LineHandler& onStderr,
                           std::stop_token stop) = 0;
 };

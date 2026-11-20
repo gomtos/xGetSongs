@@ -6,6 +6,7 @@
 //   xgs-test-child emit <hex> <hex>        writes the first bytes (2 hex digits each, "." or nothing for none) to stdout and
 //                                          the second to stderr, as they are; exit code 3
 //   xgs-test-child sleep <ms>              writes "started", then sleeps
+//   xgs-test-child sleeperr <ms>           the same with "started" on stderr
 //   xgs-test-child spawn <pid file> <ms>   starts itself as "sleep <ms>" (inheriting no handle, no console window), writes
 //                                          that child's process id into <pid file> (decimal, written whole: through a
 //                                          temporary file that is renamed), writes "started", then sleeps <ms>
@@ -108,8 +109,9 @@ int wmain(int argc, wchar_t** argv) {
         writeAll(GetStdHandle(STD_ERROR_HANDLE), bytesOf(argc > 3 ? argv[3] : nullptr));
         return 3;
     }
-    if (mode == L"sleep") {
-        line("started");
+    if (mode == L"sleep" || mode == L"sleeperr") {
+        if (mode == L"sleep") line("started");
+        else writeAll(GetStdHandle(STD_ERROR_HANDLE), "started\n");
         Sleep(milliseconds(argc > 2 ? argv[2] : nullptr));
         return 0;
     }

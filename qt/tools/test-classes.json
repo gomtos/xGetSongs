@@ -70,6 +70,7 @@
     "added": ["argumentsReachTheChildVerbatim", "closesStandardInput", "setsThePythonEncodingVariables",
               "aMissingExecutableIsAStartFailure", "aBatchFileIsNotExecuted", "cancellingKillsGrandchildrenToo",
               "withoutAJobTheGrandchildSurvives", "parallelRunsDoNotHoldEachOthersPipes",
-              "aStopRequestedBeforeTheStartRunsNothing", "opensNoConsoleWindow"]
+              "aStopRequestedBeforeTheStartRunsNothing", "opensNoConsoleWindow",
+              "aThrowingHandlerKillsTheProcessAndRethrows"]
   }
 ]

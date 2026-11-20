@@ -12,7 +12,8 @@ namespace xgs::process {
 ///   - No console window (CREATE_NO_WINDOW). The environment is this process's plus PYTHONIOENCODING=utf-8 and PYTHONUTF8=1.
 ///   - Never through a shell: an executable whose name ends in .cmd or .bat (in any case, trailing dots and spaces ignored) is
 ///     not started (Windows would run it through cmd.exe, which interprets `%`, `&` and `^`); the result is StartFailed.
-///   - The output is split into lines by LineSplitter (UTF-8), stdout and stderr each on its own reading thread.
+///   - The output is split into lines by LineSplitter (UTF-8), stdout and stderr each on its own reading thread. An exception
+///     on a reading thread (a throwing handler, bad_alloc) is caught there and rethrown by run (ProcessRunner's contract).
 /// run may be called from several threads at once.
 class SystemProcessRunner final : public ProcessRunner {
 public:

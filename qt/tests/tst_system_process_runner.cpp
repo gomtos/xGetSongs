@@ -6,10 +6,12 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <latch>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -162,6 +164,13 @@ DWORD readPid(const QString& path) {
     bool ok = false;
     const DWORD pid = DWORD(QString::fromLatin1(file.readAll()).toULong(&ok));
     return ok ? pid : 0;
+}
+
+// The full path of a process's image ("" when it cannot be read).
+QString imageName(HANDLE process) {
+    wchar_t buffer[32768];
+    DWORD size = DWORD(std::size(buffer));
+    return QueryFullProcessImageNameW(process, 0, buffer, &size) ? QString::fromWCharArray(buffer, qsizetype(size)) : QString();
 }
 
 HANDLE openForWaiting(DWORD pid) {
@@ -484,6 +493,70 @@ private slots:
         }
         QCOMPARE(during.load(), before);
         QCOMPARE(visibleWindowsOfThisTree(), before);
+    }
+
+    void aThrowingHandlerKillsTheProcessAndRethrows() {
+        // As Kotlin: an exception from a handler kills the process tree and comes out of run on the caller's thread. Once for
+        // the stdout handler (sleep writes "started" on stdout), once for the stderr handler (sleeperr: on stderr).
+        struct HandlerError : std::runtime_error {
+            using std::runtime_error::runtime_error;
+        };
+        for (const bool onStderr : {false, true}) {
+            const QString mode = onStderr ? u"sleeperr"_s : u"sleep"_s;
+            std::vector<HANDLE> children;   // the xgs-test-child processes of this tree when the handler threw
+            std::atomic<int> callsAfterReturn{0};
+            std::atomic<bool> returned{false};
+            const LineHandler thrower = [&](const QString& line) {
+                if (returned) ++callsAfterReturn;
+                if (line != u"started") return;
+                // (only the helper's images: a snapshot's parent ids may also lead to unrelated processes, by id reuse)
+                for (DWORD pid : processTree())
+                    if (pid != GetCurrentProcessId())
+                        if (HANDLE h = openForWaiting(pid)) {
+                            if (imageName(h).endsWith(u"\\xgs-test-child.exe"_s, Qt::CaseSensitive)) children.push_back(h);
+                            else CloseHandle(h);
+                        }
+                throw HandlerError("handler failed");
+            };
+            const LineHandler counter = [&](const QString&) { if (returned) ++callsAfterReturn; };
+            std::stop_source stop;
+            std::mutex mutex;
+            std::condition_variable done;
+            bool finished = false;
+            QString outcome;
+            std::thread runThread([&] {
+                QString what;
+                try {
+                    const RunResult result = runner.run({child(), mode, u"60000"_s}, onStderr ? counter : thrower,
+                                                        onStderr ? thrower : counter, stop.get_token());
+                    what = u"returned status %1"_s.arg(int(result.status));
+                } catch (const HandlerError& e) {
+                    what = u"threw: "_s + QString::fromLatin1(e.what());
+                } catch (...) {
+                    what = u"threw something else"_s;
+                }
+                returned = true;
+                std::lock_guard lock(mutex);
+                outcome = what;
+                finished = true;
+                done.notify_all();
+            });
+            bool inTime = false;
+            {
+                std::unique_lock lock(mutex);
+                inTime = done.wait_for(lock, 10s, [&] { return finished; });
+            }
+            if (!inTime) stop.request_stop();   // a broken runner: stop it so that no child outlives the test
+            runThread.join();
+            std::deque<KilledAtExit> guards;   // (kills whatever is still alive at the end)
+            for (HANDLE h : children) guards.emplace_back(h);
+            QVERIFY2(inTime, qPrintable(mode + u": run did not return within 10 s"_s));
+            QCOMPARE(outcome, u"threw: handler failed"_s);
+            QVERIFY(!guards.empty());
+            for (const KilledAtExit& g : guards)
+                QVERIFY2(WaitForSingleObject(g.get(), 5000) == WAIT_OBJECT_0, qPrintable(u"still alive: "_s + imageName(g.get())));
+            QCOMPARE(callsAfterReturn.load(), 0);
+        }
     }
 };
 
