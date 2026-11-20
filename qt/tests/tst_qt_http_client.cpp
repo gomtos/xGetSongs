@@ -2,6 +2,7 @@
 
 #include <QSslSocket>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -30,10 +31,15 @@ using Clock = std::chrono::steady_clock;
 namespace {
 
 // Stands in for a server that sleeps: a handler waits on it for at most `limit`; the test (or the destructor, which runs
-// before the server's when the gate is declared after the server) opens it so the server's threads end at once.
+// before the server's when the gate is declared after the server) opens it so the server's threads end at once. The
+// destructor waits until no handler is inside wait() any more.
 class Gate {
 public:
-    ~Gate() { open(); }
+    ~Gate() {
+        open();
+        std::unique_lock lock(m_mutex);
+        m_changed.wait(lock, [this] { return m_waiting == 0; });
+    }
     void open() {
         {
             std::lock_guard lock(m_mutex);
@@ -43,13 +49,17 @@ public:
     }
     void wait(std::chrono::milliseconds limit) {
         std::unique_lock lock(m_mutex);
+        ++m_waiting;
         m_changed.wait_for(lock, limit, [this] { return m_open; });
+        --m_waiting;
+        m_changed.notify_all();
     }
 
 private:
     std::mutex m_mutex;
     std::condition_variable m_changed;
     bool m_open = false;
+    int m_waiting = 0;
 };
 
 HttpRequest requestTo(const FakeHttpServer& server, const QString& pathAndQuery) {
@@ -223,6 +233,57 @@ private slots:
         // character arrives as its UTF-8 bytes percent-encoded.
         QCOMPARE(rawQueryOf(u"/q?q=%ed%95%9c%2f%3f"_s), "q=%ED%95%9C%2F%3F");
         QCOMPARE(rawQueryOf(u"/q?q=한"_s), "q=%ED%95%9C");
+
+        // The path is not sent as written either: Qt removes dot segments (also percent-encoded ones, since QUrl decodes
+        // %2E first) and sends an empty path as "/".
+        server.route("/", [](FakeHttpServer::Exchange& exchange) { exchange.reply(200, "{}"); });
+        server.route("/a/b", [](FakeHttpServer::Exchange& exchange) { exchange.reply(200, "{}"); });
+        const auto targetOf = [&](const QString& pathAndQuery) {
+            server.clearSeen();
+            const HttpResponse response = client.get(requestTo(server, pathAndQuery), {});
+            const QList<FakeHttpServer::Seen> seen = server.seen();
+            if (response.status != HttpStatus::Response || seen.size() != 1) return QByteArray("<not one request>");
+            return seen[0].path + '?' + seen[0].rawQuery;
+        };
+        QCOMPARE(targetOf(u"/a/../q?x=1"_s), "/q?x=1");
+        QCOMPARE(targetOf(u"/a/%2E%2E/q?x=1"_s), "/q?x=1");
+        QCOMPARE(targetOf(u"/a/./b"_s), "/a/b?");
+        QCOMPARE(targetOf(QString()), "/?");
+        QCOMPARE(targetOf(u"?x=1"_s), "/?x=1");
+    }
+
+    void onlyTheseHeadersAreSentBesidesTheCallersOwn() {
+        FakeHttpServer server;
+        server.route("/h", [](FakeHttpServer::Exchange& exchange) { exchange.reply(200, "{}"); });
+        QtHttpClient client;
+        HttpRequest request = requestTo(server, u"/h"_s);
+        request.headers = {{"User-Agent", "xGetSongs-test/1.0"}};
+
+        QCOMPARE(client.get(request, {}).status, HttpStatus::Response);
+        QCOMPARE(server.seen().size(), 1);
+        // Accept-Language is the client's fixed value, not one built from the system locale.
+        QList<std::pair<QByteArray, QByteArray>> expected = {{"Host", "127.0.0.1:" + QByteArray::number(portOf(server))},
+                                                             {"User-Agent", "xGetSongs-test/1.0"},
+                                                             {"Accept-Language", "en"},
+                                                             {"Connection", "Keep-Alive"},
+                                                             {"Accept-Encoding", "gzip, deflate"}};
+        QList<std::pair<QByteArray, QByteArray>> sent = server.seen()[0].headers;
+        std::sort(expected.begin(), expected.end());
+        std::sort(sent.begin(), sent.end());
+        QCOMPARE(sent, expected);
+
+        // A caller's own Accept-Language and Accept-Encoding replace the client's and Qt's.
+        server.clearSeen();
+        request.headers = {{"Accept-Language", "ko"}, {"Accept-Encoding", "identity"}};
+        QCOMPARE(client.get(request, {}).status, HttpStatus::Response);
+        QByteArrayList languages;
+        QByteArrayList encodings;
+        for (const auto& [name, value] : server.seen().value(0).headers) {
+            if (name.compare("Accept-Language", Qt::CaseInsensitive) == 0) languages.append(value);
+            if (name.compare("Accept-Encoding", Qt::CaseInsensitive) == 0) encodings.append(value);
+        }
+        QCOMPARE(languages, QByteArrayList{"ko"});
+        QCOMPARE(encodings, QByteArrayList{"identity"});
     }
 
     void aRedirectIsFollowed() {
@@ -412,6 +473,8 @@ private slots:
 
     void stoppingWhileTheServerSleepsReturnsPromptly() {
         FakeHttpServer server;
+        // Declared before the client: on an early return the client goes first and ends the call, so this does not block.
+        std::future<HttpResponse> call;
         Gate gate;
         server.route("/sleep", [&](FakeHttpServer::Exchange& exchange) {
             gate.wait(10s);
@@ -419,8 +482,7 @@ private slots:
         });
         QtHttpClient client;
         std::stop_source stop;
-        std::future<HttpResponse> call =
-            std::async(std::launch::async, [&] { return client.get(requestTo(server, u"/sleep"_s), stop.get_token()); });
+        call = std::async(std::launch::async, [&] { return client.get(requestTo(server, u"/sleep"_s), stop.get_token()); });
         QVERIFY(waitForSeen(server, 1));
 
         const auto start = Clock::now();
@@ -451,12 +513,13 @@ private slots:
             exchange.reply(200, "late");
         });
         server.route("/ok", [](FakeHttpServer::Exchange& exchange) { exchange.reply(200, "fine"); });
-        QtHttpClient client;
         std::stop_source stop;
         constexpr int count = 16;
         std::vector<HttpResponse> responses(count);
         std::vector<Clock::time_point> ended(count);
-        std::vector<std::thread> threads;
+        // Declared before the client: on an early return the client goes first and ends the calls, so the threads join.
+        std::vector<std::jthread> threads;
+        QtHttpClient client;
         for (int i = 0; i < count; ++i) {
             threads.emplace_back([&, i] {
                 responses[i] = client.get(requestTo(server, u"/sleep"_s), stop.get_token());
@@ -468,7 +531,7 @@ private slots:
 
         const auto start = Clock::now();
         stop.request_stop();
-        for (std::thread& thread : threads) thread.join();
+        for (std::jthread& thread : threads) thread.join();
         for (int i = 0; i < count; ++i) {
             QCOMPARE(responses[i].status, HttpStatus::Cancelled);
             QVERIFY(ended[i] - start < 3s);
@@ -511,14 +574,15 @@ private slots:
 
     void destroyingTheClientWithACallInFlightEndsTheCall() {
         FakeHttpServer server;
+        // Declared before the client: on an early return the client goes first and ends the call, so this does not block.
+        std::future<HttpResponse> call;
         Gate gate;
         server.route("/sleep", [&](FakeHttpServer::Exchange& exchange) {
             gate.wait(10s);
             exchange.reply(200, "late");
         });
         auto client = std::make_unique<QtHttpClient>();
-        std::future<HttpResponse> call =
-            std::async(std::launch::async, [&, raw = client.get()] { return raw->get(requestTo(server, u"/sleep"_s), {}); });
+        call = std::async(std::launch::async, [&, raw = client.get()] { return raw->get(requestTo(server, u"/sleep"_s), {}); });
         QVERIFY(waitForSeen(server, 1));
 
         const auto start = Clock::now();

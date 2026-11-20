@@ -10,6 +10,11 @@ namespace xgs::net {
 // except https to http); get() hands the request to that thread and waits for the answer, so the calling thread needs no
 // event loop. A QCoreApplication must exist. The destructor ends every call in flight (they return Failed) and waits for
 // the thread.
+//
+// Besides the caller's headers, Qt sends Host, Connection: Keep-Alive and Accept-Encoding: gzip, deflate (Qt then
+// decompresses the body itself, so maxBodyBytes counts decompressed bytes), and this client sends Accept-Language: en
+// unless the caller gives one (Qt would build it from the system locale). Kotlin's java.net.http client sends neither
+// Accept-Encoding nor Accept-Language. A caller's own Accept-Encoding or Accept-Language replaces these.
 class QtHttpClient final : public HttpClient {
 public:
     QtHttpClient();
@@ -19,9 +24,8 @@ public:
 
     HttpResponse get(const HttpRequest& request, std::stop_token stop) override;
 
-    struct Core;
-
 private:
+    struct Core;
     std::shared_ptr<Core> m_core;
 };
 

@@ -15,8 +15,10 @@ namespace xgs::net {
 struct HttpRequest {
     // Sent as written, except that Qt's QUrl decodes percent-encoded unreserved characters (A-Z a-z 0-9 - . _ ~, which
     // RFC 3986 section 2.3 defines as equivalent to the encoded form), writes percent-encodings with upper-case hex digits,
-    // percent-encodes a raw non-ASCII character as UTF-8 and drops a fragment. A URL that is not valid in QUrl's strict
-    // mode (a raw space, a lone '%', a raw " < > [ ] { } | ^ ` or backslash) is a Failed answer with nothing sent.
+    // percent-encodes a raw non-ASCII character as UTF-8 and drops a fragment. Qt also removes dot segments from the path
+    // (`/a/../q` and `/a/%2E%2E/q` are sent as `/q`, `/a/./b` as `/a/b`) and sends an empty path as `/`. A URL that is
+    // not valid in QUrl's strict mode (a raw space, a lone '%', a raw " < > [ ] { } | ^ ` or backslash) is a Failed answer
+    // with nothing sent.
     QString url;
     QList<std::pair<QByteArray, QByteArray>> headers;
     std::chrono::milliseconds totalTimeout{0};          // from sending until the body is in; 0: none

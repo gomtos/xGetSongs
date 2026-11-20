@@ -99,10 +99,12 @@ FakeHttpServer::Seen parse(const QByteArray& head) {
         if (line.endsWith('\r')) line.chop(1);
         const qsizetype colon = line.indexOf(':');
         if (colon <= 0) continue;
-        const QByteArray name = line.left(colon).toLower();
+        const QByteArray rawName = line.left(colon);
+        const QByteArray name = rawName.toLower();
         QByteArray value = line.mid(colon + 1);
         while (value.startsWith(' ') || value.startsWith('\t')) value.remove(0, 1);
         while (value.endsWith(' ') || value.endsWith('\t')) value.chop(1);
+        seen.headers.append({rawName, value});
         if (name == "user-agent") seen.userAgent = value;
         else if (name == "accept") seen.accept = value;
     }

@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 // An HTTP/1.1 server for tests on Winsock: it listens on 127.0.0.1 only (never the wildcard address) on a port the system
 // chooses, serves each connection on its own thread, answers one request per connection and always says
@@ -20,9 +21,10 @@ namespace xgs::testing {
 class FakeHttpServer {
 public:
     // What the server saw of one request: the request target split at the first '?' (rawQuery is empty when there is none),
-    // and two header values as sent.
+    // two header values as sent, and every header line in order (name as sent, value without surrounding blanks).
     struct Seen {
         QByteArray method, path, rawQuery, userAgent, accept;
+        QList<std::pair<QByteArray, QByteArray>> headers;
     };
 
     // One request and its answer. A handler answers with reply(), or with sendHeaders() and write()s; write() before any

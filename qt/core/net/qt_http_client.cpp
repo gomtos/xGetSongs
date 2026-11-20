@@ -61,6 +61,11 @@ struct Transfer {
     Ending ending = Ending::None;
 };
 
+// The error of a call that the destructor ended, or that came after it.
+QString closedText() {
+    return u"The HTTP client was closed during the request."_s;
+}
+
 HttpResponse failure(HttpStatus status, QString error) {
     HttpResponse response;
     response.status = status;
@@ -119,8 +124,9 @@ struct QtHttpClient::Core {
         networkRequest.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         networkRequest.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
         networkRequest.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
-        networkRequest.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::AlwaysNetwork);
-        networkRequest.setAttribute(QNetworkRequest::CacheSaveControlAttribute, false);
+        // Qt sends an Accept-Language built from the system locale when the request has none, and an empty value counts as
+        // none; a fixed value keeps the user's locale from reaching the server.
+        if (!networkRequest.hasRawHeader("Accept-Language")) networkRequest.setRawHeader("Accept-Language", "en");
 
         Transfer& transfer = transfers[id];
         transfer.call = call;
@@ -129,6 +135,8 @@ struct QtHttpClient::Core {
         transfer.idleTimeout = request.idleTimeout;
         QNetworkReply* reply = manager->get(networkRequest);
         transfer.reply = reply;
+        // Qt then holds at most one byte more than the limit before read() sees that the body is too large.
+        if (request.maxBodyBytes >= 0) reply->setReadBufferSize(request.maxBodyBytes + 1);
 
         if (request.totalTimeout.count() > 0) {
             auto* timer = new QTimer(reply);
@@ -202,7 +210,7 @@ struct QtHttpClient::Core {
             return failure(HttpStatus::Unreachable,
                            u"The request timed out: nothing arrived for %1 ms."_s.arg(transfer.idleTimeout.count()));
         case Ending::Closed:
-            return failure(HttpStatus::Failed, u"The HTTP client was closed during the request."_s);
+            return failure(HttpStatus::Failed, closedText());
         case Ending::TooLarge: {
             HttpResponse response;
             response.status = HttpStatus::Response;
@@ -216,8 +224,9 @@ struct QtHttpClient::Core {
 
         const QNetworkReply::NetworkError error = reply->error();
         // Qt reports a 4xx or 5xx answer as an error from its content, protocol or server ranges (201 and up); it is
-        // still an answer.
-        if (error == QNetworkReply::NoError || (code.isValid() && error >= QNetworkReply::ContentAccessDenied)) {
+        // still an answer. Such an error with a 2xx or 3xx code is a transfer that went wrong, not an answer.
+        const bool errorAnswer = code.isValid() && code.value<int>() >= 400 && error >= QNetworkReply::ContentAccessDenied;
+        if (error == QNetworkReply::NoError || errorAnswer) {
             HttpResponse response;
             response.status = HttpStatus::Response;
             response.code = code.value<int>();   // the attribute holds an int
@@ -230,6 +239,8 @@ struct QtHttpClient::Core {
             }
             return response;
         }
+        // A redirect from https to http is not followed (NoLessSafeRedirectPolicy) and ends here as Failed
+        // (InsecureRedirectError). Kotlin's Redirect.NORMAL returns the 3xx response itself instead.
         QString text = reply->errorString();
         if (text.isEmpty()) text = u"The request failed (network error %1)."_s.arg(static_cast<int>(error));
         return failure(isUnreachable(error, code.isValid()) ? HttpStatus::Unreachable : HttpStatus::Failed, text);
@@ -285,7 +296,7 @@ HttpResponse QtHttpClient::get(const HttpRequest& request, std::stop_token stop)
     auto call = std::make_shared<Call>();
     Core* raw = core.get();
     if (!core->post([raw, id, url, request, call] { raw->start(id, url, request, call); }))
-        return failure(HttpStatus::Failed, u"The HTTP client was closed during the request."_s);
+        return failure(HttpStatus::Failed, closedText());
     std::stop_callback onStop(stop, [core, id] {
         Core* target = core.get();
         core->post([target, id] { target->end(id, Ending::Cancelled); });
