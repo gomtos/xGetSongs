@@ -3,6 +3,7 @@ import com.xgetsongs.engine.lyrics.LyricsMatcher;
 import com.xgetsongs.engine.lyrics.LyricsQuery;
 import com.xgetsongs.engine.tags.Ffmetadata;
 import com.xgetsongs.engine.tags.TrackTags;
+import com.xgetsongs.engine.ResolveException;
 import com.xgetsongs.engine.ToolException;
 import com.xgetsongs.engine.tools.DefaultToolManager;
 import com.xgetsongs.engine.tools.ToolPaths;
@@ -14,6 +15,11 @@ import com.xgetsongs.engine.ytdlp.ProgressParser;
 import com.xgetsongs.engine.ytdlp.ProgressUpdate;
 import com.xgetsongs.engine.ytdlp.VideoInfo;
 import com.xgetsongs.engine.ytdlp.VideoInfoFile;
+import com.xgetsongs.engine.ytdlp.VideoMeta;
+import com.xgetsongs.engine.ytdlp.YtDlpResolver;
+import com.xgetsongs.shared.api.ApiJson;
+import com.xgetsongs.shared.api.ResolveResponse;
+import com.xgetsongs.shared.api.ResolvedItem;
 import com.xgetsongs.shared.api.ActionResult;
 import com.xgetsongs.shared.api.ToolInfo;
 import com.xgetsongs.shared.api.ToolsStatus;
@@ -111,6 +117,8 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            px path, ln bytes chunkSize... (the lines of a child's output, answerLines),
  *                                            st and up (DefaultToolManager.status and updateYtDlp on a runner that plays
  *                                            the case: answerTools)
+ *         P op fields...                     YtDlpResolver on a runner that plays the case, one op per case (answerP): rs input
+ *                                            run stdout stderr..., fx videoId run stdout stderr...
  *
  * An observation, not a gate (Q2b Task 2 Step 4):
  *   xgs-diff arglists 2000 20261118 | ... Oracle.java argv <path of xgs-test-child.exe>
@@ -505,6 +513,10 @@ public class Oracle {
                     out.append(answerW(part));
                     break;
                 }
+                case "P": {
+                    out.append(answerP(part));
+                    break;
+                }
                 case "C": {
                     ClassifyResult result = InputClassifier.INSTANCE.classify(dec(part[1]));
                     if (result instanceof ClassifyResult.Ok ok) {
@@ -557,19 +569,26 @@ public class Oracle {
         }
     }
 
-    // W ln: the lines SystemProcessRunner hands to its handlers for these bytes of a child's output:
+    // W ln: the lines SystemProcessRunner hands to its handlers for these bytes of a child's output (readLines, which kind P's
+    // runner uses too):
     // `inputStream.bufferedReader(Charsets.UTF_8).forEachLine(...)`. bufferedReader(charset) is inline-only in Kotlin; it is
     // an InputStreamReader of the charset in a BufferedReader of Kotlin's DEFAULT_BUFFER_SIZE (8 * 1024). forEachLine is the
     // ordinary function of the kotlin.io.TextStreamsKt facade. The chunk sizes of the case are the C++ side's only.
     static String answerLines(byte[] bytes) {
+        StringBuilder out = new StringBuilder("OK");
+        for (String line : readLines(bytes)) out.append(' ').append(enc(line));
+        return out.toString();
+    }
+
+    static java.util.List<String> readLines(byte[] bytes) {
         java.io.BufferedReader reader = new java.io.BufferedReader(
             new InputStreamReader(new java.io.ByteArrayInputStream(bytes), StandardCharsets.UTF_8), 8 * 1024);
-        StringBuilder out = new StringBuilder("OK");
+        java.util.List<String> lines = new java.util.ArrayList<>();
         kotlin.io.TextStreamsKt.forEachLine(reader, line -> {
-            out.append(' ').append(enc(line));
+            lines.add(line);
             return kotlin.Unit.INSTANCE;
         });
-        return out.toString();
+        return lines;
     }
 
     // W st / W up: DefaultToolManager on a ProcessRunner that plays the case. A tool is three fields: its path (hex, "-" when
@@ -581,8 +600,30 @@ public class Oracle {
     // Both answers end in " R" and every command the runner was given (its arguments as hex, comma-separated).
     static final String START_FAILURE = "Cannot run program (start failure of the differential test)";
 
+    // What the runner does for one program: its run (the exit code in decimal, or S) and its output lines in order (each a
+    // stdout flag and the line).
+    static final class Play {
+        final String run;
+        final java.util.List<Object[]> lines = new java.util.ArrayList<>();
+
+        Play(String run) {
+            this.run = run;
+        }
+
+        // kind W's notation of the lines: "~" for none, else comma-separated o<hex> / e<hex>
+        static Play of(String run, String items) {
+            Play play = new Play(run);
+            if (!items.equals("~")) {
+                for (String item : items.split(",", -1)) play.lines.add(new Object[] {item.charAt(0) == 'o', dec(item.substring(1))});
+            }
+            return play;
+        }
+    }
+
+    // A ProcessRunner that plays the case (kinds W and P): the program at command[0] runs as its Play says (a program without
+    // one exits with 1), its lines going to the handlers in order on the caller's thread. Records every command.
     static final class CaseRunner implements com.xgetsongs.engine.process.ProcessRunner {
-        final java.util.Map<String, String[]> runs = new java.util.HashMap<>();   // path -> {run, lines}
+        final java.util.Map<String, Play> runs = new java.util.HashMap<>();   // path -> what it does
         final StringBuilder commands = new StringBuilder(" R");
 
         @Override
@@ -591,17 +632,14 @@ public class Oracle {
                           kotlin.coroutines.Continuation<? super Integer> continuation) {
             commands.append(' ');
             for (int k = 0; k < command.size(); k++) commands.append(k > 0 ? "," : "").append(enc(command.get(k)));
-            String[] behaviour = runs.get(command.get(0));
-            if (behaviour == null) return Integer.valueOf(1);
-            if (behaviour[0].equals("S")) Oracle.<RuntimeException>sneakyThrow(new java.io.IOException(START_FAILURE));
-            if (!behaviour[1].equals("~")) {
-                for (String item : behaviour[1].split(",", -1)) {
-                    String line = dec(item.substring(1));
-                    if (item.charAt(0) == 'o') onStdout.invoke(line);
-                    else onStderr.invoke(line);
-                }
+            Play play = runs.get(command.get(0));
+            if (play == null) return Integer.valueOf(1);
+            if (play.run.equals("S")) Oracle.<RuntimeException>sneakyThrow(new java.io.IOException(START_FAILURE));
+            for (Object[] line : play.lines) {
+                if ((Boolean) line[0]) onStdout.invoke((String) line[1]);
+                else onStderr.invoke((String) line[1]);
             }
-            return Integer.valueOf(Integer.parseInt(behaviour[0]));
+            return Integer.valueOf(Integer.parseInt(play.run));
         }
     }
 
@@ -624,7 +662,7 @@ public class Oracle {
             } catch (BadPath e) {
                 return "BADPATH";
             }
-            if (paths[t] != null) runner.runs.put(paths[t].toString(), new String[] {part[3 + 3 * t], part[4 + 3 * t]});
+            if (paths[t] != null) runner.runs.put(paths[t].toString(), Play.of(part[3 + 3 * t], part[4 + 3 * t]));
         }
         ToolPaths toolPaths = new ToolPaths(paths[0], paths[1], paths[2]);
         DefaultToolManager manager = new DefaultToolManager(() -> toolPaths, runner, java.nio.file.Path.of("C:\\xgs-diff-unused"),
@@ -643,6 +681,63 @@ public class Oracle {
                 if (!(e instanceof ToolException)) throw e;
                 answer = "ERR " + enc(e.getMessage());
             }
+        }
+        return answer + runner.commands;
+    }
+
+    // Kind P: YtDlpResolver(runner, tools, ApiJson.instance) on a CaseRunner. The fields after the op: the input (rs) or the
+    // video id (fx) as hex; the run: the exit code in decimal, S (the runner throws IOException(START_FAILURE)) or - (no yt-dlp:
+    // ToolPaths.ytDlp is null); the stdout bytes (2 hex digits each, "." for none), split into lines by readLines as
+    // SystemProcessRunner does; the stderr lines, one per field (an empty field is no line). Stdout goes to the handler before
+    // stderr. The tools are C:\tools\yt-dlp.exe, C:\tools\ffmpeg.exe and C:\tools\node.exe.
+    //   rs  resolve(input)  -> OK resolveId kind playlistTitle truncated alsoVideoId count, then per item: rank videoId title
+    //                          channel artist track lowConfidence available unavailableReason expectedFileName | ERR hex (the
+    //                          ResolveException's message)
+    //   fx  fetch(videoId)  -> M title channel artist track | NULL
+    // Anything else thrown answers THROW and its class. Every answer ends in " R" and every command the runner was given.
+    static final String P_YT_DLP = "C:\\tools\\yt-dlp.exe";
+
+    static String answerP(String[] part) throws Exception {
+        CaseRunner runner = new CaseRunner();
+        String run = part[3];
+        java.nio.file.Path ytDlp = run.equals("-") ? null : java.nio.file.Path.of(P_YT_DLP);
+        ToolPaths toolPaths = new ToolPaths(ytDlp, java.nio.file.Path.of("C:\\tools\\ffmpeg.exe"), java.nio.file.Path.of("C:\\tools\\node.exe"));
+        if (ytDlp != null) {
+            Play play = new Play(run);
+            for (String line : readLines(decBytes(part[4]))) play.lines.add(new Object[] {true, line});
+            for (int k = 5; k < part.length; k++) if (!part[k].isEmpty()) play.lines.add(new Object[] {false, dec(part[k])});
+            runner.runs.put(P_YT_DLP, play);
+        }
+        YtDlpResolver resolver = new YtDlpResolver(runner, () -> toolPaths, ApiJson.INSTANCE.getInstance());
+        String argument = dec(part[2]);
+        String answer;
+        try {
+            if (part[1].equals("rs")) {
+                ResolveResponse response = kotlinx.coroutines.BuildersKt.<ResolveResponse>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+                    (scope, continuation) -> resolver.resolve(argument, continuation));
+                StringBuilder out = new StringBuilder("OK ");
+                out.append(enc(response.getResolveId())).append(' ').append(response.getKind().name()).append(' ')
+                    .append(enc(response.getPlaylistTitle())).append(' ').append(bit(response.getTruncated())).append(' ')
+                    .append(enc(response.getAlsoVideoId())).append(' ').append(response.getItems().size());
+                for (ResolvedItem item : response.getItems()) {
+                    out.append(' ').append(item.getRank()).append(' ').append(enc(item.getVideoId())).append(' ').append(enc(item.getTitle()))
+                        .append(' ').append(enc(item.getChannel())).append(' ').append(enc(item.getArtist())).append(' ')
+                        .append(enc(item.getTrack())).append(' ').append(bit(item.getLowConfidence())).append(' ')
+                        .append(bit(item.getAvailable())).append(' ').append(enc(item.getUnavailableReason())).append(' ')
+                        .append(enc(item.getExpectedFileName()));
+                }
+                answer = out.toString();
+            } else if (part[1].equals("fx")) {
+                VideoMeta meta = kotlinx.coroutines.BuildersKt.<VideoMeta>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+                    (scope, continuation) -> resolver.fetch(argument, continuation));
+                answer = meta == null ? "NULL" : "M " + enc(meta.getTitle()) + " " + enc(meta.getChannel()) + " " + enc(meta.getArtist())
+                    + " " + enc(meta.getTrack());
+            } else {
+                return "?";
+            }
+        } catch (Throwable e) {
+            if (e instanceof ResolveException) answer = "ERR " + enc(e.getMessage());
+            else answer = "THROW " + e.getClass().getName();
         }
         return answer + runner.commands;
     }

@@ -83,5 +83,11 @@
     "exe": "tst_tool_manager",
     "added": ["installIsCancelledWhenTheFetchIsCancelled", "cancelledInstallLeavesNoTemporaryFile",
               "updateIsCancelledWhenTheRunIsCancelled"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/YtDlpResolverTest.kt",
+    "exe": "tst_ytdlp_resolver",
+    "added": ["aCancelledRunIsCancelledAndFetchesNothing", "aPlaylistOfExactly999IsNotTruncated",
+              "resolvesAFiveThousandEntryPlaylistQuickly"]
   }
 ]

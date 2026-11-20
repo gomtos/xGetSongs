@@ -22,6 +22,7 @@ add_library(xgscore STATIC
     ytdlp/progress_parser.h ytdlp/progress_parser.cpp
     ytdlp/video_info_file.h ytdlp/video_info_file.cpp
     ytdlp/ytdlp_commands.h ytdlp/ytdlp_commands.cpp
+    ytdlp/ytdlp_resolver.h ytdlp/ytdlp_resolver.cpp
     ytdlp/ffmpeg_commands.h ytdlp/ffmpeg_commands.cpp
     tags/track_tags.h tags/ffmetadata.h tags/ffmetadata.cpp
     job/download_concurrency.h job/download_concurrency.cpp)

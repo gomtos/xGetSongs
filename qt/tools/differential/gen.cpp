@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "codec.h"
+#include "filename/filename_formatter.h"
 #include "text/kt_text.h"
 
 namespace xgs::diff {
@@ -224,23 +225,24 @@ QString padOf(Rng& rng) {
     return kControl[index - 3 - spaces].toString();
 }
 
-QString generateC(Rng& rng) {
+// The text of a kind C case (also kind P's input).
+QString classifierInput(Rng& rng) {
     const double shape = rng.next();
     if (shape < 0.12) {
         // nothing but white space (possibly nothing at all): rejected as empty
         QString blank;
         const int length = rng.between(0, 3);
         for (int i = 0; i < length; ++i) blank += padOf(rng);
-        return hex(blank);
+        return blank;
     }
     if (shape < 0.2) {
         static constexpr QStringView garbage[] = {u"hello world", u"PLshort", u"PLabc; rm -rf /", u"youtu.be", u"a.b", u"/", u".", u"RD", u"x"};
-        return hex(pick(rng, garbage).toString());
+        return pick(rng, garbage).toString();
     }
     if (shape < 0.36) {
         const double kind = rng.next();
         const QString id = kind < 0.33 ? playlistIdOf(rng) : kind < 0.66 ? videoIdOf(rng) : u"RD"_s + idOf(rng, rng.between(10, 30));
-        return hex((rng.chance(0.1) ? padOf(rng) : QString()) + id + (rng.chance(0.1) ? padOf(rng) : QString()));
+        return (rng.chance(0.1) ? padOf(rng) : QString()) + id + (rng.chance(0.1) ? padOf(rng) : QString());
     }
     static constexpr QStringView schemes[] = {u"https://", u"http://", u"", u"HTTPS://", u"ftp://", u"//"};
     static constexpr QStringView hosts[] = {u"www.youtube.com", u"youtube.com", u"m.youtube.com", u"music.youtube.com", u"youtu.be",
@@ -268,7 +270,11 @@ QString generateC(Rng& rng) {
     const QString fragment = rng.chance(0.1) ? u"#frag"_s : QString();
     const QString leading = rng.chance(0.1) ? padOf(rng) : QString();
     const QString trailing = rng.chance(0.1) ? padOf(rng) : QString();
-    return hex(leading + scheme + host + path + query + fragment + trailing);
+    return leading + scheme + host + path + query + fragment + trailing;
+}
+
+QString generateC(Rng& rng) {
+    return hex(classifierInput(rng));
 }
 
 // ---- kinds F, D, G: file names and folder names (the F/D/G loops of shell/tools/differential/fuzz.mts) ----
@@ -490,10 +496,14 @@ std::optional<QString> channelOf(Rng& rng) {
     return channel;
 }
 
-QString generateT(Rng& rng) {
-    const QString raw = rng.chance(0.04)
-                            ? text(rng)
+// The raw title of a kind T case (also kind P's titles).
+QString youtubeTitle(Rng& rng) {
+    return rng.chance(0.04) ? text(rng)
                             : scatterSpaces(rng, titleLead(rng) + joinArtistAndTitle(rng, text(rng, 6), songTitle(rng)) + titleTail(rng));
+}
+
+QString generateT(Rng& rng) {
+    const QString raw = youtubeTitle(rng);
     return hex(raw) + u'\t' + hex(channelOf(rng)) + u'\t' + hex(nullable(rng)) + u'\t' + hex(nullable(rng));
 }
 
@@ -3220,6 +3230,283 @@ QString generateW(Rng& rng) {
     return op.name.toString() + u'\t' + op.fields(rng);
 }
 
+// ---- kind P: YtDlpResolver (rs: resolve, fx: fetch) ----
+// rs input run stdout stderr... / fx videoId run stdout stderr...: the input from kind C's generator or built as a playlist or a
+// video address; the run 0, another exit code, S (a start failure) or - (no yt-dlp); the stdout bytes (hex, "." for none); the
+// stderr lines from kind E's generator. The stdout is what yt-dlp -J prints (a playlist with 0..40 entries, now and then
+// MAX_RANK - 1..+5 short ones, around the truncation boundary; or one video), every field present, absent, null or (in some
+// documents) of the wrong type, titles from kind T's generator and [Private video] / [Deleted video], the availability values and others, channel/uploader combinations,
+// unknown keys (in a third of the documents with values from kind J's document generator), white space and line breaks
+// between the tokens, and the non-standard spellings Kotlin was observed to accept (a missing comma between members, loose
+// skipped values, escaped keys); 20% get one place broken by kind J's jsonBreak. The bytes are UTF-8, now and then with bytes
+// that are not, a BOM, no final line break, `\r\n`, a line before the document, nothing at all.
+constexpr QStringView kAvailabilities[] = {u"public", u"unlisted", u"private", u"needs_auth", u"premium_only", u"subscriber_only",
+                                           u"PRIVATE", u"", u"members_only", u"needs auth", u"public "};
+constexpr QStringView kEntryExtraKeys[] = {u"_type", u"ie_key", u"url", u"duration", u"thumbnails", u"view_count", u"live_status",
+                                           u"description", u"channel_id", u"channel_url", u"uploader_id", u"release_timestamp",
+                                           u"Title", u"ID", u"entries", u"title "};
+constexpr QStringView kPlaylistExtraKeys[] = {u"_type", u"id", u"uploader", u"webpage_url", u"playlist_count", u"availability",
+                                              u"modified_date", u"view_count", u"description", u"extractor", u"Entries", u"channel"};
+constexpr QStringView kEntryKeys[] = {u"id", u"title", u"channel", u"uploader", u"availability", u"artist", u"track"};
+constexpr QStringView kPlaylistKeys[] = {u"title", u"entries"};
+// Values of the wrong type for a String? property (none is a string or the literal null)
+constexpr QStringView kWrongValues[] = {u"1", u"-2.5", u"0", u"true", u"false", u"NaN", u"Infinity", u"{}", u"[]", u"{\"a\":\"b\"}",
+                                        u"[\"x\"]", u"abc", u"1e5", u"nul", u"NULL", u"[null]"};
+
+// How one document is written (chosen once per document, so that a long playlist does not pile up rare spellings)
+struct PStyle {
+    bool multiLine = false;   // line breaks between the tokens (yt-dlp prints one line; the runner joins lines with LF)
+    bool oddWhite = false;    // now and then kind J's white space (which has white space Kotlin does not skip)
+    bool decorated = false;   // unknown values from kind J's document generator and loose skipped containers
+    bool loose = false;       // now and then a comma left out between members, an escaped key
+};
+
+QString pSpace(Rng& rng, const PStyle& style) {
+    const double roll = rng.next();
+    if (style.multiLine && roll < 0.3) return pick(rng, {u"\n"_s, u"\n  "_s, u"\r\n"_s, u"\r"_s, u" \n\t"_s});
+    if (style.oddWhite && roll > 0.97) return jsonSpace(rng);
+    return roll < 0.75 ? QString() : u" "_s;
+}
+
+// text as a JSON string: `"` and `\` escaped, control characters as escapes (now and then raw: a raw CR or LF splits the line,
+// the runner joins with LF), unpaired surrogates escaped or left (they become U+FFFD or bytes that are not UTF-8), now and then
+// a non-ASCII letter escaped.
+QString pQuoted(Rng& rng, const QString& text) {
+    QString out = u"\""_s;
+    const bool rawControls = rng.chance(0.04);
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        const QChar c = text[i];
+        const char16_t u = c.unicode();
+        const bool pair = c.isHighSurrogate() && i + 1 < text.size() && text[i + 1].isLowSurrogate();
+        if (u == u'"' || u == u'\\') {
+            out += u'\\';
+            out += c;
+        } else if (u < 0x20 && !rawControls) {
+            out += jsonEscapeOf(u);
+        } else if (pair) {
+            out += c;
+            out += text[++i];
+        } else if (QChar::isSurrogate(u)) {
+            out += rng.chance(0.7) ? jsonEscapeOf(u) : QString(c);
+        } else if (u > 0x7f && rng.chance(0.05)) {
+            out += jsonEscapeOf(u);
+        } else {
+            out += c;
+        }
+    }
+    return out + u'"';
+}
+
+// a key with its first unit written as an escape (Kotlin decodes keys: "title" is title)
+QString jsonEscapedKey(const QString& key) {
+    return key.isEmpty() ? u"\"\""_s : u"\""_s + jsonEscapeOf(key[0].unicode()) + key.mid(1) + u"\"";
+}
+
+// A member list as a JSON object: shuffled now and then, white space between the tokens; in a loose document a comma left out
+// now and then (Kotlin accepts that between members) and a key written with an escape.
+QString pObject(Rng& rng, QList<std::pair<QString, QString>> members, const PStyle& style) {
+    if (rng.chance(0.3))
+        for (qsizetype i = members.size() - 1; i > 0; --i) members.swapItemsAt(i, rng.between(0, int(i)));
+    QString out = u"{"_s + pSpace(rng, style);
+    for (qsizetype i = 0; i < members.size(); ++i) {
+        if (i > 0) out += pSpace(rng, style) + (style.loose && rng.chance(0.08) ? QString() : u","_s) + pSpace(rng, style);
+        out += (style.loose && rng.chance(0.08) ? jsonEscapedKey(members[i].first) : u"\""_s + members[i].first + u"\"") +
+               pSpace(rng, style) + u":" + pSpace(rng, style) + members[i].second;
+    }
+    return out + pSpace(rng, style) + u"}";
+}
+
+// The value of an unknown key: what yt-dlp writes, or (decorated) kind J's documents (shallow), a skipped container with loose
+// separators, kind J's strings.
+QString pUnknownValue(Rng& rng, const PStyle& style) {
+    const double roll = style.decorated ? rng.next() : 1.0;
+    if (roll < 0.35) return jsonValue(rng, 1, rng.between(1, 3));
+    if (roll < 0.5) {
+        static constexpr QStringView loose[] = {u"[1,,2]", u"{\"a\" 1}", u"[1 2]", u"{,}", u"[{\"y\":}]", u"{y:1}", u"[1,]", u"[ ]",
+                                                u"[\\]", u"{\"a\":[1:2]}", u"[[[[]]]]", u"NaN", u"-Infinity", u"[NaN]"};
+        return pick(rng, loose).toString();
+    }
+    if (roll < 0.7) return u"\""_s + jsonStringBody(rng) + u"\"";
+    return pick(rng, {u"null"_s, u"215.0"_s, u"123456"_s, u"\"url\""_s, u"\"Youtube\""_s, u"false"_s, u"\"https://www.youtube.com/watch?v=x\""_s,
+                      u"[{\"url\":\"https://i.ytimg.com/vi/x/hqdefault.jpg\",\"height\":94}]"_s, u"{\"a\":{\"b\":[1,2,null]}}"_s});
+}
+
+// Unknown members (0..most): keys from the list or kind J's keys, never one of the class's own keys.
+template <std::size_t N, std::size_t M>
+void addUnknownMembers(Rng& rng, QList<std::pair<QString, QString>>& members, const QStringView (&keys)[N],
+                       const QStringView (&known)[M], int most, const PStyle& style) {
+    const int count = rng.between(0, most);
+    for (int i = 0; i < count; ++i) {
+        QStringList used;
+        QString key = rng.chance(0.8) ? pick(rng, keys).toString() : jsonKey(rng, used).mid(1).chopped(1);
+        if (std::find(std::begin(known), std::end(known), key) != std::end(known)) key += u'_';
+        members.append({key, pUnknownValue(rng, style)});
+    }
+}
+
+// a String? property: absent (a null QString: not added), null, the text, or (when wrong) a value of the wrong type
+QString pStringValue(Rng& rng, const std::optional<QString>& text, bool wrong) {
+    if (wrong) return pick(rng, kWrongValues).toString();
+    if (!text) return rng.chance(0.5) ? QString() : u"null"_s;
+    return pQuoted(rng, *text);
+}
+
+void addMember(QList<std::pair<QString, QString>>& members, const QString& key, const QString& value) {
+    if (!value.isNull()) members.append({key, value});
+}
+
+constexpr int kEntryFields = int(std::size(kEntryKeys));
+
+// One entry (or the video of rs/fx). wrongField: -1, or the property (an index of kEntryKeys) that gets a value of the wrong
+// type. small: a short entry of a long playlist (the case stays small), plain and mostly available.
+QString entryDocument(Rng& rng, int wrongField, const PStyle& style, bool small) {
+    QList<std::pair<QString, QString>> members;
+    if (small) {
+        members.append({u"id"_s, u"\"v"_s + idOf(rng, 10) + u"\""});
+        members.append({u"title"_s, pQuoted(rng, rng.chance(0.03) ? u"[Private video]"_s : text(rng, 3) + u" - " + text(rng, 3))});
+        return pObject(rng, members, PStyle{});
+    }
+    const double idRoll = rng.next();
+    const std::optional<QString> id = idRoll < 0.86 ? std::optional<QString>(idOf(rng, 11))
+                                      : idRoll < 0.9 ? std::optional<QString>(QString())
+                                                     : std::nullopt;
+    const double titleRoll = rng.next();
+    const std::optional<QString> title = titleRoll < 0.1    ? std::optional<QString>(u"[Private video]"_s)
+                                         : titleRoll < 0.15 ? std::optional<QString>(u"[Deleted video]"_s)
+                                         : titleRoll < 0.18 ? std::optional<QString>(u"[private video]"_s)
+                                         : titleRoll < 0.92 ? std::optional<QString>(youtubeTitle(rng))
+                                                            : std::nullopt;
+    std::optional<QString> channel = channelOf(rng);
+    std::optional<QString> uploader;
+    switch (rng.between(0, 4)) {
+    case 0: uploader = channel; break;                                 // both, the same
+    case 1: uploader = std::nullopt; break;                            // channel only
+    case 2: uploader = channel; channel = std::nullopt; break;         // uploader only
+    case 3: uploader = channelOf(rng); break;                          // both, maybe different
+    default: channel = std::nullopt; uploader = std::nullopt; break;  // neither
+    }
+    const std::optional<QString> availability = rng.chance(0.4) ? std::optional<QString>(pick(rng, kAvailabilities).toString()) : std::nullopt;
+    const std::optional<QString> artist = rng.chance(0.3) ? nullable(rng) : std::nullopt;
+    const std::optional<QString> track = rng.chance(0.3) ? nullable(rng) : std::nullopt;
+    const std::optional<QString>* values[kEntryFields] = {&id, &title, &channel, &uploader, &availability, &artist, &track};
+    for (int f = 0; f < kEntryFields; ++f) addMember(members, kEntryKeys[f].toString(), pStringValue(rng, *values[f], f == wrongField));
+    if (rng.chance(0.06)) {
+        // a property repeated: the last value wins
+        const int f = rng.between(0, kEntryFields - 1);
+        members.append({kEntryKeys[f].toString(), pStringValue(rng, rng.chance(0.7) ? std::optional<QString>(text(rng, 3)) : std::nullopt, false)});
+    }
+    addUnknownMembers(rng, members, kEntryExtraKeys, kEntryKeys, rng.chance(0.6) ? 2 : 5, style);
+    return pObject(rng, members, style);
+}
+
+// A playlist. wrong: 0 none, 1 the title, 2 the entries, 3 an item of entries, 4 a property of an entry. big: MAX_RANK - 1..+5
+// small entries.
+QString playlistDocument(Rng& rng, int wrong, const PStyle& style, bool big) {
+    QList<std::pair<QString, QString>> members;
+    members.append({u"_type"_s, u"\"playlist\""_s});
+    members.append({u"id"_s, u"\"PL"_s + idOf(rng, 16) + u"\""});
+    addMember(members, u"title"_s, pStringValue(rng, rng.chance(0.85) ? std::optional<QString>(youtubeTitle(rng)) : std::nullopt, wrong == 1));
+    const int count = big ? rng.between(filename::MaxRank - 1, filename::MaxRank + 5) : rng.chance(0.7) ? rng.between(0, 12) : rng.between(13, 40);
+    const int wrongItem = wrong >= 3 && count > 0 ? rng.between(0, count - 1) : -1;
+    if (wrong == 2) {
+        members.append({u"entries"_s, pick(rng, {u"null"_s, u"{}"_s, u"\"x\""_s, u"5"_s, u"{\"id\":\"a\"}"_s})});
+    } else if (big || wrongItem >= 0 || rng.chance(0.96)) {
+        QString entries = u"["_s + pSpace(rng, style);
+        for (int i = 0; i < count; ++i) {
+            if (i > 0) entries += pSpace(rng, style) + u"," + pSpace(rng, style);
+            if (i == wrongItem && wrong == 3) entries += pick(rng, {u"1"_s, u"\"x\""_s, u"[]"_s, u"true"_s, u"NaN"_s, u"nul"_s});
+            else if (!big && rng.chance(0.1)) entries += u"null"_s;
+            else entries += entryDocument(rng, i == wrongItem ? rng.between(0, kEntryFields - 1) : -1, style, big);
+        }
+        members.append({u"entries"_s, entries + pSpace(rng, style) + u"]"});
+    }
+    addUnknownMembers(rng, members, kPlaylistExtraKeys, kPlaylistKeys, 3, style);
+    return pObject(rng, members, style);
+}
+
+// The stdout bytes of a run: the document (playlist or one video), maybe broken, as the bytes yt-dlp writes.
+QString pStdout(Rng& rng, bool playlist) {
+    const double roll = rng.next();
+    if (roll < 0.02) return bytesField(QByteArray());
+    if (roll < 0.03) return bytesField(QByteArrayLiteral("not json\n"));
+    if (rng.chance(0.05)) playlist = !playlist;   // the other kind of document
+    if (playlist && rng.chance(0.06)) {
+        // a long playlist (never broken, so that the truncation shows)
+        return bytesField(utf8Of(playlistDocument(rng, 0, PStyle{}, true), false) + '\n');
+    }
+    PStyle style;
+    style.multiLine = rng.chance(0.1);
+    style.oddWhite = rng.chance(0.03);
+    style.decorated = rng.chance(0.35);
+    style.loose = rng.chance(0.15);
+    const bool wrong = rng.chance(0.13);
+    QString doc = playlist ? playlistDocument(rng, wrong ? rng.between(1, 4) : 0, style, false)
+                           : entryDocument(rng, wrong ? rng.between(0, kEntryFields - 1) : -1, style, false);
+    if (rng.chance(0.2)) doc = jsonBreak(rng, doc);
+    if (rng.chance(0.02)) doc = u"WARNING: [youtube] x: Some formats may be missing\n"_s + doc;
+    if (rng.chance(0.01)) doc += u"\n"_s + doc;
+    QByteArray bytes = utf8Of(doc, rng.chance(0.3));
+    if (rng.chance(0.03)) bytes.insert(insertionPoint(rng, bytes), notUtf8(rng));
+    if (rng.chance(0.01)) bytes.prepend("\xEF\xBB\xBF");
+    const double ending = rng.next();
+    if (ending < 0.75) bytes += '\n';
+    else if (ending < 0.8) bytes += "\r\n";
+    else if (ending < 0.85) bytes += "\n\n";
+    return bytesField(bytes);
+}
+
+// The run: 0 81%, another exit code 10%, a start failure 4%, no yt-dlp 5%
+QString pRun(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.05) return u"-"_s;
+    if (roll < 0.09) return u"S"_s;
+    if (roll < 0.19) return QString::number(pick(rng, {1, 2, 101, -1, 255}));
+    return u"0"_s;
+}
+
+// The input of rs: kind C's generator 18%, a playlist 44% (an id, a playlist address, a watch address with list=), a video 38%
+QString pInput(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.18) return classifierInput(rng);
+    const QString pad = rng.chance(0.1) ? padOf(rng) : QString();
+    if (roll < 0.62) {
+        const QString id = pick(rng, {u"PL"_s, u"UU"_s, u"OL"_s, u"PL"_s}) + idOf(rng, rng.between(16, 34));
+        switch (rng.between(0, 2)) {
+        case 0: return pad + id;
+        case 1: return u"https://www.youtube.com/playlist?list="_s + id + pad;
+        default: return u"https://www.youtube.com/watch?v="_s + idOf(rng, 11) + u"&list=" + id;
+        }
+    }
+    const QString id = idOf(rng, 11);
+    switch (rng.between(0, 3)) {
+    case 0: return pad + id;
+    case 1: return u"https://youtu.be/"_s + id;
+    case 2: return u"https://www.youtube.com/watch?v="_s + id + pad;
+    default: return u"https://music.youtube.com/watch?v="_s + id;
+    }
+}
+
+QString generateRs(Rng& rng) {
+    const QString input = pInput(rng);
+    const QString run = pRun(rng);
+    // the document a playlist address would get (a reject or a video gets a video now and then anyway)
+    const bool playlist = input.contains(u"list=") || input.trimmed().startsWith(u"PL") || input.trimmed().startsWith(u"UU") ||
+                          input.trimmed().startsWith(u"OL");
+    return hex(input) + u'\t' + run + u'\t' + pStdout(rng, playlist) + u'\t' + generateE(rng);
+}
+
+QString generateFx(Rng& rng) {
+    const QString videoId = rng.chance(0.9) ? videoIdOf(rng) : text(rng, 2);
+    return hex(videoId) + u'\t' + pRun(rng) + u'\t' + pStdout(rng, false) + u'\t' + generateE(rng);
+}
+
+constexpr WOp kPOps[] = {{u"rs", generateRs}, {u"fx", generateFx}};
+
+QString generateP(Rng& rng) {
+    const WOp& op = pick(rng, kPOps);
+    return op.name.toString() + u'\t' + op.fields(rng);
+}
+
 }  // namespace
 
 void registerKind(char kind, Generator gen) {
@@ -3251,6 +3538,7 @@ void registerGenerators() {
     registerKind('A', generateA);
     registerKind('I', generateI);
     registerKind('W', generateW);
+    registerKind('P', generateP);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).

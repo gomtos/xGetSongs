@@ -54,6 +54,7 @@
 #include "ytdlp/progress_parser.h"
 #include "ytdlp/video_info_file.h"
 #include "ytdlp/ytdlp_commands.h"
+#include "ytdlp/ytdlp_resolver.h"
 
 namespace xgs::diff {
 
@@ -444,11 +445,30 @@ QString answerLn(const QStringList& fields) {
 // command the runner was given (its arguments as hex, comma-separated), as Oracle.java's answerTools.
 const QString startFailureText = QStringLiteral("Cannot run program (start failure of the differential test)");
 
+// What the runner does for one program: its run (the exit code in decimal, or S) and its output lines in order (each a stdout
+// flag and the line).
+struct Play {
+    QString run;
+    QList<std::pair<bool, QString>> lines;
+
+    // kind W's notation of the lines: "~" for none, else comma-separated o<hex> / e<hex>
+    static Play of(const QString& run, const QString& items) {
+        Play play{run, {}};
+        if (items != u"~") {
+            for (const QString& item : items.split(u',')) play.lines.append({item.startsWith(u'o'), textOf(item.sliced(1))});
+        }
+        return play;
+    }
+};
+
+// A ProcessRunner that plays the case (kinds W and P), as Oracle.java's CaseRunner: the program at command[0] runs as its Play
+// says (a program without one exits with 1), its lines going to the handlers in order on the caller's thread. Records every
+// command.
 class CaseRunner final : public process::ProcessRunner {
 public:
-    QMap<QString, QStringList> runs;   // path -> {run, lines}
+    QMap<QString, Play> runs;   // path -> what it does
     QString commands = QStringLiteral(" R");
-    bool bad = false;                  // a field that is not what the generator writes
+    bool bad = false;           // a field that is not what the generator writes
 
     process::RunResult run(const QStringList& command, const process::LineHandler& onStdout, const process::LineHandler& onStderr,
                            std::stop_token) override {
@@ -456,15 +476,10 @@ public:
         for (qsizetype k = 0; k < command.size(); ++k) commands += (k > 0 ? QStringLiteral(",") : QString()) + hexText(command.at(k));
         const auto found = runs.constFind(command.first());
         if (found == runs.constEnd()) return {process::RunStatus::Exited, 1};
-        if (found->at(0) == u"S") return {process::RunStatus::StartFailed, -1, startFailureText};
-        if (found->at(1) != u"~") {
-            for (const QString& item : found->at(1).split(u',')) {
-                const QString line = textOf(item.sliced(1));
-                (item.startsWith(u'o') ? onStdout : onStderr)(line);
-            }
-        }
+        if (found->run == u"S") return {process::RunStatus::StartFailed, -1, startFailureText};
+        for (const auto& [toStdout, line] : found->lines) (toStdout ? onStdout : onStderr)(line);
         bool ok = false;
-        const int exitCode = found->at(0).toInt(&ok);
+        const int exitCode = found->run.toInt(&ok);
         if (!ok) bad = true;
         return {process::RunStatus::Exited, exitCode};
     }
@@ -480,7 +495,7 @@ bool casePaths(const QStringList& fields, int count, CaseRunner& runner, ToolPat
         const std::optional<QString> path = paths::fromText(text);
         if (path != text) return false;
         *targets[t] = path;
-        runner.runs.insert(text, {fields.at(3 * t + 1), fields.at(3 * t + 2)});
+        runner.runs.insert(text, Play::of(fields.at(3 * t + 1), fields.at(3 * t + 2)));
     }
     return true;
 }
@@ -541,6 +556,81 @@ QString answerW(const QStringList& fields) {
     return QStringLiteral("?");
 }
 
+// ---- kind P: ytdlp::YtDlpResolver on a CaseRunner, as Oracle.java's answerP ----
+// The fields after the op: the input (rs) or the video id (fx) as hex; the run (the exit code, S: a start failure with
+// startFailureText, -: no yt-dlp path); the stdout bytes (2 hex digits each, "." for none), split into lines by
+// process::LineSplitter as SystemProcessRunner does; the stderr lines, one per field (an empty field is no line). Stdout goes
+// to the handler before stderr. The tools are C:\tools\yt-dlp.exe, C:\tools\ffmpeg.exe and C:\tools\node.exe. Every answer
+// ends in " R" and the commands the runner was given.
+const QString pYtDlp = QStringLiteral("C:\\tools\\yt-dlp.exe");
+
+struct PCase {
+    CaseRunner runner;
+    std::optional<CaseTools> tools;
+    QString argument;
+};
+
+// Sets up the runner and the tools of a P case; false when the fields are not what the generator writes.
+bool pCase(const QStringList& fields, PCase& out) {
+    if (fields.size() < 4) return false;
+    const QString& run = fields.at(1);
+    out.argument = textOf(fields.at(0));
+    out.tools.emplace(ToolPaths{run == u"-" ? std::nullopt : std::optional<QString>(pYtDlp), QStringLiteral("C:\\tools\\ffmpeg.exe"),
+                                QStringLiteral("C:\\tools\\node.exe")});
+    if (run == u"-") return true;
+    Play play{run, {}};
+    const QByteArray bytes = fields.at(2) == u"." ? QByteArray() : QByteArray::fromHex(fields.at(2).toLatin1());
+    process::LineSplitter splitter([&play](const QString& line) { play.lines.append({true, line}); });
+    splitter.feed(QByteArrayView(bytes));
+    splitter.finish();
+    for (qsizetype k = 3; k < fields.size(); ++k)
+        if (!fields.at(k).isEmpty()) play.lines.append({false, textOf(fields.at(k))});
+    out.runner.runs.insert(pYtDlp, std::move(play));
+    return true;
+}
+
+// P rs input run stdout stderr... -> OK resolveId kind playlistTitle truncated alsoVideoId count, then per item rank videoId
+// title channel artist track lowConfidence available unavailableReason expectedFileName | ERR hex
+QString answerRs(const QStringList& fields) {
+    PCase c;
+    if (!pCase(fields, c)) return QStringLiteral("?");
+    const Outcome<ResolveResult> outcome = ytdlp::YtDlpResolver(c.runner, *c.tools).resolve(c.argument, {});
+    if (c.runner.bad || outcome.status == OutcomeStatus::Cancelled) return QStringLiteral("?");
+    if (!outcome.isOk()) return QStringLiteral("ERR ") + hexText(outcome.error) + c.runner.commands;
+    const ResolveResult& result = *outcome.value;
+    QString out = QStringLiteral("OK ") + hexText(result.resolveId) + u' ' +
+                  (result.kind == InputKind::Playlist ? QStringLiteral("PLAYLIST") : QStringLiteral("VIDEO")) + u' ' +
+                  hex(result.playlistTitle) + u' ' + flag(result.truncated) + u' ' + hex(result.alsoVideoId) + u' ' +
+                  QString::number(result.items.size());
+    for (const ResolvedItem& item : result.items) {
+        out += u' ' + QString::number(item.rank) + u' ' + hexText(item.videoId) + u' ' + hexText(item.title) + u' ' + hex(item.channel) +
+               u' ' + hexText(item.artist) + u' ' + hexText(item.track) + u' ' + flag(item.lowConfidence) + u' ' + flag(item.available) +
+               u' ' + hex(item.unavailableReason) + u' ' + hex(item.expectedFileName);
+    }
+    return out + c.runner.commands;
+}
+
+// P fx videoId run stdout stderr... -> M title channel artist track | NULL
+QString answerFx(const QStringList& fields) {
+    PCase c;
+    if (!pCase(fields, c)) return QStringLiteral("?");
+    const std::optional<ytdlp::VideoMeta> meta = ytdlp::YtDlpResolver(c.runner, *c.tools).fetch(c.argument, {});
+    if (c.runner.bad) return QStringLiteral("?");
+    const QString answer = meta ? QStringLiteral("M ") + hex(meta->title) + u' ' + hex(meta->channel) + u' ' + hex(meta->artist) + u' ' +
+                                      hex(meta->track)
+                                : QStringLiteral("NULL");
+    return answer + c.runner.commands;
+}
+
+constexpr WAnswer kPAnswers[] = {{u"rs", answerRs}, {u"fx", answerFx}};
+
+QString answerP(const QStringList& fields) {
+    if (fields.size() < 2) return QStringLiteral("?");
+    for (const WAnswer& entry : kPAnswers)
+        if (fields.at(0) == entry.op) return entry.answer(fields.mid(1));
+    return QStringLiteral("?");
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -573,6 +663,7 @@ void registerAnswers() {
     registerAnswer('A', answerA);
     registerAnswer('I', answerI);
     registerAnswer('W', answerW);
+    registerAnswer('P', answerP);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).

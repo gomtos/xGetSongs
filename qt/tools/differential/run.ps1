@@ -1,7 +1,7 @@
 # The differential test of the Qt port: the same cases go to the Kotlin originals on the JVM (Oracle.java, on the jars of
 # server/build/sidecar-image) and to the C++ ports (build/qt/xgs-diff.exe); the answers must be identical, line for line.
 #
-#   pwsh qt/tools/differential/run.ps1 [-Kinds UXMSCFDGTLYRNBZHOJEQVKAIW] [-PerKind 10000] [-Seed 20261115] [-DebugTool]
+#   pwsh qt/tools/differential/run.ps1 [-Kinds UXMSCFDGTLYRNBZHOJEQVKAIWP] [-PerKind 10000] [-Seed 20261115] [-DebugTool]
 #   (the default: all kinds)
 #
 # -DebugTool: the debug build's tool (build/qt-debug/xgs-diff.exe, where Qt's range checks and assertions are on) also answers
@@ -24,7 +24,7 @@
 # Adding a kind: a generator (gen.cpp, registerGenerators), an answerer (main.cpp, registerAnswers), a `case` in
 # Oracle.java, and the kind's thresholds in $Statistics here. A kind without an entry in $Statistics fails.
 param(
-    [string]$Kinds = 'UXMSCFDGTLYRNBZHOJEQVKAIW',
+    [string]$Kinds = 'UXMSCFDGTLYRNBZHOJEQVKAIWP',
     [int]$PerKind = 10000,
     [long]$Seed = 20261115,
     [switch]$DebugTool
@@ -414,6 +414,140 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'up: yt-dlp does not start' $starts $indexes.Count 0.02
     }
 }
+# Kind P: one check per op, each on the indexes of that op's cases (thresholds of the Q2b plan, per op). An op of P without an
+# entry here fails the run.
+function ConvertTo-HexText([string]$text) { -join ($text.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ }) }
+$PFlatPlaylist = ConvertTo-HexText '--flat-playlist'
+$PNoPlaylist = ConvertTo-HexText '--no-playlist'
+$PUnknownItem = ConvertTo-HexText '알 수 없는 항목'
+# Whether a stdout has a property of the wrong type where Kotlin's classes have one: a String? property of the root (RawEntry,
+# or RawPlaylist's title) or of an entry whose value starts with neither `"` nor the literal null, entries that is not an
+# array, or an item of entries that is neither an object nor null. A tolerant scan for the statistics only (it does not decide
+# any answer): it follows strings and brackets and takes a string after `{` or `,` in an object for a key.
+Add-Type -TypeDefinition @'
+public static class PWrongType {
+    static readonly string[] EntryKeys = { "id", "title", "channel", "uploader", "availability", "artist", "track" };
+    enum Role { Other, Root, Entries, Entry }
+    public static bool Find(string t, bool playlist) {
+        var roles = new System.Collections.Generic.List<Role>();
+        var arrays = new System.Collections.Generic.List<bool>();
+        string key = null; bool expectKey = false, expectValue = false;
+        for (int i = 0; i < t.Length; i++) {
+            char c = t[i];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+            int depth = roles.Count;
+            Role role = depth > 0 ? roles[depth - 1] : Role.Other;
+            bool inArray = depth > 0 && arrays[depth - 1];
+            if (expectValue || (inArray && expectKey)) {
+                // the first unit of a value: of a key of an object, or of an item of an array
+                bool isNull = string.CompareOrdinal(t, i, "null", 0, 4) == 0 && (i + 4 >= t.Length || ",:[]{}\" \t\r\n".IndexOf(t[i + 4]) >= 0);
+                if (!inArray && (role == Role.Entry || (role == Role.Root && !playlist)) && System.Array.IndexOf(EntryKeys, key) >= 0
+                    && c != '"' && !isNull) return true;
+                if (!inArray && role == Role.Root && playlist && key == "title" && c != '"' && !isNull) return true;
+                if (!inArray && role == Role.Root && playlist && key == "entries" && c != '[') return true;
+                if (inArray && role == Role.Entries && c != '{' && !isNull) return true;
+            }
+            bool valueStart = expectValue || (inArray && expectKey);
+            expectValue = false;
+            if (c == '"') {
+                int start = ++i;
+                var sb = new System.Text.StringBuilder();
+                while (i < t.Length && t[i] != '"') { if (t[i] == '\\' && i + 1 < t.Length) i++; sb.Append(t[i]); i++; }
+                if (!inArray && expectKey) key = sb.ToString();
+                expectKey = false;
+            } else if (c == '{' || c == '[') {
+                Role child = Role.Other;
+                if (depth == 0 && c == '{') child = Role.Root;
+                else if (valueStart && role == Role.Root && playlist && !inArray && key == "entries" && c == '[') child = Role.Entries;
+                else if (valueStart && role == Role.Entries && c == '{') child = Role.Entry;
+                roles.Add(child); arrays.Add(c == '['); expectKey = true; key = null;
+            } else if (c == '}' || c == ']') {
+                if (depth > 0) { roles.RemoveAt(depth - 1); arrays.RemoveAt(depth - 1); }
+                expectKey = false;
+            } else if (c == ',') {
+                expectKey = true;
+            } else if (c == ':') {
+                expectValue = true;
+            } else {
+                expectKey = false;
+            }
+        }
+        return false;
+    }
+}
+'@
+# The fields of an OK answer of rs before " R": OK resolveId kind playlistTitle truncated alsoVideoId count, then 10 per item
+function Get-PItems([string]$answer) {
+    $tokens = ($answer -split ' R ', 2)[0] -split ' '
+    $items = [System.Collections.Generic.List[string[]]]::new()
+    for ($k = 7; $k + 10 -le $tokens.Count; $k += 10) { $items.Add($tokens[$k..($k + 9)]) }
+    return , $items
+}
+$POpChecks = [ordered]@{
+    # rs input run stdout stderr...: OK 40%, ERR 20% (Kotlin's answer); a playlist run (--flat-playlist among Kotlin's commands)
+    # 30%, a video run (--no-playlist) 20%; an unavailable item in Kotlin's answer 10%; a null entry (an item Kotlin reports as an
+    # unknown item without id and title) 5%; a property of the wrong type in the stdout 10%; stdout that is not standard JSON
+    # (System.Text.Json refuses it, or it is not UTF-8) 5%; an answer truncated at MAX_RANK 1%
+    rs = {
+        param($cases, $answers, $indexes)
+        $ok = 0; $err = 0; $playlists = 0; $videos = 0; $unavailable = 0; $nullEntry = 0; $wrong = 0; $odd = 0; $truncated = 0
+        $starts = 0; $noTool = 0; $oddAccepted = 0; $wrongAccepted = 0
+        $strict = [System.Text.UTF8Encoding]::new($false, $true)
+        foreach ($i in $indexes) {
+            $answer = $answers[$i]
+            $commands = ($answer -split ' R', 2)[1]
+            if ($commands -and $commands.Contains($PFlatPlaylist)) { $playlists++ }
+            if ($commands -and $commands.Contains($PNoPlaylist)) { $videos++ }
+            if ($cases[$i][2] -ceq 'S') { $starts++ }
+            if ($cases[$i][2] -ceq '-') { $noTool++ }
+            if ($answer.StartsWith('ERR ')) { $err++ }
+            if ($answer.StartsWith('OK ')) {
+                $ok++
+                if (($answer -split ' ')[4] -ceq '1') { $truncated++ }
+                $items = Get-PItems $answer
+                if (@($items | Where-Object { $_[7] -ceq '0' }).Count -gt 0) { $unavailable++ }
+                if (@($items | Where-Object { $_[1] -ceq '.' -and $_[2] -ceq '.' -and $_[8] -ceq $PUnknownItem }).Count -gt 0) { $nullEntry++ }
+            }
+            $hex = $cases[$i][3]
+            $bytes = [byte[]]::new(0)
+            if ($hex -cne '.') { $bytes = [Convert]::FromHexString($hex) }
+            $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+            if ([PWrongType]::Find($text, $commands -and $commands.Contains($PFlatPlaylist))) {
+                $wrong++
+                if ($answer.StartsWith('OK ')) { $wrongAccepted++ }
+            }
+            $standard = $true
+            try {
+                [void]$strict.GetString($bytes)
+                $document = [System.Text.Json.JsonDocument]::Parse([System.ReadOnlyMemory[byte]]::new($bytes))
+                $document.Dispose()
+            } catch { $standard = $false }
+            if (-not $standard) { $odd++; if ($answer.StartsWith('OK ')) { $oddAccepted++ } }
+        }
+        $n = $indexes.Count
+        Test-Share 'P' 'rs: answer OK' $ok $n 0.40
+        Test-Share 'P' 'rs: answer ERR' $err $n 0.20
+        Test-Share 'P' 'rs: a playlist run' $playlists $n 0.30
+        Test-Share 'P' 'rs: a video run' $videos $n 0.20
+        Test-Share 'P' 'rs: an unavailable item in the answer' $unavailable $n 0.10
+        Test-Share 'P' 'rs: a null entry (an unknown item without id and title)' $nullEntry $n 0.05
+        Test-Share 'P' 'rs: stdout with a property of the wrong type' $wrong $n 0.10
+        Test-Share 'P' 'rs: ... of which Kotlin accepted (the scan was wrong; shown only)' $wrongAccepted $n 0
+        Test-Share 'P' 'rs: stdout that is not standard JSON' $odd $n 0.05
+        Test-Share 'P' 'rs: answer truncated at MAX_RANK' $truncated $n 0.01
+        Test-Share 'P' 'rs: stdout that is not standard JSON and Kotlin accepted (shown only)' $oddAccepted $n 0
+        Test-Share 'P' 'rs: a start failure (shown only)' $starts $n 0
+        Test-Share 'P' 'rs: no yt-dlp (shown only)' $noTool $n 0
+    }
+    # fx videoId run stdout stderr...: the metadata 30%, NULL 30% (Kotlin's answer)
+    fx = {
+        param($cases, $answers, $indexes)
+        $meta = @($indexes | Where-Object { $answers[$_].StartsWith('M ') }).Count
+        $none = @($indexes | Where-Object { $answers[$_].StartsWith('NULL') }).Count
+        Test-Share 'P' 'fx: answer the metadata' $meta $indexes.Count 0.30
+        Test-Share 'P' 'fx: answer NULL' $none $indexes.Count 0.30
+    }
+}
 # Helpers of the W ln statistics, on the hex of the bytes (2 digits a byte, aligned): `\r\n`, a `\r` not before `\n`, a `\n`
 # not after `\r`; and (zero-width, every position, the caller keeps the aligned ones) a place where a boundary splits something
 $LnCrLf = [regex]::new('^(?:[0-9a-f]{2})*?0d0a', 'Compiled')
@@ -421,6 +555,25 @@ $LnLoneCr = [regex]::new('^(?:[0-9a-f]{2})*?0d(?!0a)', 'Compiled')
 $LnLoneLf = [regex]::new('^(?:[0-9a-f]{2})*?(?<!0d)0a', 'Compiled')
 $LnSplitPoint = [regex]::new('(?=0d0a|[89a-f][0-9a-f][89ab][0-9a-f])', 'Compiled')
 $Statistics = [ordered]@{
+    P = @{
+        # fields: op and the op's fields; the thresholds are per op ($POpChecks). Each op's share is shown, not checked.
+        Check = {
+            param($cases, $answers)
+            $byOp = @{}
+            for ($i = 0; $i -lt $cases.Count; $i++) {
+                $op = $cases[$i][0]
+                if (-not $byOp.ContainsKey($op)) { $byOp[$op] = [System.Collections.Generic.List[int]]::new() }
+                $byOp[$op].Add($i)
+            }
+            foreach ($op in $byOp.Keys) { if (-not $POpChecks.Contains($op)) { "P: op $op has no statistics in `$POpChecks" } }
+            foreach ($op in $POpChecks.Keys) {
+                $indexes = if ($byOp.ContainsKey($op)) { $byOp[$op].ToArray() } else { [int[]]@() }
+                Test-Share 'P' "op $op (shown only)" $indexes.Count $cases.Count 0
+                if ($indexes.Count -eq 0) { "P: no cases of op $op"; continue }
+                & $POpChecks[$op] $cases $answers $indexes
+            }
+        }
+    }
     W = @{
         # fields: op and the op's fields; the thresholds are per op ($WOpChecks). Each op's share is shown, not checked.
         Check = {

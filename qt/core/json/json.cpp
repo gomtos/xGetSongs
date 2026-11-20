@@ -2,8 +2,11 @@
 
 #include <QHash>
 
+#include <algorithm>
+
 // Built from the answers of the real Kotlin/JVM to observed inputs (qt/tools/differential kind J, the observation table of
-// the Q2a Task 3 report) and from public documentation only; not from kotlinx.serialization's source.
+// the Q2a Task 3 report; the typed reading: kind P, the observation table of the Q2b Task 5 report) and from public
+// documentation only; not from kotlinx.serialization's source.
 namespace xgs::json {
 
 namespace {
@@ -186,7 +189,139 @@ public:
         }
     }
 
+    // ParseOptions::typed: the whole text as an object of class [shape] (rules in json.h)
+    std::optional<Value> readTyped(const ClassShape& shape) {
+        skipWhite();
+        std::optional<Value> value = readClass(shape);
+        if (!value) return std::nullopt;
+        skipWhite();
+        if (at_ != size_) return std::nullopt;
+        return value;
+    }
+
 private:
+    // The object of a class at at_. Classes nest only as deep as their shapes do (a list property's items), so this
+    // recursion is bounded by the shape; skipped values use no recursion.
+    std::optional<Value> readClass(const ClassShape& shape) {
+        if (peek() != u'{') return std::nullopt;
+        ++at_;
+        skipWhite();
+        ObjectBuilder object;
+        if (peek() == u'}') {
+            ++at_;
+            return Value(Object{});
+        }
+        while (true) {
+            QString key;
+            if (!readKeyAndColon(key)) return std::nullopt;
+            if (std::find(shape.strings.begin(), shape.strings.end(), key) != shape.strings.end()) {
+                Value value;
+                if (peek() == u'"') {
+                    QString content;
+                    if (!readString(content)) return std::nullopt;
+                    value = Value(Primitive{true, std::move(content)});
+                } else if (readLiteral() != u"null") {
+                    return std::nullopt;
+                }
+                object.put(std::move(key), std::move(value));
+            } else if (const ClassShape* item = listItemShape(shape, key)) {
+                std::optional<Value> list = readList(*item);
+                if (!list) return std::nullopt;
+                object.put(std::move(key), std::move(*list));
+            } else if (!skipValue()) {
+                return std::nullopt;
+            }
+            skipWhite();
+            const char16_t next = peek();
+            if (next == u',') {
+                ++at_;
+                skipWhite();
+                continue;   // a key must follow (readKeyAndColon)
+            }
+            if (next == u'}') {
+                ++at_;
+                return Value(std::move(object.members));
+            }
+            if (next != u'"') return std::nullopt;   // observed: the next key without a comma is accepted
+        }
+    }
+
+    static const ClassShape* listItemShape(const ClassShape& shape, const QString& key) {
+        for (const auto& [name, item] : shape.objectLists) {
+            if (name == key) return item;
+        }
+        return nullptr;
+    }
+
+    // `[`, items (objects of [item] or the literal null) separated by single commas, `]`
+    std::optional<Value> readList(const ClassShape& item) {
+        if (peek() != u'[') return std::nullopt;
+        ++at_;
+        skipWhite();
+        Array items;
+        if (peek() == u']') {
+            ++at_;
+            return Value(std::move(items));
+        }
+        while (true) {
+            if (peek() == u'{') {
+                std::optional<Value> object = readClass(item);
+                if (!object) return std::nullopt;
+                items.push_back(std::move(*object));
+            } else if (readLiteral() == u"null") {
+                items.push_back(Value(Null{}));
+            } else {
+                return std::nullopt;
+            }
+            skipWhite();
+            const char16_t next = peek();
+            if (next == u',') {
+                ++at_;
+                skipWhite();
+                continue;
+            }
+            if (next != u']') return std::nullopt;
+            ++at_;
+            return Value(std::move(items));
+        }
+    }
+
+    // the literal at at_ (empty when none starts there)
+    QStringView readLiteral() {
+        const qsizetype start = at_;
+        while (at_ < size_ && !endsLiteral(text_[at_].unicode())) ++at_;
+        return QStringView(text_ + start, at_ - start);
+    }
+
+    // The value of a key the class does not have: a string, a literal or a container in which only strings and brackets are
+    // checked.
+    bool skipValue() {
+        const char16_t first = peek();
+        if (first == u'"') {
+            QString ignored;
+            return readString(ignored);
+        }
+        if (first != u'{' && first != u'[') return at_ < size_ && !readLiteral().isEmpty();
+        std::vector<char16_t> open;
+        QString ignored;
+        while (at_ < size_) {
+            const char16_t c = text_[at_].unicode();
+            if (c == u'"') {
+                if (!readString(ignored)) return false;
+                continue;
+            }
+            ++at_;
+            if (c == u'{' || c == u'[') {
+                open.push_back(c);
+            } else if (c == u'}' || c == u']') {
+                if (open.back() != (c == u'}' ? u'{' : u'[')) return false;
+                open.pop_back();
+                if (open.empty()) return true;
+            }
+        }
+        return false;
+    }
+
     // the unit at at_, or U+0000 at the end (which no rule takes as a token of its own)
     char16_t peek() const { return at_ < size_ ? text_[at_].unicode() : char16_t(0); }
 
@@ -329,7 +464,8 @@ Value::~Value() {
     }
 }
 
-std::optional<Value> parse(const QString& text) {
+std::optional<Value> parse(const QString& text, const ParseOptions& options) {
+    if (options.typed) return Reader(text).readTyped(*options.typed);
     return Reader(text).read();
 }
 

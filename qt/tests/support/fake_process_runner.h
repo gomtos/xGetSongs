@@ -16,6 +16,9 @@ namespace xgs::testsupport {
 using ProcessHandler = std::function<int(const QStringList& command, const process::LineHandler& out,
                                          const process::LineHandler& err)>;
 
+/// Kotlin's String.lines(): text split at \r\n, \n and \r (an empty text is one empty line).
+QStringList kotlinLines(const QString& text);
+
 /// Thrown by a handler to make run return StartFailed with this message.
 struct StartFailure {
     QString message;

@@ -36,6 +36,8 @@ add_subdirectory(support)
 xgs_add_test(tst_tool_locator tst_tool_locator.cpp)
 xgs_add_test(tst_tool_manager tst_tool_manager.cpp)
 target_link_libraries(tst_tool_manager PRIVATE xgstestsupport)
+xgs_add_test(tst_ytdlp_resolver tst_ytdlp_resolver.cpp)
+target_link_libraries(tst_ytdlp_resolver PRIVATE xgstestsupport)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
 # XGS_TEST_CHILD.

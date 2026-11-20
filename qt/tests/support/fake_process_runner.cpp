@@ -4,6 +4,23 @@
 
 namespace xgs::testsupport {
 
+QStringList kotlinLines(const QString& text) {
+    QStringList lines;
+    QString line;
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        const QChar c = text.at(i);
+        if (c == u'\r' || c == u'\n') {
+            lines.append(line);
+            line.clear();
+            if (c == u'\r' && i + 1 < text.size() && text.at(i + 1) == u'\n') ++i;
+        } else {
+            line += c;
+        }
+    }
+    lines.append(line);
+    return lines;
+}
+
 FakeProcessRunner::FakeProcessRunner(ProcessHandler handler) : m_handler(std::move(handler)) {}
 
 process::RunResult FakeProcessRunner::run(const QStringList& command, const process::LineHandler& onStdout,

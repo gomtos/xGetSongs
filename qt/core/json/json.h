@@ -61,9 +61,42 @@ struct Value {
 /// The most open arrays a document may nest (more is an error; see above).
 inline constexpr int maxArrayDepth = 1000;
 
+/// The properties of a @Serializable Kotlin class, for ParseOptions::typed: its `String?` properties (default null) and its
+/// `List<T?>` properties of objects of another class (default emptyList()).
+struct ClassShape {
+    std::vector<QString> strings;
+    std::vector<std::pair<QString, const ClassShape*>> objectLists;
+};
+
+struct ParseOptions {
+    /// nullptr: `Json.parseToJsonElement(text)` (above). Otherwise the text is read as kotlinx.serialization's
+    /// `Json { ignoreUnknownKeys = true }.decodeFromString(serializer, text)` reads a class of this shape, which accepts
+    /// other texts (stricter in some places, looser in others). Observed on the real Kotlin/JVM through YtDlpResolver
+    /// (qt/tools/differential kind P, the observation table of the Q2b Task 5 report), not taken from kotlinx.serialization:
+    ///   - white space is U+0020, U+0009, U+000A and U+000D only; the root must be an object, with nothing but white space
+    ///     around it (no BOM, nothing after it);
+    ///   - an object is `{`, then `}` or members; a member is a string key (escapes decoded, so `"title"` is `title`),
+    ///     `:` and the value. After a value comes `,` and the next key (`,}` and `,,` are errors), `}`, or, without a comma,
+    ///     the `"` of the next key (`{"a":"x" "b":"y"}` is accepted); anything else is an error. Strings are read as above;
+    ///   - a key that occurs again is read again (and must have the right type each time); the last value wins;
+    ///   - a `String?` property takes a string or the literal `null` (exactly; a literal is a run of units as above);
+    ///     a number, `true`, any other literal, an object or an array is an error;
+    ///   - a list property takes `[`, items separated by single commas (no leading, doubled or trailing comma, and not the
+    ///     `]` separator of above), `]`; an item is an object of the class or `null`. `null` for the list itself is an error;
+    ///   - any other key's value is skipped: a string (whose escapes must be valid), a literal, or a container. Inside a
+    ///     container only strings (escapes checked) and brackets count: every `[` or `{` must be closed by its own kind
+    ///     before an outer one, and everything else (commas, colons, literals, missing or doubled separators, control
+    ///     characters, `\`) is passed over unchecked. A value that starts with anything else (`}`, `]`, `,`, `:`, `\`, a
+    ///     control character) is an error. A skipped container may nest to any depth (no recursion here).
+    /// The result is an object holding the class's properties that occur (an absent one is absent): a `String?` property as
+    /// a string Primitive or Null, a list property as an Array of Objects (of the item class) and Nulls. Other keys are not
+    /// kept.
+    const ClassShape* typed = nullptr;
+};
+
 /// Nothing when kotlinx.serialization's default `Json.parseToJsonElement(text)` throws for the text (or, for nesting, as
-/// described above).
-std::optional<Value> parse(const QString& text);
+/// described above); with options.typed, nothing when decodeFromString throws (see ParseOptions).
+std::optional<Value> parse(const QString& text, const ParseOptions& options = {});
 
 /// The value of [key] in [object]; nullptr when it has none.
 const Value* find(const Object& object, QStringView key);

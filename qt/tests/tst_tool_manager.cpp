@@ -38,24 +38,6 @@ QString at(const QString& dir, const QString& name) {
     return *xgs::paths::child(dir, name);
 }
 
-// Kotlin's String.lines(): split at \r\n, \n and \r.
-QStringList ktLines(const QString& text) {
-    QStringList lines;
-    QString line;
-    for (qsizetype i = 0; i < text.size(); ++i) {
-        const QChar c = text.at(i);
-        if (c == u'\r' || c == u'\n') {
-            lines.append(line);
-            line.clear();
-            if (c == u'\r' && i + 1 < text.size() && text.at(i + 1) == u'\n') ++i;
-        } else {
-            line += c;
-        }
-    }
-    lines.append(line);
-    return lines;
-}
-
 // runnerFor of the Kotlin test: the tool is the file name of command[0] up to its first '.'; a tool in outputs writes its
 // lines to stdout and exits with exitCode, any other exits with 1.
 ProcessHandler outputsHandler(QMap<QString, QString> outputs, int exitCode = 0) {
@@ -64,7 +46,7 @@ ProcessHandler outputsHandler(QMap<QString, QString> outputs, int exitCode = 0) 
         const qsizetype dot = tool.indexOf(u'.');
         if (dot >= 0) tool.truncate(dot);
         if (!outputs.contains(tool)) return 1;
-        for (const QString& line : ktLines(outputs.value(tool))) out(line);
+        for (const QString& line : xgs::testsupport::kotlinLines(outputs.value(tool))) out(line);
         return exitCode;
     };
 }
