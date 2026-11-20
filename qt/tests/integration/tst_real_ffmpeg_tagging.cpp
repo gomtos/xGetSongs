@@ -127,6 +127,16 @@ class RealFfmpegTaggingIntegrationTest : public QObject {
         QVERIFY2(result.status == TagStatus::Tagged, qPrintable(describe(result)));   // Kotlin: assertNull(failure)
     }
 
+    // Ffprobe::probe throws when ffprobe fails or prints something unexpected: that fails this test only (QFAIL), so the
+    // other tests still run and cleanup() still removes the temporary folder.
+    void probe(const QString& file, std::stop_token stop, Probed& out) {
+        try {
+            out = m_ffprobe->probe(file, stop);
+        } catch (const std::exception& e) {
+            QFAIL(qPrintable(u"ffprobe: "_s + QString::fromUtf8(e.what())));
+        }
+    }
+
 private slots:
     void initTestCase() {
         m_locator = std::make_unique<xgs::tools::ToolLocator>(xgs::integration::appBinDir());
@@ -170,7 +180,8 @@ private slots:
 
         XGS_CHECKED(tagged(m4a, jpg, m_tags, deadline.token()));
 
-        const Probed probed = m_ffprobe->probe(m4a, deadline.token());
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
         XGS_CHECKED(assertTags(m_tags, probed));
         QCOMPARE(shown(probed.tag(u"major_brand"_s)), shown(u"M4A "_s));
         QVERIFY2(probed.streams.size() == 2, qPrintable(probed.describe()));
@@ -204,14 +215,16 @@ private slots:
         const Deadline deadline(60s);
         QString m4a, audioBefore, jpg;
         XGS_CHECKED(fragmentedM4a(m4a, deadline.token()));
-        QVERIFY2(m_ffprobe->probe(m4a, deadline.token()).tag(u"major_brand"_s) == u"dash"_s,
-                 "precondition: the input is a fragmented dash file");
+        Probed before;
+        XGS_CHECKED(probe(m4a, deadline.token(), before));
+        QVERIFY2(before.tag(u"major_brand"_s) == u"dash"_s, "precondition: the input is a fragmented dash file");
         XGS_CHECKED(audioMd5(m4a, audioBefore, deadline.token()));
         XGS_CHECKED(redJpg(jpg, deadline.token()));
 
         XGS_CHECKED(tagged(m4a, jpg, m_tags, deadline.token()));
 
-        const Probed probed = m_ffprobe->probe(m4a, deadline.token());
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
         QCOMPARE(shown(probed.tag(u"major_brand"_s)), shown(u"M4A "_s));
         XGS_CHECKED(assertTags(m_tags, probed));
         QString audioAfter;
@@ -226,7 +239,8 @@ private slots:
 
         XGS_CHECKED(tagged(m4a, std::nullopt, m_tags, deadline.token()));
 
-        const Probed probed = m_ffprobe->probe(m4a, deadline.token());
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
         XGS_CHECKED(assertTags(m_tags, probed));
         QStringList types;
         for (const auto& stream : probed.streams) types << stream.codecType;
@@ -242,7 +256,8 @@ private slots:
 
         XGS_CHECKED(tagged(m4a, std::nullopt, noAlbum, deadline.token()));
 
-        const Probed probed = m_ffprobe->probe(m4a, deadline.token());
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
         QCOMPARE(shown(probed.tag(u"album"_s)), shown(std::nullopt));
         QCOMPARE(shown(probed.tag(u"title"_s)), shown(m_tags.title));
     }
@@ -257,7 +272,8 @@ private slots:
 
         XGS_CHECKED(tagged(m4a, std::nullopt, bare, deadline.token()));
 
-        const Probed probed = m_ffprobe->probe(m4a, deadline.token());
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
         QCOMPARE(shown(probed.tag(u"comment"_s)), shown(std::nullopt));
         const QStringList keys = probed.tags.keys();
         QVERIFY2(std::none_of(keys.cbegin(), keys.cend(), [](const QString& k) { return k.startsWith(u"lyrics"_s); }),
@@ -277,7 +293,9 @@ private slots:
 
         XGS_CHECKED(tagged(m4a, std::nullopt, nasty, deadline.token()));
 
-        XGS_CHECKED(assertTags(nasty, m_ffprobe->probe(m4a, deadline.token())));
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
+        XGS_CHECKED(assertTags(nasty, probed));
     }
 
     // A value ending in a backslash made ffmpeg swallow the next line of the ffmetadata file (the artist went missing).
@@ -293,7 +311,8 @@ private slots:
 
         XGS_CHECKED(tagged(m4a, std::nullopt, trailing, deadline.token()));
 
-        const Probed probed = m_ffprobe->probe(m4a, deadline.token());
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
         QCOMPARE(shown(probed.tag(u"title"_s)), shown(u"Path to C:\uFF3C"_s));
         QCOMPARE(shown(probed.tag(u"artist"_s)), shown(u"Artist\uFF3C\uFF3C"_s));
         QCOMPARE(shown(probed.tag(u"album_artist"_s)), shown(u"Artist\uFF3C\uFF3C"_s));
@@ -313,7 +332,8 @@ private slots:
 
         XGS_CHECKED(tagged(m4a, std::nullopt, injected, deadline.token()));
 
-        const Probed probed = m_ffprobe->probe(m4a, deadline.token());
+        Probed probed;
+        XGS_CHECKED(probe(m4a, deadline.token(), probed));
         QCOMPARE(shown(probed.tag(u"title"_s)), shown(u"abcalbum=Injected"_s));
         QCOMPARE(shown(probed.tag(u"album"_s)), shown(u"Real Album"_s));
     }

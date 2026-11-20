@@ -28,6 +28,7 @@ using xgs::tags::TagStatus;
 using xgs::tags::TrackTags;
 using xgs::testsupport::FakeProcessRunner;
 using xgs::testsupport::FixedTools;
+using xgs::testsupport::RunFailure;
 using xgs::testsupport::StartFailure;
 using xgs::testsupport::testTools;
 using xgs::ytdlp::FailureKind;
@@ -324,6 +325,22 @@ private slots:
         const TagResult result = tagger(runner, tools).tag(m_file, std::nullopt, m_tags, {});
 
         compareFailure(result, FailureKind::Other, u"태그를 쓰지 못했습니다: cannot start"_s);
+        QCOMPARE(readBytes(m_file), QByteArray("original-m4a"));
+        QCOMPARE(filesInDir(), QStringList{u"vid00000001.m4a"_s});
+    }
+
+    // Added: an ffmpeg run that the runner lost after its start (RunStatus::Failed, no stop requested) is a failure like a
+    // start failure, never Cancelled, even when ffmpeg had already written its output; the original stays.
+    void aRunOfFfmpegThatFailsAfterItsStartIsAFailureAndKeepsTheOriginal() {
+        FakeProcessRunner runner([](const QStringList& command, const LineHandler&, const LineHandler&) -> int {
+            writeFakeTagged(command);
+            throw RunFailure{u"wait failed"_s};
+        });
+        const FixedTools tools;
+
+        const TagResult result = tagger(runner, tools).tag(m_file, std::nullopt, m_tags, {});
+
+        compareFailure(result, FailureKind::Other, u"태그를 쓰지 못했습니다: wait failed"_s);
         QCOMPARE(readBytes(m_file), QByteArray("original-m4a"));
         QCOMPARE(filesInDir(), QStringList{u"vid00000001.m4a"_s});
     }

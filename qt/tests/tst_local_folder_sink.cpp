@@ -143,9 +143,12 @@ private slots:
             QStringList failures;
             for (const Attempt& attempt : attempts) {
                 if (!attempt.thrown.isEmpty()) failures.append(attempt.thrown);
-                else if (attempt.result->status != PutStatus::Stored) failures.append(u"status %1: %2"_s.arg(int(attempt.result->status)).arg(attempt.result->error));
+                else if (attempt.result->status != PutStatus::Stored)
+                    failures.append(u"status %1, Win32 code %2: %3"_s.arg(int(attempt.result->status))
+                                        .arg(attempt.result->code)
+                                        .arg(attempt.result->error));
             }
-            QCOMPARE(failures, QStringList());
+            QVERIFY2(failures.isEmpty(), qPrintable(u"round %1: %2"_s.arg(round).arg(failures.join(u"; "_s))));
             QVERIFY(readBytes(*xgs::paths::child(m_target, u"same.mp3"_s)).startsWith("data-"));
         }
     }
@@ -175,6 +178,31 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(std::invalid_argument, sink.put(u"../evil.mp3"_s, source(u"x"_s), false));
         QVERIFY_THROWS_EXCEPTION(std::invalid_argument, sink.put(u"sub/evil.mp3"_s, source(u"x"_s), false));
         QVERIFY_THROWS_EXCEPTION(std::invalid_argument, sink.exists(u".."_s));
+    }
+
+    // Added: when the sink's folder is not a directory (it could not be created: it is a regular file, or it would lie under
+    // one), put fails and exists is false. Without this a name of dots and spaces only, which Windows resolves to the folder
+    // itself, could replace a file outside the sink.
+    void putFailsWhenTheFolderIsNotADirectory() {
+        const QString file = *xgs::paths::child(m_root, u"file.txt"_s);
+        QVERIFY(xgs::fs::writeUtf8(file, u"keep"_s).isOk());
+        for (const QString& directory : {file, *xgs::paths::child(file, u"sub"_s)}) {
+            LocalFolderSink sink(directory);
+            QVERIFY2(!sink.exists(u"a.m4a"_s), qPrintable(directory));
+            QVERIFY2(!sink.exists(u"..."_s), qPrintable(directory));
+            for (const QString& name : {u".. "_s, u"..."_s, u"a.m4a"_s}) {
+                const QString source = this->source(u"data"_s);
+                const PutResult result = sink.put(name, source, true);
+                const QString where = directory + u" + \""_s + name + u'"';
+                QVERIFY2(result.status == PutStatus::Failed, qPrintable(where + u": status %1"_s.arg(int(result.status))));
+                QVERIFY(!result.error.isEmpty());
+                QVERIFY2(xgs::fs::isRegularFile(file), qPrintable(where));
+                QCOMPARE(readBytes(file), QByteArray("keep"));
+                QCOMPARE(readBytes(source), QByteArray("data"));
+            }
+            // a rejected name is still rejected first
+            QVERIFY_THROWS_EXCEPTION(std::invalid_argument, sink.exists(u".."_s));
+        }
     }
 
     // Added: the output folder and the target are longer than MAX_PATH (260 units), whatever the length of %TEMP%.

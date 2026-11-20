@@ -155,6 +155,8 @@ public:
     Readers(const Readers&) = delete;
     Readers& operator=(const Readers&) = delete;
     void start(HANDLE out, const LineHandler& onOut, HANDLE err, const LineHandler& onErr) {
+        m_outPipe = out;
+        m_errPipe = err;
         m_out = std::thread(&Readers::read, this, out, std::cref(onOut), std::ref(m_outError));
         m_err = std::thread(&Readers::read, this, err, std::cref(onErr), std::ref(m_errError));
     }
@@ -169,28 +171,35 @@ public:
     }
     // After the job was killed: the pipes break when every writer is gone, which is at once unless a process outside the job
     // holds a writing end (it could only have got one from code in this process that starts processes inheriting every
-    // inheritable handle). So that a stop always returns, a reader still blocked after 2 s has its ReadFile cancelled
-    // (CancelSynchronousIo, repeated until the thread is done, since a cancel finds nothing to cancel while a handler runs).
+    // inheritable handle, or by duplicating the child's handle). So that a stop always returns, a reader still blocked after
+    // 2 s has the reads on its pipe cancelled (CancelIoEx on that pipe handle only, so that I/O a handler does itself is never
+    // aborted; repeated until the thread is done, since a cancel finds nothing to cancel while a handler runs).
     void joinAfterKill() {
-        for (std::thread* reader : {&m_out, &m_err}) {
+        const std::pair<std::thread*, HANDLE> readers[] = {{&m_out, m_outPipe}, {&m_err, m_errPipe}};
+        for (const auto& [reader, pipe] : readers) {
             if (!reader->joinable()) continue;
             if (WaitForSingleObject(reader->native_handle(), 2000) == WAIT_TIMEOUT)
-                while (WaitForSingleObject(reader->native_handle(), 100) == WAIT_TIMEOUT) CancelSynchronousIo(reader->native_handle());
+                while (WaitForSingleObject(reader->native_handle(), 100) == WAIT_TIMEOUT) CancelIoEx(pipe, nullptr);
             reader->join();
         }
     }
-    // Waits until both threads have ended (true) or stop is signalled first (false).
-    bool waitUnlessStopped(HANDLE stop) {
+    enum class Wait { Done, Stopped, Failed };
+    // Waits until both threads have ended (Done) or stop is signalled first (Stopped). Failed (with GetLastError's code in
+    // error) when the wait itself fails.
+    Wait waitUnlessStopped(HANDLE stop, DWORD& error) {
         for (;;) {
             HANDLE waits[3];
             DWORD count = 0;
             if (m_out.joinable() && WaitForSingleObject(m_out.native_handle(), 0) == WAIT_TIMEOUT) waits[count++] = m_out.native_handle();
             if (m_err.joinable() && WaitForSingleObject(m_err.native_handle(), 0) == WAIT_TIMEOUT) waits[count++] = m_err.native_handle();
-            if (count == 0) return true;
+            if (count == 0) return Wait::Done;
             waits[count] = stop;
             const DWORD woke = WaitForMultipleObjects(count + 1, waits, FALSE, INFINITE);
-            if (woke == WAIT_OBJECT_0 + count) return false;
-            if (woke == WAIT_FAILED) return false;
+            if (woke == WAIT_OBJECT_0 + count) return Wait::Stopped;
+            if (woke >= WAIT_OBJECT_0 + count) {   // WAIT_FAILED (nothing else can come from these handles)
+                error = GetLastError();
+                return Wait::Failed;
+            }
         }
     }
 
@@ -209,6 +218,8 @@ private:
     HANDLE m_abort;
     std::exception_ptr m_outError;
     std::exception_ptr m_errError;
+    HANDLE m_outPipe = nullptr;
+    HANDLE m_errPipe = nullptr;
     std::thread m_out;
     std::thread m_err;
 };
@@ -220,6 +231,9 @@ RunResult SystemProcessRunner::run(const QStringList& command, const LineHandler
     if (stop.stop_requested()) return {RunStatus::Cancelled, -1, QString()};
     if (command.isEmpty() || command.first().isEmpty()) return startFailure(u"실행할 프로그램이 없습니다"_s);
     if (isBatchFile(command.first())) return startFailure(u"배치 파일(.cmd, .bat)은 실행하지 않습니다"_s);
+    // CreateProcessW takes NUL-terminated strings: a U+0000 would cut the program or the command line short.
+    if (std::any_of(command.begin(), command.end(), [](const QString& part) { return part.contains(QChar(u'\0')); }))
+        return startFailure(u"NUL 문자(U+0000)가 든 명령은 실행하지 않습니다"_s);
 
     // A stop request, or a reader whose handler threw, sets this event, so that one wait can watch the process (or the readers)
     // and both together. (The caller's stop_token is never touched.)
@@ -291,11 +305,21 @@ RunResult SystemProcessRunner::run(const QStringList& command, const LineHandler
 
     HANDLE waits[] = {process.get(), abortEvent.get()};
     const DWORD woke = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-    if (woke != WAIT_OBJECT_0 || !readers.waitUnlessStopped(abortEvent.get())) {
-        // Stopped, a handler threw (or the wait failed): the whole tree dies, so every pipe breaks and the readers end.
+    DWORD waitError = 0;
+    Readers::Wait wait = Readers::Wait::Stopped;
+    if (woke == WAIT_OBJECT_0) {
+        wait = readers.waitUnlessStopped(abortEvent.get(), waitError);
+    } else if (woke != WAIT_OBJECT_0 + 1) {   // WAIT_FAILED
+        waitError = GetLastError();
+        wait = Readers::Wait::Failed;
+    }
+    if (wait != Readers::Wait::Done) {
+        // Stopped, a handler threw, or a wait failed: the whole tree dies, so every pipe breaks and the readers end.
         TerminateJobObject(job.get(), 1);
         readers.joinAfterKill();
         readers.rethrowFailure();
+        // A failed wait is not the user's stop: it must not read as a cancel.
+        if (wait == Readers::Wait::Failed && !stop.stop_requested()) return {RunStatus::Failed, -1, errorText(waitError)};
         return {RunStatus::Cancelled, -1, QString()};
     }
     readers.join();

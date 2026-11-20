@@ -10,7 +10,8 @@ enum class PutStatus { Stored, AlreadyExists, Failed };
 
 struct PutResult {
     PutStatus status;
-    QString error;   // Failed only: the text of the failure (Windows' message)
+    QString error;      // Failed only: the text of the failure (Windows' message)
+    quint32 code = 0;   // Failed only: the Win32 error code when Windows gave one, else 0
 };
 
 class OutputSink {

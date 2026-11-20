@@ -115,7 +115,7 @@ Run runYtDlp(process::ProcessRunner& runner, const QStringList& command, std::st
         stop);
     if (result.status == process::RunStatus::Cancelled) {
         run.status = OutcomeStatus::Cancelled;
-    } else if (result.status == process::RunStatus::StartFailed) {
+    } else if (result.status == process::RunStatus::StartFailed || result.status == process::RunStatus::Failed) {
         run.error = u"yt-dlp를 실행할 수 없습니다: "_s + result.error;
     } else if (result.exitCode != 0) {
         const std::lock_guard lock(mutex);

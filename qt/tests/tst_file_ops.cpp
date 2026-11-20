@@ -3,6 +3,8 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <thread>
+
 #include <windows.h>
 
 #include "fs/file_ops.h"
@@ -72,10 +74,66 @@ private slots:
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString to = windowsPath(dir.filePath(u"to.m4a"_s));
+        QElapsedTimer timer;
+        timer.start();
         const xgs::fs::MoveResult result = xgs::fs::moveFile(windowsPath(dir.filePath(u"missing.m4a"_s)), to, true);
+        const qint64 elapsed = timer.elapsed();
         QCOMPARE(result.status, MoveStatus::Failed);
         QVERIFY(!result.error.isEmpty());
+        QCOMPARE(result.code, quint32(ERROR_FILE_NOT_FOUND));
         QVERIFY(!QFile::exists(to));
+        // a missing source is not retried: it fails at once, not after the retry budget (about 1.5 s)
+        QVERIFY2(elapsed < 1000, qPrintable(u"a missing source took %1 ms"_s.arg(elapsed)));
+    }
+
+    // A difference from Kotlin: a target that another program holds open for a moment (as a virus scanner may hold a file
+    // just written) is replaced once it lets go, within the retry budget.
+    void moveRetriesWhileTheTargetIsHeldForAMoment() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString from = windowsPath(dir.filePath(u"from.m4a"_s));
+        const QString to = windowsPath(dir.filePath(u"to.m4a"_s));
+        writeFile(from, "new");
+        writeFile(to, "old");
+        // opened without FILE_SHARE_DELETE: replacing the file fails while this handle is open
+        const HANDLE held = CreateFileW(reinterpret_cast<const wchar_t*>(to.utf16()), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        QVERIFY(held != INVALID_HANDLE_VALUE);
+        std::jthread release([held] {
+            Sleep(300);
+            CloseHandle(held);
+        });
+        const xgs::fs::MoveResult result = xgs::fs::moveFile(from, to, true);
+        release.join();
+        QVERIFY2(result.status == MoveStatus::Moved, qPrintable(u"code %1: %2"_s.arg(result.code).arg(result.error)));
+        QVERIFY(!QFile::exists(from));
+        QCOMPARE(readFile(to), QByteArray("new"));
+    }
+
+    // A target held for longer than the retry budget: Failed with Windows' text and code, and the source stays.
+    void moveFailsWithTheCodeWhenTheTargetStaysHeld() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString from = windowsPath(dir.filePath(u"from.m4a"_s));
+        const QString to = windowsPath(dir.filePath(u"to.m4a"_s));
+        writeFile(from, "new");
+        writeFile(to, "old");
+        const HANDLE held = CreateFileW(reinterpret_cast<const wchar_t*>(to.utf16()), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        QVERIFY(held != INVALID_HANDLE_VALUE);
+        QElapsedTimer timer;
+        timer.start();
+        const xgs::fs::MoveResult result = xgs::fs::moveFile(from, to, true);
+        const qint64 elapsed = timer.elapsed();
+        CloseHandle(held);
+        QCOMPARE(result.status, MoveStatus::Failed);
+        QVERIFY(!result.error.isEmpty());
+        QVERIFY2(result.code == ERROR_ACCESS_DENIED || result.code == ERROR_SHARING_VIOLATION,
+                 qPrintable(u"code %1: %2"_s.arg(result.code).arg(result.error)));
+        QCOMPARE(readFile(from), QByteArray("new"));
+        QCOMPARE(readFile(to), QByteArray("old"));
+        // it was retried for about the budget (1.52 s of pauses), not much longer
+        QVERIFY2(elapsed >= 1000 && elapsed < 10000, qPrintable(u"gave up after %1 ms"_s.arg(elapsed)));
     }
 
     void writeUtf8WritesNoByteOrderMark() {

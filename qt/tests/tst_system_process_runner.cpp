@@ -495,6 +495,111 @@ private slots:
         QCOMPARE(visibleWindowsOfThisTree(), before);
     }
 
+    // Author decision 5: what the child leaves running when it exits normally is killed too (Kotlin kills descendants only on
+    // cancellation). The grandchild holds none of the pipes, so run returns as soon as the child has exited.
+    void aGrandchildLeftRunningAfterANormalExitIsKilled() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString pidFile = windowsPath(dir.filePath(u"pid.txt"_s));
+        KilledAtExit grandchild;   // (kills it at the end of the test should the runner have left it alive)
+        std::atomic<bool> aliveWhileRunning{false};
+        Lines lines;
+        const LineHandler onOut = [&](const QString& line) {
+            lines.onOut()(line);
+            if (line != u"started") return;
+            // the child wrote the pid file before "started", and the job is still open while a handler runs
+            if (const DWORD pid = readPid(pidFile)) {
+                grandchild.reset(openForWaiting(pid));
+                aliveWhileRunning = grandchild.get() && WaitForSingleObject(grandchild.get(), 0) == WAIT_TIMEOUT;
+            }
+        };
+        std::optional<RunResult> result;
+        {
+            BackgroundRun run(runner, {child(), u"spawnexit"_s, pidFile, u"60000"_s}, onOut, lines.onErr());
+            result = run.waitFor(20s);
+        }
+        QVERIFY2(result.has_value(), "the run did not return within 20 s");
+        QCOMPARE(result->status, RunStatus::Exited);
+        QCOMPARE(result->exitCode, 0);
+        QCOMPARE(lines.out, QStringList({u"started"_s}));
+        QVERIFY(grandchild.get() != nullptr);
+        QVERIFY2(aliveWhileRunning.load(), "the grandchild was not running while the child's output was read");
+        QVERIFY2(WaitForSingleObject(grandchild.get(), 5000) == WAIT_OBJECT_0, "the grandchild still runs 5 s after run returned");
+    }
+
+    // A command element holding U+0000 would cut the command line short (the arguments after it would silently be lost), so
+    // nothing is started.
+    void aNulInTheCommandIsAStartFailure() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString pidFile = windowsPath(dir.filePath(u"pid.txt"_s));
+        const QString nul(QChar(u'\0'));
+        const QList<QStringList> commands = {
+            {child(), u"spawn"_s, pidFile, u"100"_s, u"a"_s + nul + u"b"_s},
+            {child(), u"spawn"_s, pidFile, u"100"_s + nul},
+            {child() + nul + u"x"_s, u"spawn"_s, pidFile, u"100"_s},
+        };
+        for (const QStringList& command : commands) {
+            std::atomic<int> calls{0};
+            const RunResult result = runner.run(command, [&](const QString&) { ++calls; }, [&](const QString&) { ++calls; },
+                                                std::stop_token());
+            QCOMPARE(result.status, RunStatus::StartFailed);
+            QCOMPARE(result.error, u"NUL 문자(U+0000)가 든 명령은 실행하지 않습니다"_s);
+            QCOMPARE(calls.load(), 0);
+        }
+        Sleep(300);
+        QVERIFY(!QFile::exists(pidFile));
+    }
+
+    // The 2 s device of a stop: a process outside the job (here this test process) holds a duplicate of the child's stdout
+    // writing end, so the pipe does not break when the job is killed; the blocked read is cancelled (CancelIoEx on the pipe)
+    // and run still returns Cancelled.
+    void aStopReturnsWhenAProcessOutsideTheJobHoldsThePipe() {
+        struct Duplicate {
+            HANDLE handle = nullptr;
+            void close() {
+                if (handle) CloseHandle(handle);
+                handle = nullptr;
+            }
+            ~Duplicate() { close(); }
+        };
+        Signal held;
+        std::optional<RunResult> result;
+        qint64 elapsed = -1;
+        bool duplicated = false;
+        {
+            Duplicate duplicate;   // closed below before the run is destroyed, so that a broken runner cannot hang the test
+            BackgroundRun run(runner, {child(), u"sleepshow"_s, u"60000"_s},
+                              [&](const QString& line) {
+                                  const QStringList parts = line.split(u' ');
+                                  if (parts.size() != 3 || parts.at(0) != u"started") return;
+                                  const HANDLE process = OpenProcess(PROCESS_DUP_HANDLE, FALSE, DWORD(parts.at(1).toULong()));
+                                  if (process) {
+                                      const auto value = reinterpret_cast<HANDLE>(quintptr(parts.at(2).toULongLong()));
+                                      DuplicateHandle(process, value, GetCurrentProcess(), &duplicate.handle, 0, FALSE,
+                                                      DUPLICATE_SAME_ACCESS);
+                                      CloseHandle(process);
+                                  }
+                                  held.set();
+                              },
+                              {});
+            if (held.waitFor(30s)) {
+                duplicated = duplicate.handle != nullptr;
+                QElapsedTimer timer;
+                timer.start();
+                run.stop();
+                result = run.waitFor(10s);
+                elapsed = timer.elapsed();
+            }
+            duplicate.close();
+        }
+        QVERIFY2(duplicated, "the test could not take the child's stdout handle");
+        QVERIFY2(result.has_value(), "the run did not return within 10 s of the stop");
+        QCOMPARE(result->status, RunStatus::Cancelled);
+        // it waited for the 2 s device (the pipe did not break on its own), and not much longer
+        QVERIFY2(elapsed >= 1500 && elapsed < 8000, qPrintable(u"the stop took %1 ms"_s.arg(elapsed)));
+    }
+
     void aThrowingHandlerKillsTheProcessAndRethrows() {
         // As Kotlin: an exception from a handler kills the process tree and comes out of run on the caller's thread. Once for
         // the stdout handler (sleep writes "started" on stdout), once for the stderr handler (sleeperr: on stderr).

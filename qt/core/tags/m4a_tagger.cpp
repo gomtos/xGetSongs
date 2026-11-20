@@ -83,7 +83,8 @@ TagResult M4aTagger::tag(const QString& file, const std::optional<QString>& cove
         },
         stop);
     if (run.status == process::RunStatus::Cancelled) return cancelled();
-    if (run.status == process::RunStatus::StartFailed) return failed(run.error);   // Kotlin: the IOException's message
+    // Kotlin: the IOException's message (Failed: started, then lost by the runner; the same kind of failure)
+    if (run.status == process::RunStatus::StartFailed || run.status == process::RunStatus::Failed) return failed(run.error);
     if (stop.stop_requested()) return cancelled();
 
     if (run.exitCode != 0 || !fs::isRegularFile(*output)) {

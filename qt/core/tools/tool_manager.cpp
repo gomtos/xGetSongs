@@ -1,7 +1,5 @@
 #include "tools/tool_manager.h"
 
-#include <QDir>
-#include <QFileInfo>
 #include <QStringList>
 
 #include <climits>
@@ -42,7 +40,9 @@ FirstLine firstLine(process::ProcessRunner& runner, const QString& path, const Q
         },
         [](const QString&) {}, stop);
     if (result.status == process::RunStatus::Cancelled) return {true, std::nullopt};
-    if (result.status == process::RunStatus::StartFailed || result.exitCode != 0) return {};
+    // (Failed: started but lost, like a start failure: Kotlin would have caught an IOException)
+    if (result.status == process::RunStatus::StartFailed || result.status == process::RunStatus::Failed || result.exitCode != 0)
+        return {};
     const std::lock_guard lock(mutex);
     for (const QString& line : lines)
         if (!kt::isBlank(line)) return {false, kt::trim(line)};
@@ -150,7 +150,7 @@ Outcome<QString> ToolManager::installYtDlp(std::stop_token stop) {
     if (!version.line) return Outcome<QString>::failed(u"내려받은 yt-dlp를 실행할 수 없습니다."_s);
     if (stop.stop_requested()) return Outcome<QString>::cancelled();
     // Files.move with REPLACE_EXISTING replaces an empty directory (its documentation), not one with something inside.
-    if (QFileInfo(target).isDir()) QDir().rmdir(target);
+    if (fs::isDirectory(target)) fs::removeEmptyDirectory(target);
     const fs::MoveResult moved = fs::moveFile(staged, target, true);
     if (moved.status != fs::MoveStatus::Moved) return installFailed(moved.error);
     return Outcome<QString>::ok(u"yt-dlp "_s + *version.line + u" 을(를) 설치했습니다."_s);
@@ -167,7 +167,7 @@ Outcome<QString> ToolManager::updateYtDlp(std::stop_token stop) {
     };
     const process::RunResult result = m_runner.run({*ytDlp, u"--ignore-config"_s, u"-U"_s}, collect, collect, stop);
     if (result.status == process::RunStatus::Cancelled) return Outcome<QString>::cancelled();
-    if (result.status == process::RunStatus::StartFailed)
+    if (result.status == process::RunStatus::StartFailed || result.status == process::RunStatus::Failed)
         return Outcome<QString>::failed(u"yt-dlp를 실행할 수 없습니다: "_s + result.error);
     std::optional<QString> last;
     {

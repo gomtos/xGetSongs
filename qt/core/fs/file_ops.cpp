@@ -40,18 +40,6 @@ QString win32Path(const QString& path) {
     return u"\\\\?\\"_s + full;
 }
 
-// Windows' message for an error code, without the line break at its end.
-QString errorText(DWORD code) {
-    wchar_t* buffer = nullptr;
-    const DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                        nullptr, code, 0, reinterpret_cast<wchar_t*>(&buffer), 0, nullptr);
-    QString text = length > 0 ? QString::fromWCharArray(buffer, qsizetype(length)) : QString();
-    if (buffer) LocalFree(buffer);
-    while (!text.isEmpty() && (text.back() == u'\r' || text.back() == u'\n' || text.back() == u' ')) text.chop(1);
-    if (text.isEmpty()) text = u"Windows error %1"_s.arg(code);
-    return text;
-}
-
 bool hasUnpairedSurrogate(const QString& text) {
     for (qsizetype i = 0; i < text.size(); ++i) {
         const QChar c = text.at(i);
@@ -68,19 +56,37 @@ DWORD attributesOf(const QString& path) {
     return GetFileAttributesW(wide(win32Path(path)));
 }
 
+}  // namespace
+
+QString errorText(quint32 code) {
+    wchar_t* buffer = nullptr;
+    const DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                        nullptr, code, 0, reinterpret_cast<wchar_t*>(&buffer), 0, nullptr);
+    QString text = length > 0 ? QString::fromWCharArray(buffer, qsizetype(length)) : QString();
+    if (buffer) LocalFree(buffer);
+    while (!text.isEmpty() && (text.back() == u'\r' || text.back() == u'\n' || text.back() == u' ')) text.chop(1);
+    if (text.isEmpty()) text = u"Windows error %1"_s.arg(code);
+    return text;
+}
+
 bool isDirectory(const QString& path) {
     const DWORD attributes = attributesOf(path);
     return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
-}  // namespace
-
 MoveResult moveFile(const QString& from, const QString& to, bool replace) {
+    // The pauses before each retry: 10 retries, 1.52 s in all (see the header).
+    static constexpr DWORD pauses[] = {20, 50, 100, 150, 200, 200, 200, 200, 200, 200};
     const DWORD flags = MOVEFILE_COPY_ALLOWED | (replace ? MOVEFILE_REPLACE_EXISTING : 0);
-    if (MoveFileExW(wide(win32Path(from)), wide(win32Path(to)), flags)) return {MoveStatus::Moved, QString()};
-    const DWORD code = GetLastError();
-    if (!replace && (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS)) return {MoveStatus::TargetExists, QString()};
-    return {MoveStatus::Failed, errorText(code)};
+    const QString source = win32Path(from), target = win32Path(to);
+    for (size_t attempt = 0;; ++attempt) {
+        if (MoveFileExW(wide(source), wide(target), flags)) return {MoveStatus::Moved, QString()};
+        const DWORD code = GetLastError();
+        if (!replace && (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS)) return {MoveStatus::TargetExists, QString()};
+        const bool held = code == ERROR_SHARING_VIOLATION || code == ERROR_ACCESS_DENIED || code == ERROR_LOCK_VIOLATION;
+        if (!held || attempt == std::size(pauses)) return {MoveStatus::Failed, errorText(code), quint32(code)};
+        Sleep(pauses[attempt]);
+    }
 }
 
 Outcome<std::monostate> writeBytes(const QString& path, const QByteArray& bytes) {
@@ -95,6 +101,10 @@ Outcome<std::monostate> writeBytes(const QString& path, const QByteArray& bytes)
             const DWORD code = GetLastError();
             CloseHandle(file);
             return Outcome<std::monostate>::failed(errorText(code));
+        }
+        if (done == 0) {   // success without progress: give up instead of trying forever
+            CloseHandle(file);
+            return Outcome<std::monostate>::failed(errorText(ERROR_WRITE_FAULT));
         }
         written += qsizetype(done);
     }
@@ -119,6 +129,10 @@ bool exists(const QString& path) {
 
 void removeQuietly(const QString& path) {
     DeleteFileW(wide(win32Path(path)));
+}
+
+bool removeEmptyDirectory(const QString& path) {
+    return RemoveDirectoryW(wide(win32Path(path))) != 0;
 }
 
 bool makeDirectories(const QString& path) {

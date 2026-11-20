@@ -10,6 +10,7 @@
 #include <optional>
 #include <stop_token>
 
+#include "fs/file_ops.h"
 #include "paths/paths.h"
 #include "support/fake_process_runner.h"
 #include "tools/tool_manager.h"
@@ -22,6 +23,7 @@ using xgs::ToolsStatus;
 using xgs::process::LineHandler;
 using xgs::testsupport::FakeProcessRunner;
 using xgs::testsupport::ProcessHandler;
+using xgs::testsupport::RunFailure;
 using xgs::testsupport::StartFailure;
 using xgs::tools::Fetch;
 using xgs::tools::ToolManager;
@@ -273,6 +275,44 @@ private slots:
         QVERIFY(QFileInfo(target).isDir());
         QCOMPARE(readText(at(target, u"inner.txt"_s)), QByteArray("keep"));
         QVERIFY(!QFileInfo::exists(at(m_binDir, u"yt-dlp.new.exe"_s)));
+    }
+
+    // Added: Files.move with REPLACE_EXISTING replaces an empty directory at the target (the installed file takes its place).
+    void installReplacesAnEmptyDirectoryAtTheTarget() {
+        const QString target = at(m_binDir, u"yt-dlp.exe"_s);
+        QVERIFY(QDir().mkpath(target));
+        FakeProcessRunner runner(outputsHandler({{u"yt-dlp"_s, u"2026.10.01"_s}}));
+        const FunctionTools tools = fixed(pathsOf());
+        ToolManager manager(tools, runner, m_binDir, bytesOf(2'000'000));
+
+        const Outcome<QString> result = manager.installYtDlp({});
+
+        QVERIFY2(result.isOk(), qPrintable(result.error));
+        QVERIFY(xgs::fs::isRegularFile(target));
+        QCOMPARE(QFileInfo(target).size(), qint64(2'000'000));
+        QVERIFY(!QFileInfo::exists(at(m_binDir, u"yt-dlp.new.exe"_s)));
+    }
+
+    // Added: a run that the runner lost after its start (RunStatus::Failed, no stop requested) counts as a tool that cannot
+    // be run, as a start failure does, never as a cancel.
+    void aRunThatFailsAfterItsStartIsNotACancel() {
+        FakeProcessRunner runner([](const QStringList&, const LineHandler& out, const LineHandler&) -> int {
+            out(u"2026.10.01"_s);
+            throw RunFailure{u"wait failed"_s};
+        });
+        const FunctionTools tools = fixed(pathsOf());
+        ToolManager manager(tools, runner, m_binDir, bytesOf(2'000'000));
+
+        const ToolsStatus status = manager.status({});
+        QVERIFY(!status.ytDlp.found);
+        QVERIFY(!status.ytDlp.version.has_value());
+        const Outcome<QString> update = manager.updateYtDlp({});
+        QCOMPARE(update.status, OutcomeStatus::Failed);
+        QCOMPARE(update.error, u"yt-dlp를 실행할 수 없습니다: wait failed"_s);
+        const Outcome<QString> install = manager.installYtDlp({});
+        QCOMPARE(install.status, OutcomeStatus::Failed);
+        QCOMPARE(install.error, u"내려받은 yt-dlp를 실행할 수 없습니다."_s);
+        QVERIFY(!QFileInfo::exists(at(m_binDir, u"yt-dlp.exe"_s)));
     }
 
     void updateRunsYtDlpSelfUpdate() {

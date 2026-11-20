@@ -46,6 +46,8 @@ process::RunResult FakeProcessRunner::run(const QStringList& command, const proc
         return {process::RunStatus::Exited, exitCode};
     } catch (const StartFailure& failure) {
         return {process::RunStatus::StartFailed, -1, failure.message};
+    } catch (const RunFailure& failure) {
+        return {process::RunStatus::Failed, -1, failure.message};
     }
 }
 

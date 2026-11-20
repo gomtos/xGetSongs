@@ -11,6 +11,8 @@ namespace xgs::output {
 
 using namespace Qt::StringLiterals;
 
+constexpr quint32 PathNotFound = 3;   // ERROR_PATH_NOT_FOUND
+
 bool isAcceptedFileName(const QString& fileName) {
     if (kt::isBlank(fileName) || fileName == u"." || fileName == u"..") return false;
     const std::optional<QString> path = paths::fromText(fileName);   // Path.of throws InvalidPathException: rejected
@@ -30,12 +32,15 @@ QString LocalFolderSink::directory() const {
 
 bool LocalFolderSink::exists(const QString& fileName) {
     const QString target = resolve(fileName);
-    return !target.isEmpty() && fs::exists(target);
+    return !target.isEmpty() && fs::isDirectory(m_directory) && fs::exists(target);
 }
 
 PutResult LocalFolderSink::put(const QString& fileName, const QString& source, bool overwrite) {
     const QString target = resolve(fileName);
     if (target.isEmpty()) return {PutStatus::Failed, u"the output folder is not a path: "_s + m_directory};
+    // The folder could not be created (see the constructor). Windows resolves a name of dots and spaces only to the folder
+    // itself, so without this check such a put could replace a regular file of the folder's name.
+    if (!fs::isDirectory(m_directory)) return {PutStatus::Failed, fs::errorText(PathNotFound), PathNotFound};
     const std::lock_guard lock(m_putLock);
     const fs::MoveResult moved = fs::moveFile(source, target, overwrite);
     switch (moved.status) {
@@ -43,7 +48,7 @@ PutResult LocalFolderSink::put(const QString& fileName, const QString& source, b
         case fs::MoveStatus::TargetExists: return {PutStatus::AlreadyExists, QString()};
         case fs::MoveStatus::Failed: break;
     }
-    return {PutStatus::Failed, moved.error};
+    return {PutStatus::Failed, moved.error, moved.code};
 }
 
 // The target path of an accepted name; empty when the directory is not a path (it must be a result of paths::fromText).

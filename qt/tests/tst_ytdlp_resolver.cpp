@@ -19,6 +19,7 @@ using xgs::ResolveResult;
 using xgs::ToolPaths;
 using xgs::process::LineHandler;
 using xgs::testsupport::FakeProcessRunner;
+using xgs::testsupport::RunFailure;
 using xgs::testsupport::StartFailure;
 using xgs::testsupport::testTools;
 using xgs::testsupport::toolsOf;
@@ -304,6 +305,23 @@ private slots:
         QCOMPARE(YtDlpResolver(fetchRunner, provider).fetch(u"dQw4w9WgXcQ"_s, second.get_token()), std::nullopt);
         QCOMPARE(runner.commands().size(), 1);
         QCOMPARE(fetchRunner.commands().size(), 1);
+    }
+
+    // Added: a run that the runner lost after its start (RunStatus::Failed, no stop requested) is a failure with the runner's
+    // text, as a start failure, never a cancel; fetch gives nothing.
+    void aRunThatFailsAfterItsStartIsAFailureNotACancel() {
+        FakeProcessRunner runner([](const QStringList&, const LineHandler& out, const LineHandler&) -> int {
+            out(u"{\"id\":\"dQw4w9WgXcQ\",\"title\":\"A - B\"}"_s);
+            throw RunFailure{u"wait failed"_s};
+        });
+        const auto provider = toolsOf();
+        YtDlpResolver resolver(runner, provider);
+
+        const Outcome<ResolveResult> outcome = resolver.resolve(playlistUrl, {});
+        QCOMPARE(outcome.status, OutcomeStatus::Failed);
+        QCOMPARE(outcome.error, u"yt-dlp를 실행할 수 없습니다: wait failed"_s);
+        QCOMPARE(resolver.fetch(u"dQw4w9WgXcQ"_s, {}), std::nullopt);
+        QCOMPARE(runner.commands().size(), 2);
     }
 
     // Added: exactly MAX_RANK entries are all listed and not truncated (Kotlin: `entries.size > MAX_RANK`).

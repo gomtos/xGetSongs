@@ -71,7 +71,8 @@
               "aMissingExecutableIsAStartFailure", "aBatchFileIsNotExecuted", "cancellingKillsGrandchildrenToo",
               "withoutAJobTheGrandchildSurvives", "parallelRunsDoNotHoldEachOthersPipes",
               "aStopRequestedBeforeTheStartRunsNothing", "opensNoConsoleWindow",
-              "aThrowingHandlerKillsTheProcessAndRethrows"]
+              "aThrowingHandlerKillsTheProcessAndRethrows", "aGrandchildLeftRunningAfterANormalExitIsKilled",
+              "aNulInTheCommandIsAStartFailure", "aStopReturnsWhenAProcessOutsideTheJobHoldsThePipe"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tools/ToolLocatorTest.kt",
@@ -82,13 +83,14 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tools/DefaultToolManagerTest.kt",
     "exe": "tst_tool_manager",
     "added": ["installIsCancelledWhenTheFetchIsCancelled", "cancelledInstallLeavesNoTemporaryFile",
-              "updateIsCancelledWhenTheRunIsCancelled"]
+              "updateIsCancelledWhenTheRunIsCancelled", "installReplacesAnEmptyDirectoryAtTheTarget",
+              "aRunThatFailsAfterItsStartIsNotACancel"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/YtDlpResolverTest.kt",
     "exe": "tst_ytdlp_resolver",
     "added": ["aCancelledRunIsCancelledAndFetchesNothing", "aPlaylistOfExactly999IsNotTruncated",
-              "resolvesAFiveThousandEntryPlaylistQuickly"]
+              "resolvesAFiveThousandEntryPlaylistQuickly", "aRunThatFailsAfterItsStartIsAFailureNotACancel"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/testutil/FfmetadataReaderTest.kt",
@@ -98,12 +100,13 @@
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tags/M4aTaggerTest.kt",
     "exe": "tst_m4a_tagger",
-    "added": ["aStartFailureOfFfmpegIsAFailureAndKeepsTheOriginal"]
+    "added": ["aStartFailureOfFfmpegIsAFailureAndKeepsTheOriginal",
+              "aRunOfFfmpegThatFailsAfterItsStartIsAFailureAndKeepsTheOriginal"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/output/LocalFolderSinkTest.kt",
     "exe": "tst_local_folder_sink",
-    "added": ["putWorksWhenTheTargetPathIsLongerThan260"]
+    "added": ["putWorksWhenTheTargetPathIsLongerThan260", "putFailsWhenTheFolderIsNotADirectory"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealFfmpegTaggingIntegrationTest.kt",

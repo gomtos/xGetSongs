@@ -3068,19 +3068,19 @@ QString numberText(Rng& rng, qint64 n) {
     return out;
 }
 
-// A version near minimum (+-1 in one place, or exactly it), anywhere, or with a huge part; now and then with too few or too
-// many parts, another separator, a part that is not only digits, or something that is no version at all.
+// A version near minimum (+-1 in one place, or now and then exactly it), anywhere, or with a huge part; now and then with too
+// few or too many parts, another separator, a part that is not only digits, or something that is no version at all.
 QString versionText(Rng& rng, const int (&minimum)[3]) {
     qint64 parts[3] = {minimum[0], minimum[1], minimum[2]};
     const double roll = rng.next();
-    if (roll < 0.5) {
+    if (roll < 0.6) {
         const int place = rng.between(0, 2);
-        parts[place] += rng.between(-1, 1);
+        parts[place] += rng.chance(0.2) ? 0 : rng.chance(0.5) ? -1 : 1;
         if (rng.chance(0.4))
             for (int k = place + 1; k < 3; ++k) parts[k] = rng.between(0, 12);
-    } else if (roll < 0.8) {
+    } else if (roll < 0.82) {
         for (qint64& p : parts) p = rng.between(0, 30);
-    } else if (roll < 0.9) {
+    } else if (roll < 0.91) {
         static constexpr qint64 huge[] = {2147483647LL, 2147483648LL, 4294967296LL, 99999999999LL, 9223372036854775807LL,
                                           21474836470LL};
         parts[rng.between(0, 2)] = pick(rng, huge);

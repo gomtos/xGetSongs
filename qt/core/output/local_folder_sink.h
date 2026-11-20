@@ -18,8 +18,9 @@ bool isAcceptedFileName(const QString& fileName);
 class LocalFolderSink final : public OutputSink {
 public:
     /// directory is a result of paths::fromText (an absolute path). Creates the directory and the missing ones above it.
-    /// Unlike Kotlin's constructor this one does not throw when that fails: a later put is then Failed (with Windows' text)
-    /// and exists answers false.
+    /// Unlike Kotlin's constructor this one does not throw when that fails: while directory is not an existing directory, put
+    /// is Failed (Windows' text for ERROR_PATH_NOT_FOUND, nothing moved) and exists answers false. (Windows resolves a name of
+    /// dots and spaces only to the folder itself, so a put must not reach a regular file that has the folder's name.)
     explicit LocalFolderSink(QString directory);
 
     QString directory() const;

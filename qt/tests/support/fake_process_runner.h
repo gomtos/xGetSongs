@@ -24,6 +24,11 @@ struct StartFailure {
     QString message;
 };
 
+/// Thrown by a handler to make run return Failed (started, then lost by the runner) with this message.
+struct RunFailure {
+    QString message;
+};
+
 /// A ProcessRunner whose behaviour is a function; records every command and the peak concurrency. Safe to call from several
 /// threads at once. The handler runs on the caller's thread, so it may call the line handlers directly.
 class FakeProcessRunner final : public process::ProcessRunner {
@@ -31,7 +36,7 @@ public:
     explicit FakeProcessRunner(ProcessHandler handler);
 
     /// A stop requested before the call runs nothing (nothing is recorded) and is Cancelled. Otherwise the command is
-    /// recorded and the handler runs: a StartFailure it throws is StartFailed, any other exception propagates, a stop
+    /// recorded and the handler runs: a StartFailure it throws is StartFailed, a RunFailure Failed, any other exception propagates, a stop
     /// requested by the time it returns is Cancelled, else Exited with its return value.
     process::RunResult run(const QStringList& command, const process::LineHandler& onStdout,
                            const process::LineHandler& onStderr, std::stop_token stop) override;

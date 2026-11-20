@@ -10,6 +10,11 @@
 //   xgs-test-child spawn <pid file> <ms>   starts itself as "sleep <ms>" (inheriting no handle, no console window), writes
 //                                          that child's process id into <pid file> (decimal, written whole: through a
 //                                          temporary file that is renamed), writes "started", then sleeps <ms>
+//   xgs-test-child spawnexit <pid file> <ms>
+//                                          the same as spawn, but exits at once (code 0) after writing "started": the
+//                                          grandchild, which holds none of the pipes, sleeps on alone
+//   xgs-test-child sleepshow <ms>          writes "started <process id> <its standard output handle's value>" (decimal),
+//                                          then sleeps
 //   xgs-test-child env <name>              the environment variable's value as UTF-8, "(unset)" when there is none
 //   xgs-test-child stdin                   reads standard input to its end and writes the number of bytes read
 //   xgs-test-child console                 "none" when the process has no console window, else "hidden" or "visible"
@@ -72,7 +77,7 @@ DWORD milliseconds(const wchar_t* text) {
     return text ? DWORD(std::wcstoul(text, nullptr, 10)) : 0;
 }
 
-int spawn(const wchar_t* pidFile, const wchar_t* ms) {
+int spawn(const wchar_t* pidFile, const wchar_t* ms, bool exitAtOnce) {
     wchar_t self[32768];
     const DWORD length = GetModuleFileNameW(nullptr, self, DWORD(std::size(self)));
     if (length == 0 || length >= std::size(self)) return 10;
@@ -91,7 +96,7 @@ int spawn(const wchar_t* pidFile, const wchar_t* ms) {
     CloseHandle(file);
     if (!MoveFileExW(temporary.c_str(), pidFile, MOVEFILE_REPLACE_EXISTING)) return 13;
     line("started");
-    Sleep(milliseconds(ms));
+    if (!exitAtOnce) Sleep(milliseconds(ms));
     return 0;
 }
 
@@ -115,9 +120,15 @@ int wmain(int argc, wchar_t** argv) {
         Sleep(milliseconds(argc > 2 ? argv[2] : nullptr));
         return 0;
     }
-    if (mode == L"spawn") {
+    if (mode == L"spawn" || mode == L"spawnexit") {
         if (argc < 4) return 2;
-        return spawn(argv[2], argv[3]);
+        return spawn(argv[2], argv[3], mode == L"spawnexit");
+    }
+    if (mode == L"sleepshow") {
+        const auto handle = reinterpret_cast<unsigned long long>(GetStdHandle(STD_OUTPUT_HANDLE));
+        line("started " + std::to_string(GetCurrentProcessId()) + " " + std::to_string(handle));
+        Sleep(milliseconds(argc > 2 ? argv[2] : nullptr));
+        return 0;
     }
     if (mode == L"env") {
         if (argc < 3) return 2;

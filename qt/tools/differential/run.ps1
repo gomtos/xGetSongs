@@ -362,12 +362,12 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'ln: input ending without a line ending' $bare $n 0.30
         Test-Share 'W' 'ln: a chunk boundary inside a multi-byte sequence or between \r and \n' $split $n 0.10
     }
-    # st yt-dlp ffmpeg js: per tool, found and not found 20% each (Kotlin's answer); a js runtime whose version is at the
-    # minimum of its runtime or just above/below it (the first part that differs from the minimum differs by one) 10%; a start
-    # failure among the tools 2%
+    # st yt-dlp ffmpeg js: per tool, found and not found 20% each (Kotlin's answer); a js runtime whose version is just
+    # above/below the minimum of its runtime (the first part that differs from the minimum differs by one) 10%, exactly at the
+    # minimum shown apart; a start failure among the tools 2%
     st = {
         param($cases, $answers, $indexes)
-        $found = @(0, 0, 0); $missing = @(0, 0, 0); $near = 0; $starts = 0
+        $found = @(0, 0, 0); $missing = @(0, 0, 0); $near = 0; $atMinimum = 0; $starts = 0
         foreach ($i in $indexes) {
             $tokens = $answers[$i] -split ' '
             for ($t = 0; $t -lt 3; $t++) { if ($tokens[3 * $t] -ceq '1') { $found[$t]++ } else { $missing[$t]++ } }
@@ -386,12 +386,15 @@ $WOpChecks = [ordered]@{
                     }
                     $value
                 })
-                $isNear = $true
+                # just above/below: the first part that differs from the minimum differs by one; exactly at the minimum
+                # (no part differs) is counted apart
+                $isAt = $true; $isNear = $false
                 for ($k = 0; $k -lt 3; $k++) {
                     $actual = if ($k -lt $parts.Count) { $parts[$k] } else { 0 }
-                    if ($actual -ne $minimum[$k]) { $isNear = [Math]::Abs($actual - $minimum[$k]) -eq 1; break }
+                    if ($actual -ne $minimum[$k]) { $isAt = $false; $isNear = [Math]::Abs($actual - $minimum[$k]) -eq 1; break }
                 }
                 if ($isNear) { $near++ }
+                if ($isAt) { $atMinimum++ }
             }
         }
         $n = $indexes.Count
@@ -400,7 +403,8 @@ $WOpChecks = [ordered]@{
             Test-Share 'W' "st: $($names[$t]) found" $found[$t] $n 0.20
             Test-Share 'W' "st: $($names[$t]) not found" $missing[$t] $n 0.20
         }
-        Test-Share 'W' 'st: js runtime version at or just above/below the minimum' $near $n 0.10
+        Test-Share 'W' 'st: js runtime version just above/below the minimum' $near $n 0.10
+        Test-Share 'W' 'st: js runtime version exactly at the minimum (shown only)' $atMinimum $n 0
         Test-Share 'W' 'st: a tool that does not start' $starts $n 0.02
     }
     # up yt-dlp: OK 30%, ERR 30% (Kotlin's answer); a start failure 2%
@@ -436,7 +440,10 @@ Add-Type -TypeDefinition @'
 public static class PWrongType {
     static readonly string[] EntryKeys = { "id", "title", "channel", "uploader", "availability", "artist", "track" };
     enum Role { Other, Root, Entries, Entry }
-    public static bool Find(string t, bool playlist) {
+    public static bool Find(string t, bool playlist) { return Scan(t, playlist, false); }
+    // Whether the entries array of a playlist's root object holds a literal null item.
+    public static bool NullEntry(string t) { return Scan(t, true, true); }
+    static bool Scan(string t, bool playlist, bool nullEntry) {
         var roles = new System.Collections.Generic.List<Role>();
         var arrays = new System.Collections.Generic.List<bool>();
         string key = null; bool expectKey = false, expectValue = false;
@@ -449,11 +456,15 @@ public static class PWrongType {
             if (expectValue || (inArray && expectKey)) {
                 // the first unit of a value: of a key of an object, or of an item of an array
                 bool isNull = string.CompareOrdinal(t, i, "null", 0, 4) == 0 && (i + 4 >= t.Length || ",:[]{}\" \t\r\n".IndexOf(t[i + 4]) >= 0);
-                if (!inArray && (role == Role.Entry || (role == Role.Root && !playlist)) && System.Array.IndexOf(EntryKeys, key) >= 0
-                    && c != '"' && !isNull) return true;
-                if (!inArray && role == Role.Root && playlist && key == "title" && c != '"' && !isNull) return true;
-                if (!inArray && role == Role.Root && playlist && key == "entries" && c != '[') return true;
-                if (inArray && role == Role.Entries && c != '{' && !isNull) return true;
+                if (nullEntry) {
+                    if (inArray && role == Role.Entries && isNull) return true;
+                } else {
+                    if (!inArray && (role == Role.Entry || (role == Role.Root && !playlist)) && System.Array.IndexOf(EntryKeys, key) >= 0
+                        && c != '"' && !isNull) return true;
+                    if (!inArray && role == Role.Root && playlist && key == "title" && c != '"' && !isNull) return true;
+                    if (!inArray && role == Role.Root && playlist && key == "entries" && c != '[') return true;
+                    if (inArray && role == Role.Entries && c != '{' && !isNull) return true;
+                }
             }
             bool valueStart = expectValue || (inArray && expectKey);
             expectValue = false;
@@ -493,13 +504,14 @@ function Get-PItems([string]$answer) {
 }
 $POpChecks = [ordered]@{
     # rs input run stdout stderr...: OK 40%, ERR 20% (Kotlin's answer); a playlist run (--flat-playlist among Kotlin's commands)
-    # 30%, a video run (--no-playlist) 20%; an unavailable item in Kotlin's answer 10%; a null entry (an item Kotlin reports as an
-    # unknown item without id and title) 5%; a property of the wrong type in the stdout 10%; stdout that is not standard JSON
+    # 30%, a video run (--no-playlist) 20%; an unavailable item in Kotlin's answer 10%; among the cases whose stdout was decoded
+    # (yt-dlp ran and exited with 0): a playlist stdout with a literal null item in entries that Kotlin accepted 5%, a stdout
+    # with a property of the wrong type that Kotlin refused (the scan's finds minus those Kotlin accepted) 10%; stdout that is not standard JSON
     # (System.Text.Json refuses it, or it is not UTF-8) 5%; an answer truncated at MAX_RANK 1%
     rs = {
         param($cases, $answers, $indexes)
         $ok = 0; $err = 0; $playlists = 0; $videos = 0; $unavailable = 0; $nullEntry = 0; $wrong = 0; $odd = 0; $truncated = 0
-        $starts = 0; $noTool = 0; $oddAccepted = 0; $wrongAccepted = 0
+        $starts = 0; $noTool = 0; $oddAccepted = 0; $wrongAccepted = 0; $decodedRuns = 0
         $strict = [System.Text.UTF8Encoding]::new($false, $true)
         foreach ($i in $indexes) {
             $answer = $answers[$i]
@@ -514,15 +526,21 @@ $POpChecks = [ordered]@{
                 if (($answer -split ' ')[4] -ceq '1') { $truncated++ }
                 $items = Get-PItems $answer
                 if (@($items | Where-Object { $_[7] -ceq '0' }).Count -gt 0) { $unavailable++ }
-                if (@($items | Where-Object { $_[1] -ceq '.' -and $_[2] -ceq '.' -and $_[8] -ceq $PUnknownItem }).Count -gt 0) { $nullEntry++ }
             }
             $hex = $cases[$i][3]
             $bytes = [byte[]]::new(0)
             if ($hex -cne '.') { $bytes = [Convert]::FromHexString($hex) }
             $text = [System.Text.Encoding]::UTF8.GetString($bytes)
-            if ([PWrongType]::Find($text, $commands -and $commands.Contains($PFlatPlaylist))) {
-                $wrong++
-                if ($answer.StartsWith('OK ')) { $wrongAccepted++ }
+            # decoded: yt-dlp was run (a command is recorded) and exited with 0, so the resolver read its stdout
+            $playlistRun = $commands -and $commands.Contains($PFlatPlaylist)
+            $decoded = $cases[$i][2] -ceq '0' -and $commands -and $commands.Trim().Length -gt 0
+            if ($decoded) {
+                $decodedRuns++
+                if ($playlistRun -and $answer.StartsWith('OK ') -and [PWrongType]::NullEntry($text)) { $nullEntry++ }
+                if ([PWrongType]::Find($text, $playlistRun)) {
+                    $wrong++
+                    if ($answer.StartsWith('OK ')) { $wrongAccepted++ }
+                }
             }
             $standard = $true
             try {
@@ -538,9 +556,10 @@ $POpChecks = [ordered]@{
         Test-Share 'P' 'rs: a playlist run' $playlists $n 0.30
         Test-Share 'P' 'rs: a video run' $videos $n 0.20
         Test-Share 'P' 'rs: an unavailable item in the answer' $unavailable $n 0.10
-        Test-Share 'P' 'rs: a null entry (an unknown item without id and title)' $nullEntry $n 0.05
-        Test-Share 'P' 'rs: stdout with a property of the wrong type' $wrong $n 0.10
-        Test-Share 'P' 'rs: ... of which Kotlin accepted (the scan was wrong; shown only)' $wrongAccepted $n 0
+        Test-Share 'P' 'rs: a decoded stdout (yt-dlp ran and exited with 0; shown only)' $decodedRuns $n 0
+        Test-Share 'P' 'rs: a literal null item in entries of a decoded playlist stdout that Kotlin accepted' $nullEntry $n 0.05
+        Test-Share 'P' 'rs: a decoded stdout with a property of the wrong type that Kotlin refused' ($wrong - $wrongAccepted) $n 0.10
+        Test-Share 'P' 'rs: ... the scan found a wrong type but Kotlin accepted (the scan was wrong; shown only)' $wrongAccepted $n 0
         Test-Share 'P' 'rs: stdout that is not standard JSON' $odd $n 0.05
         Test-Share 'P' 'rs: answer truncated at MAX_RANK' $truncated $n 0.01
         Test-Share 'P' 'rs: stdout that is not standard JSON and Kotlin accepted (shown only)' $oddAccepted $n 0
