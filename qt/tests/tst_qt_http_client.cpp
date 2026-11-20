@@ -1042,6 +1042,12 @@ private slots:
     // HttpClient hands HTTP statuses back as responses (the app sets no Authenticator), so it presumably returns the 407; that
     // side was not observed. Seen with Qt 6.11.3, with and without Proxy-Authenticate; pinned so that a change in Qt shows.
     void a407IsAFailureWithQtsTextNotAResponse() {
+#ifndef QT_NO_DEBUG
+        // Qt's own debug build stops the process on this answer: an assertion in its authentication manager expects a
+        // 407 only through a proxy (qnetworkaccessauthenticationmanager.cpp, "p.type() != QNetworkProxy::NoProxy", seen
+        // with Qt 6.11.3). The release build, which the app ships, answers as pinned below.
+        QSKIP("Qt's debug build asserts on a 407 from a server reached without a proxy; the release build is tested");
+#endif
         FakeHttpServer server;
         server.route("/plain", [](FakeHttpServer::Exchange& exchange) {
             exchange.write("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
