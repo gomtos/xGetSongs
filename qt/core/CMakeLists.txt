@@ -28,7 +28,8 @@ add_library(xgscore STATIC
     tags/m4a_tagger.h tags/m4a_tagger.cpp
     output/output_sink.h output/local_folder_sink.h output/local_folder_sink.cpp
     job/download_concurrency.h job/download_concurrency.cpp
-    net/http_client.h net/qt_http_client.h net/qt_http_client.cpp)
+    net/http_client.h net/qt_http_client.h net/qt_http_client.cpp
+    net/http_fetch.h net/http_fetch.cpp)
 target_include_directories(xgscore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(xgscore PUBLIC Qt6::Core Qt6::Network)
 xgs_target_defaults(xgscore)

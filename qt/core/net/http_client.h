@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QList>
 #include <QString>
+#include <QStringView>
 
 #include <chrono>
 #include <stop_token>
@@ -11,6 +12,9 @@
 // A blocking HTTP GET for the engine (the LRCLIB lyrics provider, the yt-dlp download). The production implementation is
 // QtHttpClient (qt_http_client.h); tests give the engine a fake.
 namespace xgs::net {
+
+// The User-Agent every request of the app sends (the same text as the Kotlin engine's LRCLIB default).
+inline constexpr QStringView AppUserAgent = u"xGetSongs/1.0 (https://github.com/gomtos/xGetSongs)";
 
 struct HttpRequest {
     // Sent as written, except that Qt's QUrl decodes percent-encoded unreserved characters (A-Z a-z 0-9 - . _ ~, which
