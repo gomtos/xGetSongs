@@ -428,8 +428,9 @@ $WOpChecks = [ordered]@{
     # lf artist title album duration maxRequests timeout step... (Kotlin's answer: OK hex | NULL, N count, C count, U urls):
     # lyrics found 15%, not found 30%; a request to /search 40%; the cool-down started 10%; the cap cut the lookup short 5%;
     # a query with a character outside ASCII 20%, with one of `& = # + %` or a space 10%, with an unpaired surrogate 2%; a
-    # requested answer with a record that has a field of the wrong type 10%, with a body that is not JSON 5%; a requested
-    # /search answer with two or more records 15%.
+    # requested answer with a record that has a field of the wrong type 10%, with a record whose instrumental flag is in an
+    # odd case 10% (counted apart: kotlinx reads it as a boolean, so it is not a wrong type), with a body that is
+    # not JSON 5%; a requested /search answer with two or more records 15%.
     # The cool-down started exactly when a request of the first call ended in Stop (the provider's only way to start it): the
     # last request it made was answered 429, 502, 503 or 504 (with any body) or failed to connect, timed out or found no host
     # (C, T, U), or the request timeout is not positive (0 or N), maxRequests is at least 1 and the artist and the title are
@@ -442,7 +443,7 @@ $WOpChecks = [ordered]@{
     lf = {
         param($cases, $answers, $indexes)
         $found = 0; $none = 0; $search = 0; $coolDown = 0; $cap = 0; $nonAscii = 0; $special = 0; $lone = 0; $wrong = 0; $notJson = 0
-        $several = 0; $coolDownButAsked = 0
+        $several = 0; $coolDownButAsked = 0; $oddCase = 0
         foreach ($i in $indexes) {
             $case = $cases[$i]
             $tokens = $answers[$i] -split ' '
@@ -469,7 +470,7 @@ $WOpChecks = [ordered]@{
             if (@($fields | Where-Object { $LfSpecialHex.IsMatch($_) }).Count -gt 0) { $special++ }
             if (@($fields | Where-Object { $LoneHexPattern.IsMatch($_) }).Count -gt 0) { $lone++ }
             # the steps of the first call's requests (step k answers request k)
-            $hasWrong = $false; $hasNotJson = $false; $hasSeveral = $false
+            $hasWrong = $false; $hasNotJson = $false; $hasSeveral = $false; $hasOddCase = $false
             for ($k = 0; $k -lt $urls.Count -and 7 + $k -lt $case.Count; $k++) {
                 $step = $case[7 + $k]
                 if (-not $step.StartsWith('200:') -or $step -ceq '200:L') { continue }
@@ -478,6 +479,7 @@ $WOpChecks = [ordered]@{
                 if ($hex -cne '.') { $bytes = [Convert]::FromHexString($hex) }
                 $text = [System.Text.Encoding]::UTF8.GetString($bytes)
                 if ($LfWrongType.IsMatch($text)) { $hasWrong = $true }
+                if ($LfOddCaseFlag.IsMatch($text)) { $hasOddCase = $true }
                 $root = $null
                 $strictText = $null
                 try { $strictText = $LfStrictUtf8.GetString($bytes) } catch { }
@@ -492,6 +494,7 @@ $WOpChecks = [ordered]@{
             if ($hasWrong) { $wrong++ }
             if ($hasNotJson) { $notJson++ }
             if ($hasSeveral) { $several++ }
+            if ($hasOddCase) { $oddCase++ }
         }
         $n = $indexes.Count
         Test-Share 'W' 'lf: lyrics found' $found $n 0.15
@@ -505,15 +508,17 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'lf: a query with one of & = # + % or a space' $special $n 0.10
         Test-Share 'W' 'lf: a query with an unpaired surrogate' $lone $n 0.02
         Test-Share 'W' 'lf: a requested answer with a record that has a field of the wrong type' $wrong $n 0.10
+        Test-Share 'W' 'lf: a requested answer with a record whose instrumental flag is in an odd case' $oddCase $n 0.10
         Test-Share 'W' 'lf: a requested answer whose body is not JSON' $notJson $n 0.05
         Test-Share 'W' 'lf: a requested /search answer with two or more records' $several $n 0.15
     }
 }
 # Helpers of the W lf statistics (for counting only; the answers are compared exactly). The URL of a /search request as hex;
 # on a field's hex, a unit outside ASCII and one of `& = # + %` or a space; on a decoded body, a record field of the wrong
-# type (a duration that is not a plain number or null, an instrumental that is not true, false or null, a string field
-# that is not a string or null); the unquoted odd literals that kotlinx reads and System.Text.Json does not (replaced by 0
-# before the strict parse that decides "not JSON"; the replaced run never holds `"` or `\`, so a valid string stays valid);
+# type (a duration that is not a plain number or null, an instrumental that is not true, false or null in any case, a string
+# field that is not a string or null) and, apart from it, an instrumental flag spelled in an odd case (true or false as
+# kotlinx reads them, String.equals(ignoreCase = true), where U+017F counts as s: `TRUE`, `fAlSe`, `fal` U+017F `e`...);
+# the unquoted odd literals that kotlinx reads and System.Text.Json does not (replaced by 0 before the strict parse that decides "not JSON"; the replaced run never holds `"` or `\`, so a valid string stays valid);
 # a step that makes the provider stop and start its cool-down. Test-KotlinBlank: Kotlin's isBlank of a field's hex.
 $LfStopStep = [regex]::new('^(?:(?:429|502|503|504):.*|C|T|U)$', 'Compiled')
 function Test-KotlinBlank([string]$field) {
@@ -529,7 +534,8 @@ function Test-KotlinBlank([string]$field) {
 $LfSearchHex = -join ('http://h/api/search?'.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ })
 $LfNonAsciiHex = [regex]::new('^(?:[0-9a-f]{4})*?(?!00[0-7][0-9a-f])[0-9a-f]{4}', 'Compiled')
 $LfSpecialHex = [regex]::new('^(?:[0-9a-f]{4})*?00(?:26|3d|23|2b|25|20)', 'Compiled')
-$LfWrongType = [regex]::new('"duration":\s*(?!(?:-?[0-9]+(?:\.[0-9]+)?|null)[,}\s])|"instrumental":\s*(?!(?:true|false|null)[,}\s])|"(?:trackName|artistName|albumName|plainLyrics)":\s*(?!"|null[,}\s])', 'Compiled')
+$LfWrongType = [regex]::new('"duration":\s*(?!(?:-?[0-9]+(?:\.[0-9]+)?|null)[,}\s])|"instrumental":\s*(?!(?:null|[tT][rR][uU][eE]|[fF][aA][lL][sS\u017F][eE])[,}\s])|"(?:trackName|artistName|albumName|plainLyrics)":\s*(?!"|null[,}\s])', 'Compiled')
+$LfOddCaseFlag = [regex]::new('"instrumental":\s*(?!(?:true|false)[,}\s])(?:[tT][rR][uU][eE]|[fF][aA][lL][sS\u017F][eE])[,}\s]', 'Compiled')
 $LfOddLiteral = [regex]::new(':(?!(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)[,}\]\s"])[^"\\\[{\s,}\]][^"\\,}\]\s]*', 'Compiled')
 $LfStrictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
 # The number of objects directly inside a body whose root is an array (a tolerant scan for the statistics only: it follows

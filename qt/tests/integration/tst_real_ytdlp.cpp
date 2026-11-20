@@ -326,13 +326,13 @@ private slots:
     }
 
     // The Kotlin test runs the whole download service (DefaultDownloadService, ItemDownloader, LrclibLyricsProvider) on a
-    // 19-second video. Those are ported in later stages (Q2c: the lyrics HTTP lookup; Q2d: the download job), so the body cannot
-    // be ported yet and the test skips with that reason after Kotlin's own ffprobe assumption.
+    // 19-second video. The lyrics lookup is ported (Q2c); the download job that joins the download, the lyrics and the tagging
+    // comes in Q2d, so the body cannot be ported yet and the test skips with that reason after Kotlin's own ffprobe assumption.
     void downloadsAShortVideoAsM4aWithoutReencoding() {
         const std::optional<QString> ffprobePath = Ffprobe::besides(m_locator->current().ffmpeg);
         if (!ffprobePath) QSKIP("ffprobe must be installed next to ffmpeg");
-        QSKIP("needs the download job (DefaultDownloadService, ItemDownloader: Q2d) and the LRCLIB lookup (Q2c), "
-              "which are not ported yet");
+        QSKIP("needs the download job that joins the download, the lyrics and the tagging (DefaultDownloadService, "
+              "ItemDownloader: Q2d), which is not ported yet");
     }
 
     // Not in Kotlin. The info-only command (--skip-download) into a folder whose name has spaces, Korean and `&`: the files

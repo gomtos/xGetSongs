@@ -1,12 +1,14 @@
 #include <QtTest>
 
-#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stop_token>
@@ -34,34 +36,53 @@ using Clock = std::chrono::steady_clock;
 namespace {
 
 // Stands in for a server that sleeps (see tst_qt_http_client.cpp): declared after the server, it is opened first on teardown.
+// A handler captures a Waiter by value, which shares the gate's state, so a handler that has not reached wait() yet when the
+// Gate is destroyed never touches a dead object.
 class Gate {
+    struct State {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool open = false;
+    };
+
 public:
-    ~Gate() {
-        open();
-        std::unique_lock lock(m_mutex);
-        m_changed.wait(lock, [this] { return m_waiting == 0; });
-    }
+    class Waiter {
+    public:
+        explicit Waiter(std::shared_ptr<State> state) : m_state(std::move(state)) {}
+        void wait(std::chrono::milliseconds limit) const {
+            std::unique_lock lock(m_state->mutex);
+            m_state->changed.wait_for(lock, limit, [this] { return m_state->open; });
+        }
+
+    private:
+        std::shared_ptr<State> m_state;
+    };
+
+    Gate() = default;
+    Gate(const Gate&) = delete;
+    Gate& operator=(const Gate&) = delete;
+    ~Gate() { open(); }
     void open() {
         {
-            std::lock_guard lock(m_mutex);
-            m_open = true;
+            std::lock_guard lock(m_state->mutex);
+            m_state->open = true;
         }
-        m_changed.notify_all();
+        m_state->changed.notify_all();
     }
-    void wait(std::chrono::milliseconds limit) {
-        std::unique_lock lock(m_mutex);
-        ++m_waiting;
-        m_changed.wait_for(lock, limit, [this] { return m_open; });
-        --m_waiting;
-        m_changed.notify_all();
-    }
+    Waiter waiter() const { return Waiter(m_state); }
 
 private:
-    std::mutex m_mutex;
-    std::condition_variable m_changed;
-    bool m_open = false;
-    int m_waiting = 0;
+    std::shared_ptr<State> m_state = std::make_shared<State>();
 };
+
+// For a failing comparison of two large byte arrays: their sizes and the first index where they differ.
+QByteArray differenceOf(const QByteArray& actual, const QByteArray& expected) {
+    qsizetype at = 0;
+    const qsizetype common = std::min(actual.size(), expected.size());
+    while (at < common && actual[at] == expected[at]) ++at;
+    return "actual " + QByteArray::number(actual.size()) + " bytes, expected " + QByteArray::number(expected.size()) +
+           " bytes, first difference at index " + QByteArray::number(at);
+}
 
 bool waitForSeen(const FakeHttpServer& server, qsizetype count) {
     const auto deadline = Clock::now() + 5s;
@@ -109,7 +130,8 @@ private slots:
 
         const Outcome<QByteArray> result = xgs::net::httpFetch(client)(server.base() + u"/f"_s, {});
         QCOMPARE(result.status, OutcomeStatus::Ok);
-        QVERIFY(result.value == body);
+        QVERIFY(result.value.has_value());
+        QVERIFY2(*result.value == body, differenceOf(*result.value, body).constData());
     }
 
     void anyStatusButOkIsAFailureThatNamesTheStatus() {
@@ -158,10 +180,10 @@ private slots:
     void aDownloadThatStallsFailsAtTheIdleTimeout() {
         FakeHttpServer server;
         Gate gate;
-        server.route("/stall", [&](FakeHttpServer::Exchange& exchange) {
+        server.route("/stall", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
             exchange.sendHeaders(200, false, 100);
             exchange.write("x");
-            gate.wait(5s);
+            waiter.wait(5s);
         });
         QtHttpClient client;
 
@@ -191,8 +213,8 @@ private slots:
         // Declared before the client: on an early return the client goes first and ends the call, so this does not block.
         std::future<Outcome<QByteArray>> call;
         Gate gate;
-        server.route("/sleep", [&](FakeHttpServer::Exchange& exchange) {
-            gate.wait(10s);
+        server.route("/sleep", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
+            waiter.wait(10s);
             exchange.reply(200, "late");
         });
         QtHttpClient client;
@@ -243,7 +265,8 @@ private slots:
         QVERIFY2(result.isOk(), qPrintable(result.error));
         QFile installed(*xgs::paths::child(binDir, u"yt-dlp.exe"_s));
         QVERIFY(installed.open(QIODevice::ReadOnly));
-        QVERIFY(installed.readAll() == body);
+        const QByteArray written = installed.readAll();
+        QVERIFY2(written == body, differenceOf(written, body).constData());
         installed.close();
         QVERIFY(!QFileInfo::exists(*xgs::paths::child(binDir, u"yt-dlp.new.exe"_s)));
     }

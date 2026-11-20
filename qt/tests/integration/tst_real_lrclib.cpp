@@ -16,6 +16,7 @@
 #include "net/http_client.h"
 #include "net/http_fetch.h"
 #include "net/qt_http_client.h"
+#include "text/kt_text.h"
 #include "tools/tool_manager.h"
 
 using namespace Qt::StringLiterals;
@@ -48,7 +49,7 @@ QString describe(const std::optional<QString>& lyrics) {
     const QStringList lines = lyrics->split(u'\n');
     qsizetype nonBlank = 0;
     for (const QString& line : lines) {
-        if (!line.trimmed().isEmpty()) ++nonBlank;
+        if (!xgs::kt::isBlank(line)) ++nonBlank;
     }
     return u"%1 lines, %2 non-blank, %3 characters"_s.arg(lines.size()).arg(nonBlank).arg(lyrics->size());
 }
@@ -56,7 +57,7 @@ QString describe(const std::optional<QString>& lyrics) {
 qsizetype nonBlankLines(const QString& lyrics) {
     qsizetype count = 0;
     for (const QString& line : lyrics.split(u'\n')) {
-        if (!line.trimmed().isEmpty()) ++count;
+        if (!xgs::kt::isBlank(line)) ++count;
     }
     return count;
 }
@@ -251,7 +252,7 @@ private slots:
         qInfo().noquote()
             << u"search: %1 records, %2 with plain lyrics, %3 instrumental, %4 accepted as the song"_s
                    .arg(records->size())
-                   .arg(count([](const auto& c) { return c.plainLyrics && !c.plainLyrics->trimmed().isEmpty(); }))
+                   .arg(count([](const auto& c) { return c.plainLyrics && !xgs::kt::isBlank(*c.plainLyrics); }))
                    .arg(count([](const auto& c) { return c.instrumental == true; }))
                    .arg(count([&](const auto& c) { return xgs::lyrics::isMatch(query, c); }));
         if (!objects.isEmpty()) qInfo().noquote() << u"search: first record is "_s + shapeOf(objects.first());
@@ -296,6 +297,7 @@ private slots:
     void downloadsTheRealYtDlpExecutable() {
         if (qEnvironmentVariable("XGS_INTEGRATION_DOWNLOAD") != u"1")
             QSKIP("set XGS_INTEGRATION_DOWNLOAD=1 to download the real yt-dlp.exe (about 18 MB, nothing is written to disk)");
+        // On m_real, not m_client: the download goes to GitHub, not lrclib.net, so it is deliberately left out of the count.
         const xgs::tools::Fetch fetch = xgs::net::httpFetch(m_real);
         const xgs::Outcome<QByteArray> outcome = fetch(xgs::tools::YtDlpUrl.toString(), std::stop_token{});
         QVERIFY2(outcome.isOk(), qPrintable(u"the download failed: "_s + outcome.error));

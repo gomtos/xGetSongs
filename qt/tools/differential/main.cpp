@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -646,7 +647,9 @@ QString answerLf(const QStringList& fields) {
     qsizetype widerNext = 0;
     testing::FakeHttpClient wider(script(widerNext));
     lyrics::LrclibOptions widerOptions = options;
-    widerOptions.maxRequests = options.maxRequests + 1;
+    // (the generator never writes INT_MAX; clamped there, as Oracle.java does, so a hand-written case cannot overflow)
+    widerOptions.maxRequests = options.maxRequests == std::numeric_limits<int>::max() ? options.maxRequests
+                                                                                     : options.maxRequests + 1;
     lyrics::LrclibLyricsProvider(wider, widerOptions).find(query, {});
     if (bad) return QStringLiteral("?");
     QString out = found ? QStringLiteral("OK ") + hexText(*found) : QStringLiteral("NULL");

@@ -30,36 +30,45 @@ using Clock = std::chrono::steady_clock;
 
 namespace {
 
-// Stands in for a server that sleeps: a handler waits on it for at most `limit`; the test (or the destructor, which runs
-// before the server's when the gate is declared after the server) opens it so the server's threads end at once. The
-// destructor waits until no handler is inside wait() any more.
+// Stands in for a server that sleeps: a handler waits on it for at most `limit`. The test (or the destructor, which runs
+// before the server's when the gate is declared after the server) opens it so the server's threads end at once. A handler
+// captures a Waiter by value, which shares the gate's state: a handler that was dispatched but has not reached wait() when
+// the Gate is destroyed still waits on live state (the server holds the handler until its threads have ended).
 class Gate {
+    struct State {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool open = false;
+    };
+
 public:
-    ~Gate() {
-        open();
-        std::unique_lock lock(m_mutex);
-        m_changed.wait(lock, [this] { return m_waiting == 0; });
-    }
+    class Waiter {
+    public:
+        explicit Waiter(std::shared_ptr<State> state) : m_state(std::move(state)) {}
+        void wait(std::chrono::milliseconds limit) const {
+            std::unique_lock lock(m_state->mutex);
+            m_state->changed.wait_for(lock, limit, [this] { return m_state->open; });
+        }
+
+    private:
+        std::shared_ptr<State> m_state;
+    };
+
+    Gate() = default;
+    Gate(const Gate&) = delete;
+    Gate& operator=(const Gate&) = delete;
+    ~Gate() { open(); }
     void open() {
         {
-            std::lock_guard lock(m_mutex);
-            m_open = true;
+            std::lock_guard lock(m_state->mutex);
+            m_state->open = true;
         }
-        m_changed.notify_all();
+        m_state->changed.notify_all();
     }
-    void wait(std::chrono::milliseconds limit) {
-        std::unique_lock lock(m_mutex);
-        ++m_waiting;
-        m_changed.wait_for(lock, limit, [this] { return m_open; });
-        --m_waiting;
-        m_changed.notify_all();
-    }
+    Waiter waiter() const { return Waiter(m_state); }
 
 private:
-    std::mutex m_mutex;
-    std::condition_variable m_changed;
-    bool m_open = false;
-    int m_waiting = 0;
+    std::shared_ptr<State> m_state = std::make_shared<State>();
 };
 
 HttpRequest requestTo(const FakeHttpServer& server, const QString& pathAndQuery) {
@@ -370,8 +379,8 @@ private slots:
     void aSlowAnswerIsUnreachableAtTheTotalTimeout() {
         FakeHttpServer server;
         Gate gate;
-        server.route("/slow", [&](FakeHttpServer::Exchange& exchange) {
-            gate.wait(5s);
+        server.route("/slow", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
+            waiter.wait(5s);
             exchange.reply(200, "late");
         });
         QtHttpClient client;
@@ -389,10 +398,10 @@ private slots:
     void aBodyThatStallsIsUnreachableAtTheTotalTimeout() {
         FakeHttpServer server;
         Gate gate;
-        server.route("/stall", [&](FakeHttpServer::Exchange& exchange) {
+        server.route("/stall", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
             exchange.sendHeaders(200, false, 100);
             exchange.write("x");
-            gate.wait(5s);
+            waiter.wait(5s);
         });
         QtHttpClient client;
         HttpRequest request = requestTo(server, u"/stall"_s);
@@ -409,10 +418,10 @@ private slots:
     void aBodyThatStallsIsUnreachableAtTheIdleTimeout() {
         FakeHttpServer server;
         Gate gate;
-        server.route("/stall", [&](FakeHttpServer::Exchange& exchange) {
+        server.route("/stall", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
             exchange.sendHeaders(200, false, 100);
             exchange.write("x");
-            gate.wait(5s);
+            waiter.wait(5s);
         });
         QtHttpClient client;
         HttpRequest request = requestTo(server, u"/stall"_s);
@@ -458,6 +467,26 @@ private slots:
         QVERIFY(!response.error.isEmpty());
     }
 
+    // A gzip body that does not decompress, after a 200: Qt reports it as an error of its content or protocol range (201 and
+    // up), the range it also uses for a 4xx or 5xx answer. With a 2xx code that is a transfer that went wrong (Failed), not
+    // an answer with a partial body. (aConnectionClosedInTheMiddleOfTheBody… covers a connection error after a 200; this one
+    // covers the 201-and-up range, which the client tells apart from an answer only by the code.)
+    void anErrorAfterA2xxStatusIsAFailureNotAResponse() {
+        FakeHttpServer server;
+        server.route("/gzip", [](FakeHttpServer::Exchange& exchange) {
+            exchange.write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 15\r\nConnection: close\r\n\r\n"
+                           "not gzip at all");
+        });
+        QtHttpClient client;
+        HttpRequest request = requestTo(server, u"/gzip"_s);
+        request.totalTimeout = 10s;
+
+        const HttpResponse response = client.get(request, {});
+        QVERIFY2(response.status == HttpStatus::Failed,
+                 qPrintable(QString::fromLatin1(statusName(response.status)) + u" code "_s + QString::number(response.code)));
+        QVERIFY(!response.error.isEmpty());
+    }
+
     void aBrokenOrUnsupportedUrlIsAFailureWithoutARequest() {
         FakeHttpServer server;
         QtHttpClient client;
@@ -476,8 +505,8 @@ private slots:
         // Declared before the client: on an early return the client goes first and ends the call, so this does not block.
         std::future<HttpResponse> call;
         Gate gate;
-        server.route("/sleep", [&](FakeHttpServer::Exchange& exchange) {
-            gate.wait(10s);
+        server.route("/sleep", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
+            waiter.wait(10s);
             exchange.reply(200, "late");
         });
         QtHttpClient client;
@@ -508,8 +537,8 @@ private slots:
     void cancellingManyCallsAtOnceReturnsThemAllPromptly() {
         FakeHttpServer server;
         Gate gate;
-        server.route("/sleep", [&](FakeHttpServer::Exchange& exchange) {
-            gate.wait(10s);
+        server.route("/sleep", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
+            waiter.wait(10s);
             exchange.reply(200, "late");
         });
         server.route("/ok", [](FakeHttpServer::Exchange& exchange) { exchange.reply(200, "fine"); });
@@ -517,9 +546,20 @@ private slots:
         constexpr int count = 16;
         std::vector<HttpResponse> responses(count);
         std::vector<Clock::time_point> ended(count);
-        // Declared before the client: on an early return the client goes first and ends the calls, so the threads join.
-        std::vector<std::jthread> threads;
         QtHttpClient client;
+        std::vector<std::jthread> threads;
+        // Declared after the client and the threads: on an early return it ends the calls and joins every thread before the
+        // client goes, so no thread can call a destroyed client (a jthread's own stop does not reach `stop`).
+        struct StopAndJoin {
+            std::stop_source& stop;
+            std::vector<std::jthread>& threads;
+            ~StopAndJoin() {
+                stop.request_stop();
+                for (std::jthread& thread : threads) {
+                    if (thread.joinable()) thread.join();
+                }
+            }
+        } stopAndJoin{stop, threads};
         for (int i = 0; i < count; ++i) {
             threads.emplace_back([&, i] {
                 responses[i] = client.get(requestTo(server, u"/sleep"_s), stop.get_token());
@@ -577,8 +617,8 @@ private slots:
         // Declared before the client: on an early return the client goes first and ends the call, so this does not block.
         std::future<HttpResponse> call;
         Gate gate;
-        server.route("/sleep", [&](FakeHttpServer::Exchange& exchange) {
-            gate.wait(10s);
+        server.route("/sleep", [waiter = gate.waiter()](FakeHttpServer::Exchange& exchange) {
+            waiter.wait(10s);
             exchange.reply(200, "late");
         });
         auto client = std::make_unique<QtHttpClient>();

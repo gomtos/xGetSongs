@@ -3410,7 +3410,9 @@ QByteArray lfNumber(double value) {
 
 // A value of the wrong type (or an odd spelling) for a record field: 0..2 names, 3 duration, 4 instrumental, 5 plainLyrics.
 // The literals the Q2c brief names are entries of their own (duration `"258"`, `NaN`, `1e400`, `0x10`, `258.4`; instrumental
-// `"true"`, `TRUE`, `1`, `null`); others are made from the record's own duration.
+// `"true"`, `TRUE`, `1`, `null`); others are made from the record's own duration. The plainLyrics object holds an escaped
+// newline (`\n` as two characters in the JSON text), so the body stays valid JSON; raw control characters inside strings are
+// kind J's (its string generator leaves them raw now and then).
 QByteArray lfWrongValue(Rng& rng, int field, const std::optional<double>& duration) {
     const QByteArray wanted = lfNumber(duration.value_or(258.0));
     if (field == 3) {
@@ -3427,7 +3429,7 @@ QByteArray lfWrongValue(Rng& rng, int field, const std::optional<double>& durati
         return pick(rng, values);
     }
     if (field == 5) {
-        static const QByteArray values[] = {"null", "42", "[\"a\",\"b\",\"c\"]", "{\"text\":\"a\nb\nc\"}", "true", "NaN"};
+        static const QByteArray values[] = {"null", "42", "[\"a\",\"b\",\"c\"]", "{\"text\":\"a\\nb\\nc\"}", "true", "NaN"};
         return pick(rng, values);
     }
     static const QByteArray values[] = {"123", "null", "{}", "{\"name\":\"IU\"}", "[\"IU\"]", "true", "12.5", "[]", "IU", "NaN"};

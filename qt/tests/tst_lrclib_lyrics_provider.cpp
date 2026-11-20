@@ -1128,7 +1128,10 @@ private slots:
         std::jthread first([&](std::stop_token stop) { provider->find(query(), stop); });
         QVERIFY(started->await(5s));
         std::jthread waiting([&](std::stop_token stop) { waitingDone.set_value(provider->find(query({.title = u"Waiting"_s}), stop)); });
-        std::this_thread::sleep_for(200ms);   // let it reach the slot
+        // Gives the waiting call time to reach the wait for a slot, so that the stop below lands there. If the thread is
+        // late, the stop lands before the call starts and it returns without a request all the same: the test still passes,
+        // it just proves less (the provider has no hook that tells when a call is waiting).
+        std::this_thread::sleep_for(200ms);
         const auto begin = Clock::now();
 
         waiting.request_stop();
@@ -1208,7 +1211,10 @@ private slots:
         const auto deadline = Clock::now() + 5s;
         while (seen().size() < 2 && Clock::now() < deadline) std::this_thread::sleep_for(10ms);
         QCOMPARE(seen().size(), 2);
-        std::this_thread::sleep_for(200ms);   // let the others reach the slot
+        // Gives the ten other calls time to reach the wait for a slot, so that the stop below lands there. A thread that is
+        // late is stopped before it starts and returns without a request all the same: the test still passes, it just proves
+        // less (the provider has no hook that tells when a call is waiting).
+        std::this_thread::sleep_for(200ms);
 
         const auto begin = Clock::now();
         for (std::jthread& call : calls) call.request_stop();

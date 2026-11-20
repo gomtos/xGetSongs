@@ -942,7 +942,9 @@ public class Oracle {
         // the same lookup on a fresh client and provider whose cap is one higher: more requests than maxRequests means the cap
         // cut the first call short
         ScriptClient wider = new ScriptClient(java.util.Arrays.copyOfRange(part, 8, part.length));
-        com.xgetsongs.engine.lyrics.LrclibLyricsProvider widerProvider = lrclibProvider(wider, requestTimeout, maxRequests + 1);
+        // (the generator never writes Integer.MAX_VALUE; clamped there, as main.cpp does, so a hand-written case cannot overflow)
+        int widerMaxRequests = maxRequests == Integer.MAX_VALUE ? maxRequests : maxRequests + 1;
+        com.xgetsongs.engine.lyrics.LrclibLyricsProvider widerProvider = lrclibProvider(wider, requestTimeout, widerMaxRequests);
         kotlinx.coroutines.BuildersKt.<String>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
             (scope, continuation) -> widerProvider.find(query, continuation));
         StringBuilder out = new StringBuilder(lyrics == null ? "NULL" : "OK " + enc(lyrics));
