@@ -2901,11 +2901,119 @@ QString generatePc(Rng& rng) {
     return pathField(rng, corrupt && !inName) + u'\t' + hex(corrupt && inName ? corrupted(rng, name) : name);
 }
 
+// ln bytes chunkSize...: a child's output (bytes as 2 hex digits each, "." for none) and the chunk sizes the C++ side feeds
+// LineSplitter with (repeated until the bytes end). The bytes are lines of pieces: ASCII, Korean, emoji, two-byte letters,
+// tabs and control characters, NUL, a byte order mark, valid rarities (U+D7FF, U+FFFE, U+10FFFF) and malformed sequences of
+// every kind the Step 1 observation found (lone continuation bytes, overlong forms, encoded surrogates, beyond U+10FFFF,
+// bytes that start nothing, truncated sequences, also right before a line ending and at the very end). Lines end in `\n`,
+// `\r\n`, `\r`, `\r\r\n` or `\n\r`; about 40% of the inputs end without one. Now and then a line is long: around Kotlin's
+// 8192-unit buffer (with a multi-byte character or a `\r\n` astride it) or 20000 bytes. A quarter of the chunkings put a
+// chunk boundary inside a multi-byte sequence or between a `\r` and its `\n` on purpose.
+QByteArray lnPiece(Rng& rng) {
+    static const QByteArray malformed[] = {
+        "\x80", "\xBF", "\xC0\xAF", "\xC1\xBF", "\xC2", "\xE3\x81", "\xE3", "\xE0\x80\xAF", "\xE0\x9F\x80", "\xED\xA0\x80",
+        "\xED\xB0\x80", "\xED\xA0", "\xED\xBF\xBF", "\xF0\x80\x80\x80", "\xF0\x9F\x98", "\xF4\x90\x80\x80", "\xF4\x8F", "\xF5",
+        "\xF8\x80\x80\x80\x80", "\xFE", "\xFF", "\xE3\x81\x41", "\xF0\x9F\x41", "\xED\xA0\xED\xB0\x80", "\xE0\xA0", "\xC2\xC2\xA9"};
+    static const QByteArray rare[] = {"\xED\x9F\xBF", "\xEF\xBF\xBE", "\xF4\x8F\xBF\xBF", "\xEF\xBB\xBF", QByteArray(1, '\0'),
+                                      "\t", "\x01", "\x1B[0m", "\x7F", "\xC2\x85", "\xE2\x80\xA8"};
+    static const QString words[] = {u"한글"_s, u"가수 - 제목"_s, u"😀"_s, u"🎵x"_s, u"é"_s, u"ß"_s, u"[download]  12.5%"_s, u"ERROR: x"_s,
+                                    u"日本語"_s, u"Ω"_s};
+    const double roll = rng.next();
+    if (roll < 0.4) {
+        QByteArray ascii;
+        const int length = rng.between(1, 10);
+        for (int i = 0; i < length; ++i) ascii += char(rng.between(0x20, 0x7E));
+        return ascii;
+    }
+    if (roll < 0.75) return pick(rng, words).toUtf8();
+    if (roll < 0.85) return pick(rng, rare);
+    return pick(rng, malformed);
+}
+
+QByteArray lnEnding(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.35) return "\n";
+    if (roll < 0.7) return "\r\n";
+    if (roll < 0.9) return "\r";
+    if (roll < 0.95) return "\r\r\n";
+    return "\n\r";
+}
+
+QByteArray lnLongLine(Rng& rng) {
+    if (rng.chance(0.3)) {
+        QByteArray line(rng.between(19000, 21000), 'y');
+        line.insert(rng.between(0, int(line.size())), pick(rng, {QByteArray("\xEA\xB0\x80"), QByteArray("\xF0\x9F\x98\x80"), QByteArray("\x80")}));
+        return line;
+    }
+    // something astride byte (and unit) 8192 of the input: a multi-byte character, a malformed sequence or a `\r\n`
+    QByteArray line(rng.between(8185, 8192), 'z');
+    line += pick(rng, {QByteArray("\xEA\xB0\x80"), QByteArray("\xF0\x9F\x98\x80"), QByteArray("\xC3\xA9"), QByteArray("\xE3\x81"),
+                       QByteArray("\xED\xA0\x80"), QByteArray("\r\n"), QByteArray("\r"), QByteArray("\x80\x80")});
+    line += QByteArray(rng.between(0, 20), 'w');
+    return line;
+}
+
+QByteArray lnBytes(Rng& rng) {
+    if (rng.chance(0.03)) return QByteArray();
+    QByteArray out;
+    const int lines = rng.between(1, 8);
+    const bool endsBare = rng.chance(0.4);
+    for (int l = 0; l < lines; ++l) {
+        if (rng.chance(0.05)) {
+            out += lnLongLine(rng);
+        } else {
+            const int pieces = rng.between(0, 6);
+            for (int p = 0; p < pieces; ++p) out += lnPiece(rng);
+            if (rng.chance(0.08)) out += pick(rng, {QByteArray("\xE3\x81"), QByteArray("\xF0\x9F"), QByteArray("\xED\xA0"), QByteArray("\xC2")});
+        }
+        if (l + 1 < lines || !endsBare) out += lnEnding(rng);
+    }
+    if (endsBare && !out.isEmpty() && (out.back() == '\n' || out.back() == '\r')) out += 'q';
+    return out;
+}
+
+// Positions p (0 < p < size) where a chunk boundary splits something: between `\r` and `\n`, or before a continuation byte
+// that follows a byte of 80..FF (inside a multi-byte sequence, valid or not).
+QList<int> lnSplitPoints(const QByteArray& bytes) {
+    QList<int> points;
+    for (int p = 1; p < int(bytes.size()); ++p) {
+        const auto before = static_cast<unsigned char>(bytes.at(p - 1));
+        const auto at = static_cast<unsigned char>(bytes.at(p));
+        if ((before == '\r' && at == '\n') || (before >= 0x80 && at >= 0x80 && at <= 0xBF)) points.append(p);
+    }
+    return points;
+}
+
+QString generateLn(Rng& rng) {
+    const QByteArray bytes = lnBytes(rng);
+    QList<int> sizes;
+    const double roll = rng.next();
+    const QList<int> points = lnSplitPoints(bytes);
+    if (roll < 0.25 && !points.isEmpty()) {
+        const int p = points.at(rng.between(0, int(points.size()) - 1));
+        sizes = {p, int(bytes.size())};   // one boundary exactly there
+    } else if (roll < 0.45) {
+        sizes = {1};
+    } else if (roll < 0.6) {
+        sizes = {rng.between(2, 3)};
+    } else if (roll < 0.8) {
+        const int count = rng.between(1, 4);
+        for (int i = 0; i < count; ++i) sizes.append(rng.between(1, 16));
+    } else if (roll < 0.9) {
+        sizes = {int(bytes.size()) + 1};   // one chunk
+    } else {
+        sizes = {rng.between(4000, 9000)};
+    }
+    QString out = bytes.isEmpty() ? u"."_s : QString::fromLatin1(bytes.toHex());
+    for (int size : sizes) out += u'\t' + QString::number(std::max(size, 1));
+    return out;
+}
+
 struct WOp {
     QStringView name;
     Generator fields;   // the fields after the op
 };
-constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}};
+constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn}};
 
 QString generateW(Rng& rng) {
     const WOp& op = pick(rng, kWOps);

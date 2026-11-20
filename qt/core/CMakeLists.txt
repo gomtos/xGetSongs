@@ -3,6 +3,10 @@ add_library(xgscore STATIC
     outcome.h
     paths/paths.h paths/paths.cpp
     fs/file_ops.h fs/file_ops.cpp
+    process/process_runner.h
+    process/line_splitter.h process/line_splitter.cpp
+    process/command_line.h process/command_line.cpp
+    process/system_process_runner.h process/system_process_runner.cpp
     text/kt_text.h text/kt_text.cpp text/kt_tables.inc
     input/input_classifier.h input/input_classifier.cpp
     filename/filename_formatter.h filename/filename_formatter.cpp

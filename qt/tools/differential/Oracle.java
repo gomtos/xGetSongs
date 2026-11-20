@@ -103,7 +103,12 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            artistName albumName duration instrumental plainLyrics: hex or "-", the duration
  *                                            as the 16 hex digits of Double.doubleToRawLongBits or "-", instrumental 0 | 1 | -)
  *         W op fields...                     paths and files, one op per case (answerW): pn text, pc dir name, pf path,
- *                                            px path
+ *                                            px path, ln bytes chunkSize... (the lines of a child's output, answerLines)
+ *
+ * An observation, not a gate (Q2b Task 2 Step 4):
+ *   xgs-diff arglists 2000 20261118 | ... Oracle.java argv <path of xgs-test-child.exe>
+ *       starts the helper with each argument list through ProcessBuilder and counts the lists its C runtime received
+ *       differently (argv below)
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
@@ -309,6 +314,7 @@ public class Oracle {
                 case "casetable" -> casetable(out);
                 case "lettertable" -> lettertable(out);
                 case "nfkctable" -> nfkctable(out);
+                case "argv" -> argv(args[1], out);
                 default -> throw new IllegalArgumentException("unknown mode " + args[0]);
             }
             print(out);
@@ -531,12 +537,67 @@ public class Oracle {
                 }
                 case "px":
                     return enc(kotlin.io.path.PathsKt.getNameWithoutExtension(java.nio.file.Path.of(dec(part[2]))));
+                case "ln":
+                    return answerLines(decBytes(part[2]));
                 default:
                     return "?";
             }
         } catch (java.nio.file.InvalidPathException e) {
             return "ERR";
         }
+    }
+
+    // W ln: the lines SystemProcessRunner hands to its handlers for these bytes of a child's output:
+    // `inputStream.bufferedReader(Charsets.UTF_8).forEachLine(...)`. bufferedReader(charset) is inline-only in Kotlin; it is
+    // an InputStreamReader of the charset in a BufferedReader of Kotlin's DEFAULT_BUFFER_SIZE (8 * 1024). forEachLine is the
+    // ordinary function of the kotlin.io.TextStreamsKt facade. The chunk sizes of the case are the C++ side's only.
+    static String answerLines(byte[] bytes) {
+        java.io.BufferedReader reader = new java.io.BufferedReader(
+            new InputStreamReader(new java.io.ByteArrayInputStream(bytes), StandardCharsets.UTF_8), 8 * 1024);
+        StringBuilder out = new StringBuilder("OK");
+        kotlin.io.TextStreamsKt.forEachLine(reader, line -> {
+            out.append(' ').append(enc(line));
+            return kotlin.Unit.INSTANCE;
+        });
+        return out.toString();
+    }
+
+    // argv <helper>: an observation, not a gate (Q2b Task 2 Step 4). For each argument list on stdin (one per line, every
+    // argument as hex, tab-separated: `xgs-diff arglists`), ProcessBuilder starts `<helper> argv <arguments...>`
+    // (xgs-test-child, which writes back each argument its C runtime received, as hex). Prints the number of lists that
+    // arrived different and the first ten of them (sent, received).
+    static void argv(String helper, StringBuilder out) throws Exception {
+        BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.US_ASCII));
+        int lists = 0, differ = 0, failed = 0;
+        StringBuilder examples = new StringBuilder();
+        for (String line = in.readLine(); line != null; line = in.readLine()) {
+            if (line.isEmpty()) continue;
+            lists++;
+            String[] fields = line.split("\t", -1);
+            java.util.List<String> command = new java.util.ArrayList<>();
+            command.add(helper);
+            command.add("argv");
+            for (String field : fields) command.add(dec(field));
+            String received;
+            try {
+                Process process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+                process.getOutputStream().close();
+                byte[] bytes = process.getInputStream().readAllBytes();
+                process.waitFor();
+                received = new String(bytes, StandardCharsets.US_ASCII).replace("\r", "").replace("\n", "\t");
+                if (received.endsWith("\t")) received = received.substring(0, received.length() - 1);
+            } catch (java.io.IOException e) {
+                failed++;
+                received = "START FAILED: " + e.getMessage();
+            }
+            if (!received.equals(String.join("\t", fields))) {
+                differ++;
+                if (differ <= 10) examples.append("  sent:     ").append(line.replace('\t', ' ')).append('\n')
+                    .append("  received: ").append(received.replace('\t', ' ')).append('\n');
+            }
+        }
+        out.append(lists).append(" lists, ").append(differ).append(" arrived different (").append(failed).append(" did not start)\n");
+        out.append(examples);
     }
 
     static void print(StringBuilder out) {

@@ -29,3 +29,14 @@ xgs_add_test(tst_ffmetadata tst_ffmetadata.cpp)
 xgs_add_test(tst_lyrics_matcher tst_lyrics_matcher.cpp)
 xgs_add_test(tst_paths tst_paths.cpp)
 xgs_add_test(tst_file_ops tst_file_ops.cpp)
+xgs_add_test(tst_line_splitter tst_line_splitter.cpp)
+xgs_add_test(tst_command_line tst_command_line.cpp)
+
+# xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
+# XGS_TEST_CHILD.
+add_executable(xgs-test-child helpers/test_child.cpp)
+xgs_target_defaults(xgs-test-child)
+xgs_add_test(tst_system_process_runner tst_system_process_runner.cpp helpers/argument_lists.h)
+target_include_directories(tst_system_process_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(tst_system_process_runner PRIVATE XGS_TEST_CHILD="$<TARGET_FILE:xgs-test-child>")
+add_dependencies(tst_system_process_runner xgs-test-child)

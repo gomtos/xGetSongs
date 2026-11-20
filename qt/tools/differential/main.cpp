@@ -3,6 +3,8 @@
 //
 //   xgs-diff gen <kind> <count> <seed>    write <count> cases of a kind ("K\tfields...")
 //   xgs-diff answer                       answer the cases on stdin, one line each
+//   xgs-diff arglists <count> <seed>      the random argument lists of tst_system_process_runner, one per line (every
+//                                         argument as hex, tab-separated), for `Oracle.java argv`
 //   xgs-diff chartable                    for each UTF-16 unit 0000..FFFF: "w l d u c" from xgs::kt (kind X)
 //   xgs-diff constants                    the user-facing constants, sorted by name: "name hex" (kind M)
 //   xgs-diff unicodecase                  for each code point 0..10FFFF but the surrogates: "cp lower upper" from
@@ -19,6 +21,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
 #include <bit>
 #include <cstdio>
 #include <iostream>
@@ -29,6 +32,7 @@
 #include <fcntl.h>
 #include <io.h>
 
+#include "argument_lists.h"
 #include "codec.h"
 #include "filename/filename_formatter.h"
 #include "gen.h"
@@ -39,6 +43,7 @@
 #include "lyrics/lyrics_matcher.h"
 #include "model/models.h"
 #include "paths/paths.h"
+#include "process/line_splitter.h"
 #include "tags/ffmetadata.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
@@ -380,6 +385,7 @@ QString answerI(const QStringList& fields) {
 // W pc dir name -> hex of paths::child(fromText(dir), name) | ERR
 // W pf path -> hex of paths::fileName(fromText(path)), "-" for none | ERR
 // W px path -> hex of paths::nameWithoutExtension(fromText(path)) | ERR
+// W ln bytes chunkSize... -> OK <each line as hex> (answerLn)
 // One answerer per op (kWAnswers); the op's fields follow the op.
 QString pathOrErr(const std::optional<QString>& path) {
     return path ? hexText(*path) : QStringLiteral("ERR");
@@ -405,11 +411,35 @@ QString answerPx(const QStringList& fields) {
     return path ? hexText(paths::nameWithoutExtension(*path)) : QStringLiteral("ERR");
 }
 
+// W ln bytes chunkSize... -> OK <each line as hex>: the bytes fed to process::LineSplitter in chunks of the sizes (repeated
+// until the bytes end), then finish().
+QString answerLn(const QStringList& fields) {
+    if (fields.size() < 2) return QStringLiteral("?");
+    const QByteArray bytes = fields.at(0) == u"." ? QByteArray() : QByteArray::fromHex(fields.at(0).toLatin1());
+    QList<int> sizes;
+    for (qsizetype i = 1; i < fields.size(); ++i) {
+        bool ok = false;
+        const int size = fields.at(i).toInt(&ok);
+        if (!ok || size < 1) return QStringLiteral("?");
+        sizes.append(size);
+    }
+    QString answer = QStringLiteral("OK");
+    process::LineSplitter splitter([&answer](const QString& line) { answer += u' ' + hexText(line); });
+    qsizetype at = 0;
+    for (qsizetype chunk = 0; at < bytes.size(); ++chunk) {
+        const qsizetype size = std::min<qsizetype>(sizes.at(chunk % sizes.size()), bytes.size() - at);
+        splitter.feed(QByteArrayView(bytes).sliced(at, size));
+        at += size;
+    }
+    splitter.finish();
+    return answer;
+}
+
 struct WAnswer {
     QStringView op;
     Answerer answer;   // gets the fields after the op (at least one)
 };
-constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}};
+constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}, {u"ln", answerLn}};
 
 QString answerW(const QStringList& fields) {
     if (fields.size() < 2) return QStringLiteral("?");
@@ -608,6 +638,19 @@ int answer() {
     return 0;
 }
 
+// The argument lists of tst_system_process_runner's argumentsReachTheChildVerbatim (the same count and seed give the same
+// lists), one per line: every argument as hex, tab-separated. For the oracle's look at ProcessBuilder (Oracle.java argv).
+int argumentLists(int count, unsigned seed) {
+    std::string out;
+    for (const QStringList& list : xgs::testing::argumentLists(count, seed)) {
+        QStringList fields;
+        for (const QString& argument : list) fields.append(hexText(argument));
+        out += toAscii(fields.join(u'\t')) + '\n';
+    }
+    writeLines(out);
+    return 0;
+}
+
 }  // namespace
 
 }  // namespace xgs::diff
@@ -631,6 +674,7 @@ int main(int argc, char** argv) {
         return generate(kind[0], count, quint32(seed));
     }
     if (mode == "answer") return answer();
+    if (mode == "arglists" && argc == 4) return argumentLists(std::stoi(argv[2]), unsigned(std::stoul(argv[3])));
     if (mode == "chartable") return chartable();
     if (mode == "constants") return constants();
     if (mode == "unicodecase") return unicodecase();
@@ -643,6 +687,6 @@ int main(int argc, char** argv) {
         std::printf("%s\n", QT_VERSION_STR);
         return 0;
     }
-    std::fprintf(stderr, "usage: xgs-diff gen <kind> <count> <seed> | answer | chartable | constants | unicodecase | lettertable | nfkctable | qt-chartable | qt-casetable | qt-lettertable | qt-version\n");
+    std::fprintf(stderr, "usage: xgs-diff gen <kind> <count> <seed> | answer | arglists <count> <seed> | chartable | constants | unicodecase | lettertable | nfkctable | qt-chartable | qt-casetable | qt-lettertable | qt-version\n");
     return 2;
 }

@@ -326,7 +326,49 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'px: answer empty (no name)' $none $indexes.Count 0.05
         Test-Share 'W' 'px: answer of a name with two or more dots' $dots $indexes.Count 0.10
     }
+    # ln bytes chunkSize...: inputs with `\r\n` 20%, with a lone `\r` (not before `\n`) 20%, with a lone `\n` (not after `\r`)
+    # 20%; input that is not valid UTF-8 10%; input ending without a line ending (not empty) 30%; a chunk boundary inside a
+    # multi-byte sequence (before a continuation byte that follows a byte of 80..FF) or between `\r` and `\n` 10%
+    ln = {
+        param($cases, $answers, $indexes)
+        $strict = [System.Text.UTF8Encoding]::new($false, $true)
+        $crlf = 0; $cr = 0; $lf = 0; $invalid = 0; $bare = 0; $split = 0
+        foreach ($i in $indexes) {
+            $hex = $cases[$i][1]
+            if ($hex -ceq '.') { continue }
+            if ($LnCrLf.IsMatch($hex)) { $crlf++ }
+            if ($LnLoneCr.IsMatch($hex)) { $cr++ }
+            if ($LnLoneLf.IsMatch($hex)) { $lf++ }
+            try { [void]$strict.GetString([Convert]::FromHexString($hex)) } catch { $invalid++ }
+            $last = $hex.Substring($hex.Length - 2)
+            if ($last -cne '0a' -and $last -cne '0d') { $bare++ }
+            # the chunk boundaries repeat with the period of the sizes: p is one when p mod period is a partial sum
+            $sizes = @($cases[$i][2..($cases[$i].Count - 1)] | ForEach-Object { [int]$_ })
+            $period = ($sizes | Measure-Object -Sum).Sum
+            $sums = [System.Collections.Generic.HashSet[int]]::new()
+            $sum = 0
+            foreach ($s in $sizes) { $sum += $s; [void]$sums.Add($sum % $period) }
+            foreach ($m in $LnSplitPoint.Matches($hex)) {
+                if ($m.Index % 2 -ne 0) { continue }
+                $p = $m.Index / 2 + 1
+                if ($sums.Contains($p % $period)) { $split++; break }
+            }
+        }
+        $n = $indexes.Count
+        Test-Share 'W' 'ln: input with \r\n' $crlf $n 0.20
+        Test-Share 'W' 'ln: input with a lone \r' $cr $n 0.20
+        Test-Share 'W' 'ln: input with a lone \n' $lf $n 0.20
+        Test-Share 'W' 'ln: input that is not valid UTF-8' $invalid $n 0.10
+        Test-Share 'W' 'ln: input ending without a line ending' $bare $n 0.30
+        Test-Share 'W' 'ln: a chunk boundary inside a multi-byte sequence or between \r and \n' $split $n 0.10
+    }
 }
+# Helpers of the W ln statistics, on the hex of the bytes (2 digits a byte, aligned): `\r\n`, a `\r` not before `\n`, a `\n`
+# not after `\r`; and (zero-width, every position, the caller keeps the aligned ones) a place where a boundary splits something
+$LnCrLf = [regex]::new('^(?:[0-9a-f]{2})*?0d0a', 'Compiled')
+$LnLoneCr = [regex]::new('^(?:[0-9a-f]{2})*?0d(?!0a)', 'Compiled')
+$LnLoneLf = [regex]::new('^(?:[0-9a-f]{2})*?(?<!0d)0a', 'Compiled')
+$LnSplitPoint = [regex]::new('(?=0d0a|[89a-f][0-9a-f][89ab][0-9a-f])', 'Compiled')
 $Statistics = [ordered]@{
     W = @{
         # fields: op and the op's fields; the thresholds are per op ($WOpChecks). Each op's share is shown, not checked.

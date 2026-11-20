@@ -63,5 +63,13 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/LyricsMatcherTest.kt",
     "exe": "tst_lyrics_matcher",
     "added": ["sigmaFormsAreTheSameLetterInMatching"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/process/SystemProcessRunnerTest.kt",
+    "exe": "tst_system_process_runner",
+    "added": ["argumentsReachTheChildVerbatim", "closesStandardInput", "setsThePythonEncodingVariables",
+              "aMissingExecutableIsAStartFailure", "aBatchFileIsNotExecuted", "cancellingKillsGrandchildrenToo",
+              "withoutAJobTheGrandchildSurvives", "parallelRunsDoNotHoldEachOthersPipes",
+              "aStopRequestedBeforeTheStartRunsNothing", "opensNoConsoleWindow"]
   }
 ]
