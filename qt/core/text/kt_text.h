@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArrayView>
 #include <QChar>
 #include <QString>
 #include <QStringView>
@@ -42,6 +43,18 @@ QString nfkc(const QString& s);
 // characters up to U+0020 ignored); std::nullopt for anything else. The value is the nearest double (ties to even).
 std::optional<double> toDoubleOrNull(const QString& s);
 QString hexBits(double value);     // the 16 lowercase hex digits of the bit pattern (qt/tools/differential, kind O)
+
+// UTF-8 bytes as the JVM decodes them with REPLACE, as Kotlin's `inputStream.bufferedReader(Charsets.UTF_8)` does (observed
+// through the differential oracle, kind W op ln; process::LineSplitter decodes each line with it):
+//   - every malformed sequence becomes one U+FFFD; a malformed sequence is a lead byte with the continuation bytes that may
+//     follow it so far (a truncated sequence, also at the end of the input), or a single byte that cannot start a sequence
+//     (80..C1, F5..FF);
+//   - the second byte after E0 must be A0..BF, after F0 90..BF, after F4 80..8F (else the lead alone is malformed); after ED
+//     it may be 80..BF, and a complete ED A0..BF xx (an encoded surrogate) is one U+FFFD for all three bytes;
+//   - a byte order mark is kept (U+FEFF), NUL is kept.
+// The LRCLIB provider decodes a whole body with it, where Kotlin uses String(bytes, UTF_8); that the two decoders agree is
+// assumed (Q2c Task 4 compares them on the JVM).
+QString decodeUtf8(QByteArrayView bytes);
 
 // Kotlin's `ignoreCase` argument. An enum, not a bool, so that a position and a case mode can never be swapped silently;
 // the arguments follow Kotlin's order: (..., from = 0, mode = Sensitive).

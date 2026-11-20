@@ -52,6 +52,10 @@ xgs_add_test(tst_qt_http_client tst_qt_http_client.cpp)
 target_link_libraries(tst_qt_http_client PRIVATE xgstestsupport ws2_32)
 xgs_add_test(tst_http_fetch tst_http_fetch.cpp)
 target_link_libraries(tst_http_fetch PRIVATE xgstestsupport)
+xgs_add_test(tst_fallback_lyrics_provider tst_fallback_lyrics_provider.cpp)
+target_link_libraries(tst_fallback_lyrics_provider PRIVATE xgstestsupport)
+xgs_add_test(tst_lrclib_lyrics_provider tst_lrclib_lyrics_provider.cpp)
+target_link_libraries(tst_lrclib_lyrics_provider PRIVATE xgstestsupport)
 add_subdirectory(integration)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through

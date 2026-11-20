@@ -109,6 +109,18 @@
     "added": ["putWorksWhenTheTargetPathIsLongerThan260", "putFailsWhenTheFolderIsNotADirectory"]
   },
   {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/FallbackLyricsProviderTest.kt",
+    "exe": "tst_fallback_lyrics_provider",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/LrclibLyricsProviderTest.kt",
+    "exe": "tst_lrclib_lyrics_provider",
+    "added": ["aCallWaitingForASlotReturnsWhenItIsCancelled", "aCancelledCallDoesNotStartTheCoolDown",
+              "aNameLongerThanAThousandUnitsIsReadAsMissing", "malformedUtf8InABodyIsReadLikeKotlinDoes",
+              "manyCallsCancelledAtOnceAllReturn"]
+  },
+  {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealFfmpegTaggingIntegrationTest.kt",
     "exe": "tst_real_ffmpeg_tagging",
     "added": []

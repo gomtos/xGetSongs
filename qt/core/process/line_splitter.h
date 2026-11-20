@@ -9,14 +9,8 @@ namespace xgs::process {
 
 /// Splits bytes into lines as they arrive, in chunks of any size. A line ends at `\n`, `\r` or `\r\n` (the `\r` and the `\n`
 /// of one `\r\n` may arrive in different chunks); the ending is not part of the line. Each line is decoded from UTF-8 as
-/// Kotlin's `inputStream.bufferedReader(Charsets.UTF_8).forEachLine` decodes it (observed through the differential oracle,
-/// kind W op ln):
-///   - every malformed sequence becomes one U+FFFD; a malformed sequence is a lead byte with the continuation bytes that may
-///     follow it so far (a truncated sequence, also at the end of the input or before a line ending), or a single byte that
-///     cannot start a sequence (80..C1, F5..FF);
-///   - the second byte after E0 must be A0..BF, after F0 90..BF, after F4 80..8F (else the lead alone is malformed); after ED
-///     it may be 80..BF, and a complete ED A0..BF xx (an encoded surrogate) is one U+FFFD for all three bytes;
-///   - a byte order mark is kept (U+FEFF), NUL is kept.
+/// Kotlin's `inputStream.bufferedReader(Charsets.UTF_8).forEachLine` decodes it: kt::decodeUtf8 (text/kt_text.h); a
+/// truncated sequence before a line ending is malformed like one at the end of the input.
 /// The handler is called from feed and finish, on the caller's thread.
 class LineSplitter {
 public:

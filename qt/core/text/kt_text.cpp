@@ -507,6 +507,76 @@ std::optional<double> toDoubleOrNull(const QString& s) {
     return negative ? -*value : *value;
 }
 
+namespace {
+
+constexpr char16_t kUtf8Replacement = 0xFFFD;
+
+bool isUtf8Continuation(unsigned char byte) {
+    return byte >= 0x80 && byte <= 0xBF;
+}
+
+}  // namespace
+
+// The replacement rules of kt_text.h (each observed through the oracle, kind W op ln).
+QString decodeUtf8(QByteArrayView bytes) {
+    QString out(bytes.size(), Qt::Uninitialized);   // never more units than bytes
+    char16_t* write = reinterpret_cast<char16_t*>(out.data());
+    const auto* p = reinterpret_cast<const unsigned char*>(bytes.data());
+    const qsizetype size = bytes.size();
+    qsizetype i = 0;
+    while (i < size) {
+        const unsigned char lead = p[i];
+        if (lead < 0x80) {
+            *write++ = lead;
+            ++i;
+            continue;
+        }
+        int needed = 0;                      // continuation bytes after the lead
+        unsigned char low = 0x80, high = 0xBF;   // the range of the second byte
+        char32_t value = 0;
+        if (lead >= 0xC2 && lead <= 0xDF) {
+            needed = 1;
+            value = lead & 0x1F;
+        } else if (lead >= 0xE0 && lead <= 0xEF) {
+            needed = 2;
+            value = lead & 0x0F;
+            if (lead == 0xE0) low = 0xA0;    // (ED keeps 80..BF: an encoded surrogate is rejected whole, below)
+        } else if (lead >= 0xF0 && lead <= 0xF4) {
+            needed = 3;
+            value = lead & 0x07;
+            if (lead == 0xF0) low = 0x90;
+            if (lead == 0xF4) high = 0x8F;
+        } else {
+            *write++ = kUtf8Replacement;         // 80..C1, F5..FF cannot start a sequence
+            ++i;
+            continue;
+        }
+        qsizetype at = i + 1;
+        int got = 0;
+        while (got < needed && at < size) {
+            const unsigned char byte = p[at];
+            const bool fits = got == 0 ? byte >= low && byte <= high : isUtf8Continuation(byte);
+            if (!fits) break;
+            value = (value << 6) | (byte & 0x3F);
+            ++got;
+            ++at;
+        }
+        i = at;
+        if (got < needed || (value >= 0xD800 && value <= 0xDFFF)) {
+            *write++ = kUtf8Replacement;         // truncated (the offending byte is looked at again), or an encoded surrogate
+            continue;
+        }
+        if (value >= 0x10000) {
+            *write++ = char16_t(0xD800 + ((value - 0x10000) >> 10));
+            *write++ = char16_t(0xDC00 + ((value - 0x10000) & 0x3FF));
+        } else {
+            *write++ = char16_t(value);
+        }
+    }
+    out.truncate(write - reinterpret_cast<const char16_t*>(out.constData()));
+    return out;
+}
+
 QString hexBits(double value) {
     static constexpr char16_t digits[] = u"0123456789abcdef";
     const quint64 bits = std::bit_cast<quint64>(value);
