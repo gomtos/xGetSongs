@@ -72,5 +72,10 @@
               "withoutAJobTheGrandchildSurvives", "parallelRunsDoNotHoldEachOthersPipes",
               "aStopRequestedBeforeTheStartRunsNothing", "opensNoConsoleWindow",
               "aThrowingHandlerKillsTheProcessAndRethrows"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tools/ToolLocatorTest.kt",
+    "exe": "tst_tool_locator",
+    "added": []
   }
 ]

@@ -7,6 +7,7 @@ add_library(xgscore STATIC
     process/line_splitter.h process/line_splitter.cpp
     process/command_line.h process/command_line.cpp
     process/system_process_runner.h process/system_process_runner.cpp
+    tools/tool_locator.h tools/tool_locator.cpp
     text/kt_text.h text/kt_text.cpp text/kt_tables.inc
     input/input_classifier.h input/input_classifier.cpp
     filename/filename_formatter.h filename/filename_formatter.cpp

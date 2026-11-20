@@ -32,6 +32,9 @@ xgs_add_test(tst_file_ops tst_file_ops.cpp)
 xgs_add_test(tst_line_splitter tst_line_splitter.cpp)
 xgs_add_test(tst_command_line tst_command_line.cpp)
 
+add_subdirectory(support)
+xgs_add_test(tst_tool_locator tst_tool_locator.cpp)
+
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
 # XGS_TEST_CHILD.
 add_executable(xgs-test-child helpers/test_child.cpp)
