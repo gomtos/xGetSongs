@@ -130,5 +130,10 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealYtDlpIntegrationTest.kt",
     "exe": "tst_real_ytdlp",
     "added": ["anOutputFolderWithSpacesKoreanAndAnAmpersandWorks", "aPercentSignInTheOutputFolderIsReportedNotSilentlyMisplaced"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealLrclibIntegrationTest.kt",
+    "exe": "tst_real_lrclib",
+    "added": ["theRealServiceIsReachedOverSchannelTls", "downloadsTheRealYtDlpExecutable"]
   }
 ]

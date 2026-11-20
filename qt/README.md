@@ -34,16 +34,17 @@ ctest --test-dir build/qt-debug --output-on-failure
 
 ### 실제 도구 통합 테스트
 
-`tests/integration/`의 `tst_real_ffmpeg_tagging`(Kotlin `RealFfmpegTaggingIntegrationTest`, 8개)과 `tst_real_ytdlp`(Kotlin `RealYtDlpIntegrationTest`, 5개와 더한 2개)는 실제 ffmpeg·ffprobe·yt-dlp를 돌린다. 환경 변수 `XGS_INTEGRATION`이 `1`일 때만 돌고, 아니면 모든 시험이 건너뜀(`SKIP`)으로 끝나서 보통 `ctest`는 도구도 네트워크도 건드리지 않는다. ctest 레이블은 `integration`이다(`ctest -L integration`으로 이것만, `-LE integration`으로 이것을 빼고).
+`tests/integration/`의 `tst_real_ffmpeg_tagging`(Kotlin `RealFfmpegTaggingIntegrationTest`, 8개), `tst_real_ytdlp`(Kotlin `RealYtDlpIntegrationTest`, 5개와 더한 2개), `tst_real_lrclib`(Kotlin `RealLrclibIntegrationTest`, 4개와 더한 2개)는 실제 ffmpeg·ffprobe·yt-dlp를 돌리고 실제 LRCLIB에 묻는다. 환경 변수 `XGS_INTEGRATION`이 `1`일 때만 돌고, 아니면 모든 시험이 건너뜀(`SKIP`)으로 끝나서 보통 `ctest`는 도구도 네트워크도 건드리지 않는다. ctest 레이블은 `integration`이다(`ctest -L integration`으로 이것만, `-LE integration`으로 이것을 빼고).
 
 ```
-$env:XGS_INTEGRATION='1'; build/qt/tst_real_ffmpeg_tagging.exe -o "$env:TEMP\xgs-ffmpeg.txt,txt"; build/qt/tst_real_ytdlp.exe -o "$env:TEMP\xgs-ytdlp.txt,txt"; Remove-Item Env:XGS_INTEGRATION
+$env:XGS_INTEGRATION='1'; build/qt/tst_real_ffmpeg_tagging.exe -o "$env:TEMP\xgs-ffmpeg.txt,txt"; build/qt/tst_real_ytdlp.exe -o "$env:TEMP\xgs-ytdlp.txt,txt"; build/qt/tst_real_lrclib.exe -o "$env:TEMP\xgs-lrclib.txt,txt"; Remove-Item Env:XGS_INTEGRATION
 ```
 
 - 도구는 Kotlin 통합 테스트와 같은 곳에서 찾는다: `ToolLocator`에 `%APPDATA%\xGetSongs\bin`(`APPDATA`가 없으면 `<사용자 폴더>\.xgetsongs\bin`)을 주고, 그다음 `PATH`. 그 폴더는 읽기만 하고 거기 있는 `yt-dlp.exe`·`ffmpeg.exe`를 실행할 뿐 아무것도 쓰거나 고치지 않는다(`yt-dlp -U`도 부르지 않는다). ffprobe는 찾은 ffmpeg 옆(`ffmpeg.exe` → `ffprobe.exe`)에 있어야 한다.
 - 건너뛰는 조건은 Kotlin의 `assumeTrue`와 같고 문구도 같다: ffmpeg 쪽은 `ffmpeg and ffprobe must be installed`, yt-dlp 쪽은 `yt-dlp, ffmpeg and Node 22+/Deno 2.3+ must be installed`(js 런타임은 `ToolLocator`가 찾은 deno나 node; Kotlin처럼 버전은 보지 않는다).
 - ffmpeg 쪽은 네트워크를 쓰지 않는다(무음 m4a와 빨간 그림을 ffmpeg로 만들어 태그를 쓰고 ffprobe로 읽는다).
 - yt-dlp 쪽은 유튜브에 실제 요청을 보낸다: 재생목록 `PL2HEDIx6Li8jGsqCiXUq9fzCqpH99qqHV`의 목록(`--flat-playlist`), 영상 `kcx0a2OAhN0`·`7mDDM0eBWR0`·`jNQXAC9IVRw`(두 번)의 정보 파일과 썸네일(`--skip-download`, 오디오 없음). 한 번 돌리면 yt-dlp를 다섯 번 띄운다. 오디오를 내려받는 `writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum`(19초 영상)은 `XGS_INTEGRATION_AUDIO=1`도 있어야 돌고, `downloadsAShortVideoAsM4aWithoutReencoding`은 내려받기 작업(Q2d)과 LRCLIB 조회(Q2c)가 아직 없어서 늘 건너뛴다.
+- `tst_real_lrclib`는 실제 `https://lrclib.net`에 묻는다(한 번 돌리면 요청 15개 안팎, 최악은 30개 남짓). Kotlin처럼 서비스가 세 번(2초 간격) 답하지 않거나 5xx만 주면 실패가 아니라 건너뜀(`lrclib.net must answer`). 가사는 저작물이라 **가사 글자와 곡 이름 값은 찍지도 저장하지도 않는다**: 출력은 상태 코드, 키 이름과 값의 종류, 줄 수·글자 수뿐이고, 단언은 실패 메시지에도 가사가 실리지 않게 쓴다. 더한 두 시험: `theRealServiceIsReachedOverSchannelTls`(실제 TLS 연결로 상태 200~599)와 `downloadsTheRealYtDlpExecutable`(`XGS_INTEGRATION_DOWNLOAD=1`일 때만 `tools::YtDlpUrl`의 약 18MB를 받아 `MZ`로 시작하는지 본다; 디스크에 쓰지 않고 실행하지 않으며, 다른 때는 늘 건너뜀). 계획 검증에서는 `XGS_INTEGRATION_DOWNLOAD`와 `XGS_INTEGRATION_AUDIO`를 켜지 않는다.
 - yt-dlp가 쓰는 것은 모두 한 `QTemporaryDir` 안에 남는다: 그 시험 클래스 동안 `XDG_CACHE_HOME`(yt-dlp의 캐시, 기본은 `%USERPROFILE%\.cache\yt-dlp`)과 `TEMP`·`TMP`(한 파일짜리 `yt-dlp.exe`가 풀리는 곳)를 그 안으로 돌리고, 시험마다의 임시 폴더도 그 안에 만든다. 끝나면 원래 값으로 되돌린다.
 - 더한 두 시험: 공백·한글·`&`가 든 출력 폴더, 그리고 `%`가 든 출력 폴더. yt-dlp는 `-o` 값을 폴더까지 템플릿으로 읽어서 `%(id)s`는 영상 ID로, `%%`는 `%`로 바꾸고(홀로 선 `%`는 남는다) 다른 폴더에 조용히 쓴다(yt-dlp 2026.08.19에서 관찰). 그래서 `ytdlp::escapeOutputTemplateDirectory`(모든 `%`를 겹친다)를 더했고, `downloadCommand`는 Kotlin 그대로 두며 호출하는 쪽(Q2d)이 겹친 폴더를 넘긴다. 시험은 겹친 폴더로 그 폴더 자체에 파일이 생기는지 본다.
 
