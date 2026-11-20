@@ -38,6 +38,7 @@
 #include "lyrics/lyrics_extractor.h"
 #include "lyrics/lyrics_matcher.h"
 #include "model/models.h"
+#include "paths/paths.h"
 #include "tags/ffmetadata.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
@@ -374,6 +375,49 @@ QString answerI(const QStringList& fields) {
     return QStringLiteral("?");
 }
 
+// ---- kind W ----
+// W pn text -> hex of paths::fromText | ERR
+// W pc dir name -> hex of paths::child(fromText(dir), name) | ERR
+// W pf path -> hex of paths::fileName(fromText(path)), "-" for none | ERR
+// W px path -> hex of paths::nameWithoutExtension(fromText(path)) | ERR
+// One answerer per op (kWAnswers); the op's fields follow the op.
+QString pathOrErr(const std::optional<QString>& path) {
+    return path ? hexText(*path) : QStringLiteral("ERR");
+}
+
+QString answerPn(const QStringList& fields) {
+    return pathOrErr(paths::fromText(textOf(fields.at(0))));
+}
+
+QString answerPc(const QStringList& fields) {
+    if (fields.size() < 2) return QStringLiteral("?");
+    const std::optional<QString> dir = paths::fromText(textOf(fields.at(0)));
+    return dir ? pathOrErr(paths::child(*dir, textOf(fields.at(1)))) : QStringLiteral("ERR");
+}
+
+QString answerPf(const QStringList& fields) {
+    const std::optional<QString> path = paths::fromText(textOf(fields.at(0)));
+    return path ? hex(paths::fileName(*path)) : QStringLiteral("ERR");
+}
+
+QString answerPx(const QStringList& fields) {
+    const std::optional<QString> path = paths::fromText(textOf(fields.at(0)));
+    return path ? hexText(paths::nameWithoutExtension(*path)) : QStringLiteral("ERR");
+}
+
+struct WAnswer {
+    QStringView op;
+    Answerer answer;   // gets the fields after the op (at least one)
+};
+constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}};
+
+QString answerW(const QStringList& fields) {
+    if (fields.size() < 2) return QStringLiteral("?");
+    for (const WAnswer& entry : kWAnswers)
+        if (fields.at(0) == entry.op) return entry.answer(fields.mid(1));
+    return QStringLiteral("?");
+}
+
 }  // namespace
 
 void registerAnswer(char kind, Answerer answer) {
@@ -405,6 +449,7 @@ void registerAnswers() {
     registerAnswer('K', answerK);
     registerAnswer('A', answerA);
     registerAnswer('I', answerI);
+    registerAnswer('W', answerW);
 }
 
 // Each user-facing constant is registered here, under the names Oracle.java prints (all 11 of the Kotlin side).

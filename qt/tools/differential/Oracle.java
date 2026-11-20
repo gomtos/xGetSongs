@@ -102,6 +102,8 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            for null, the duration in decimal or "-"); a candidate is 6 fields (trackName
  *                                            artistName albumName duration instrumental plainLyrics: hex or "-", the duration
  *                                            as the 16 hex digits of Double.doubleToRawLongBits or "-", instrumental 0 | 1 | -)
+ *         W op fields...                     paths and files, one op per case (answerW): pn text, pc dir name, pf path,
+ *                                            px path
  *
  * Only for qt/tools/differential/gen-tables.ps1:
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
@@ -486,6 +488,10 @@ public class Oracle {
                     }
                     break;
                 }
+                case "W": {
+                    out.append(answerW(part));
+                    break;
+                }
                 case "C": {
                     ClassifyResult result = InputClassifier.INSTANCE.classify(dec(part[1]));
                     if (result instanceof ClassifyResult.Ok ok) {
@@ -504,6 +510,33 @@ public class Oracle {
         }
         if (videoInfoFile != null) java.nio.file.Files.deleteIfExists(videoInfoFile);
         print(out);
+    }
+
+    // Kind W, one op per case. A path is Path.of(text) on this JVM (Windows); InvalidPathException (what Path.of documents it
+    // throws for a string that cannot be a path) answers ERR.
+    //   pn text       Path.of(text).toString()                        -> hex | ERR
+    //   pc dir name   Path.of(dir).resolve(name).toString()           -> hex | ERR
+    //   pf path       Path.of(path).getFileName(), "-" for null       -> hex | - | ERR
+    //   px path       kotlin.io.path nameWithoutExtension of Path.of(path)   -> hex | ERR
+    static String answerW(String[] part) {
+        try {
+            switch (part[1]) {
+                case "pn":
+                    return enc(java.nio.file.Path.of(dec(part[2])).toString());
+                case "pc":
+                    return enc(java.nio.file.Path.of(dec(part[2])).resolve(dec(part[3])).toString());
+                case "pf": {
+                    java.nio.file.Path name = java.nio.file.Path.of(dec(part[2])).getFileName();
+                    return name == null ? "-" : enc(name.toString());
+                }
+                case "px":
+                    return enc(kotlin.io.path.PathsKt.getNameWithoutExtension(java.nio.file.Path.of(dec(part[2]))));
+                default:
+                    return "?";
+            }
+        } catch (java.nio.file.InvalidPathException e) {
+            return "ERR";
+        }
     }
 
     static void print(StringBuilder out) {

@@ -1,7 +1,7 @@
 # The differential test of the Qt port: the same cases go to the Kotlin originals on the JVM (Oracle.java, on the jars of
 # server/build/sidecar-image) and to the C++ ports (build/qt/xgs-diff.exe); the answers must be identical, line for line.
 #
-#   pwsh qt/tools/differential/run.ps1 [-Kinds UXMSCFDGTLYRNBZHOJEQVKAI] [-PerKind 10000] [-Seed 20261115] [-DebugTool]
+#   pwsh qt/tools/differential/run.ps1 [-Kinds UXMSCFDGTLYRNBZHOJEQVKAIW] [-PerKind 10000] [-Seed 20261115] [-DebugTool]
 #   (the default: all kinds)
 #
 # -DebugTool: the debug build's tool (build/qt-debug/xgs-diff.exe, where Qt's range checks and assertions are on) also answers
@@ -24,7 +24,7 @@
 # Adding a kind: a generator (gen.cpp, registerGenerators), an answerer (main.cpp, registerAnswers), a `case` in
 # Oracle.java, and the kind's thresholds in $Statistics here. A kind without an entry in $Statistics fails.
 param(
-    [string]$Kinds = 'UXMSCFDGTLYRNBZHOJEQVKAI',
+    [string]$Kinds = 'UXMSCFDGTLYRNBZHOJEQVKAIW',
     [int]$PerKind = 10000,
     [long]$Seed = 20261115,
     [switch]$DebugTool
@@ -282,7 +282,71 @@ $BadEscape = [regex]::new('(?<!\\)(?:\\\\)*\\(?:[^"\\/bfnrtu]|u(?![0-9a-fA-F]{4}
 $DeepNesting = [regex]::new('(?:\[|\{"a":|\{"k":1,"a":){1000}', 'Compiled')
 # a `]` followed (past white space) by what may start a value (Kotlin takes such a `]` after an array item for a comma)
 $BracketBeforeValue = [regex]::new('\][ \t\r\n]*[^,\]}:\x00-\x20]', 'Compiled')
+# Helpers of the W statistics. How many times a unit (4 hex digits) occurs, aligned, in the hex of a field or an answer.
+function Get-UnitOccurrences([string]$field, [string]$unit) {
+    if ($null -eq $field -or $field -ceq '-' -or $field -ceq '.') { return 0 }
+    $count = 0
+    for ($i = 0; $i + 4 -le $field.Length; $i += 4) { if ($field.Substring($i, 4) -ceq $unit) { $count++ } }
+    return $count
+}
+# Kind W: one check per op, each on the indexes of that op's cases (thresholds of the Q2b plan, per op). An op of W without an
+# entry here fails the run.
+$WOpChecks = [ordered]@{
+    # pn text: ERR 10%; an answer that differs from the input 20%; an answer equal to the input 20%
+    pn = {
+        param($cases, $answers, $indexes)
+        $errors = 0; $differs = 0; $same = 0
+        foreach ($i in $indexes) {
+            $answer = $answers[$i]
+            if ($answer -ceq 'ERR') { $errors++ } elseif ($answer -ceq $cases[$i][1]) { $same++ } else { $differs++ }
+        }
+        Test-Share 'W' 'pn: answer ERR' $errors $indexes.Count 0.10
+        Test-Share 'W' 'pn: answer differs from the input' $differs $indexes.Count 0.20
+        Test-Share 'W' 'pn: answer equals the input' $same $indexes.Count 0.20
+    }
+    # pc dir name: success (not ERR) 60%
+    pc = {
+        param($cases, $answers, $indexes)
+        $success = @($indexes | Where-Object { $answers[$_] -cne 'ERR' }).Count
+        Test-Share 'W' 'pc: answer a path (not ERR)' $success $indexes.Count 0.60
+    }
+    # pf path: no file name (-) 5%; a file name with two or more dots 10%
+    pf = {
+        param($cases, $answers, $indexes)
+        $none = @($indexes | Where-Object { $answers[$_] -ceq '-' }).Count
+        $dots = @($indexes | Where-Object { $answers[$_] -cne 'ERR' -and (Get-UnitOccurrences $answers[$_] '002e') -ge 2 }).Count
+        Test-Share 'W' 'pf: answer none (-)' $none $indexes.Count 0.05
+        Test-Share 'W' 'pf: answer a name with two or more dots' $dots $indexes.Count 0.10
+    }
+    # px path: no name (the empty answer) 5%; a name that had two or more dots (the answer keeps one or more) 10%
+    px = {
+        param($cases, $answers, $indexes)
+        $none = @($indexes | Where-Object { $answers[$_] -ceq '.' }).Count
+        $dots = @($indexes | Where-Object { $answers[$_] -cne 'ERR' -and (Get-UnitOccurrences $answers[$_] '002e') -ge 1 }).Count
+        Test-Share 'W' 'px: answer empty (no name)' $none $indexes.Count 0.05
+        Test-Share 'W' 'px: answer of a name with two or more dots' $dots $indexes.Count 0.10
+    }
+}
 $Statistics = [ordered]@{
+    W = @{
+        # fields: op and the op's fields; the thresholds are per op ($WOpChecks). Each op's share is shown, not checked.
+        Check = {
+            param($cases, $answers)
+            $byOp = @{}
+            for ($i = 0; $i -lt $cases.Count; $i++) {
+                $op = $cases[$i][0]
+                if (-not $byOp.ContainsKey($op)) { $byOp[$op] = [System.Collections.Generic.List[int]]::new() }
+                $byOp[$op].Add($i)
+            }
+            foreach ($op in $byOp.Keys) { if (-not $WOpChecks.Contains($op)) { "W: op $op has no statistics in `$WOpChecks" } }
+            foreach ($op in $WOpChecks.Keys) {
+                $indexes = if ($byOp.ContainsKey($op)) { $byOp[$op].ToArray() } else { [int[]]@() }
+                Test-Share 'W' "op $op (shown only)" $indexes.Count $cases.Count 0
+                if ($indexes.Count -eq 0) { "W: no cases of op $op"; continue }
+                & $WOpChecks[$op] $cases $answers $indexes
+            }
+        }
+    }
     J = @{
         # field: text. ERR 20%; a tree 40%; a tree with a non-standard literal (not a JSON number, true or false) 5%; an
         # input with a repeated key 5%. Categories of the Step 2 observations: an input with white space Kotlin does not

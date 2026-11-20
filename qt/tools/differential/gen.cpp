@@ -2700,6 +2700,218 @@ QString generateI(Rng& rng) {
     return line;
 }
 
+// ---- kind W: paths (pn pc pf px) ----
+// One op per case; an op is a row of kWOps (later ops of the kind add rows). A path text is one of the categories of the
+// Step 1 observations of the Q2b Task 1 report: drive paths (`\`, `/`, doubled or mixed separators, a trailing one), roots
+// (`C:\`, `C:`, `\`), drive-relative and relative paths, `.` and `..`, UNC paths (two or three separators in front, with or
+// without a trailing one, incomplete), `\\?\` and `\\.\` paths (and broken ones), trailing spaces and dots, forbidden
+// characters (`* ? " < > |`, control characters, a `:` inside), the empty text, blanks, quoted paths, long paths (300 units
+// and more, now and then 5000), Korean, emoji and unpaired surrogates. Then 30% of the cases get one unit replaced, inserted
+// or deleted at a random place (in one field of a pc case).
+constexpr QStringView kWinParts[] = {u"Music", u"a", u"b", u"My Playlist", u"노래", u"가수 - 제목", u"😀", u"🎵", u"\xD83D", u"\xDE00",
+                                     u"job-1", u"İ", u"ß", u"x y", u"(feat. B) [x]", u"AppData", u"%20", u"&", u"1", u"\u3000",
+                                     u"\u00A0", u"\uFEFF", u"\u007F", u"\u0085", u"Ｃ", u"$1", u"~", u"a,b", u"a;b", u"[x]"};
+constexpr QStringView kSpecialParts[] = {u".", u"..", u"...", u"a.", u"a ", u"a. ", u" a", u" ", u"  ", u"a .", u"..a", u". "};
+constexpr QStringView kDottedNames[] = {u"a.b.c", u"x.tar.gz", u"001 A - B.f251.webm", u"가수 - 제목.info.json", u"a.b.c.m4a",
+                                        u"...", u"x.y.", u".a.b", u"a..b", u"v1.2.3 (Live).m4a", u"1.2", u"..m4a"};
+constexpr QStringView kOneDotNames[] = {u"a.m4a", u".m4a", u"abc.", u"x.y", u"가수 - 제목.m4a", u"song.MP3", u"a b.c d", u"."};
+constexpr QStringView kHostNames[] = {u"host", u"NAS", u"h", u"192.168.0.1", u"호스트", u"srv-1", u"Music Share", u".", u"..", u"h."};
+constexpr QStringView kShareNames[] = {u"share", u"s", u"Music", u"공유", u"pipe", u"C$", u"s.", u"a b"};
+constexpr QStringView kOddDrives[] = {u"1", u"가", u"Ｃ", u"ı", u" ", u"_"};
+constexpr QStringView kCorruptions[] = {u"\\", u"/", u":", u"*", u"?", u"\"", u"<", u">", u"|", u" ", u".", u"\t",
+                                        QStringView(u"\0", 1), u"\u001F", u"a", u"가", u"\xD83D", u"\\\\", u"C:"};
+
+QString winSeparator(Rng& rng, int style) {
+    static constexpr QStringView mixed[] = {u"\\", u"/", u"\\\\", u"\\/", u"/\\", u"//", u"\\\\\\"};
+    switch (style) {
+        case 0: return u"\\"_s;
+        case 1: return u"/"_s;
+        case 2: return u"\\\\"_s;
+        default: return rng.chance(0.5) ? u"\\"_s : pick(rng, mixed).toString();
+    }
+}
+
+int separatorStyle(Rng& rng) {
+    const double roll = rng.next();
+    return roll < 0.55 ? 0 : roll < 0.7 ? 1 : roll < 0.8 ? 2 : 3;
+}
+
+QString winPart(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.45) return pick(rng, kWinParts).toString();
+    if (roll < 0.6) return pick(rng, kSpecialParts).toString();
+    if (roll < 0.85) {
+        QString part;
+        const int length = rng.between(1, 8);
+        for (int i = 0; i < length; ++i) part += charOf(rng, kAscii);
+        return part;
+    }
+    if (roll < 0.95) return pick(rng, kWinParts).toString() + token(rng);
+    return charOf(rng, kKorean) + charOf(rng, kKorean);
+}
+
+// The last part: a name with two or more dots (40%), with one dot (25%), or another part.
+QString lastPart(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.4) return pick(rng, kDottedNames).toString();
+    if (roll < 0.65) return pick(rng, kOneDotNames).toString();
+    return winPart(rng);
+}
+
+// One to five parts with separators between (style as separatorStyle), now and then a trailing separator.
+QString winParts(Rng& rng, int style, int minParts = 1) {
+    QString out;
+    const int parts = rng.between(minParts, 5);
+    for (int i = 0; i < parts; ++i) {
+        if (i > 0) out += winSeparator(rng, style);
+        out += i + 1 == parts ? lastPart(rng) : winPart(rng);
+    }
+    if (rng.chance(0.15)) out += winSeparator(rng, style);
+    return out;
+}
+
+QString driveOf(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.5) return u"C"_s;
+    if (roll < 0.7) return u"D"_s;
+    if (roll < 0.85) return u"c"_s;
+    if (roll < 0.95) return charOf(rng, kAscii.first(52));
+    return pick(rng, kOddDrives).toString();
+}
+
+QString uncText(Rng& rng) {
+    const int style = separatorStyle(rng);
+    const QString lead = rng.chance(0.8) ? (style == 1 ? u"//"_s : u"\\\\"_s) : pick(rng, {u"\\\\\\"_s, u"/\\"_s, u"\\/"_s, u"\\\\\\\\"_s});
+    const QString host = pick(rng, kHostNames).toString();
+    const double roll = rng.next();
+    if (roll < 0.08) return lead + host;                                         // no share
+    if (roll < 0.14) return lead + host + winSeparator(rng, style);              // no share, a separator
+    if (roll < 0.17) return lead;                                                // nothing but the prefix
+    const QString root = lead + host + winSeparator(rng, style) + pick(rng, kShareNames).toString();
+    if (roll < 0.4) return root + (rng.chance(0.5) ? winSeparator(rng, style) : QString());
+    return root + winSeparator(rng, style) + winParts(rng, style);
+}
+
+QString verbatimText(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.35) return u"\\\\?\\"_s + driveOf(rng) + u':' + winSeparator(rng, separatorStyle(rng)) + winParts(rng, separatorStyle(rng));
+    if (roll < 0.55) return u"\\\\?\\UNC\\"_s + pick(rng, kHostNames).toString() + u'\\' + pick(rng, kShareNames).toString() +
+                            (rng.chance(0.6) ? u'\\' + winParts(rng, 0) : QString());
+    if (roll < 0.7) return u"\\\\.\\"_s + (rng.chance(0.5) ? u"pipe\\"_s + winPart(rng) : driveOf(rng) + u":\\"_s + winParts(rng, 0));
+    static constexpr QStringView broken[] = {u"\\\\?\\", u"\\\\.\\", u"\\\\?\\C:", u"\\\\?\\C:x", u"\\\\?\\x\\y", u"\\\\?\\UNC\\",
+                                             u"\\\\?\\UNC\\h", u"\\\\?\\unc\\h\\s", u"\\\\?\\UNC/h/s", u"//?/C:/x", u"/\\?\\C:\\x",
+                                             u"\\\\?\\\\C:\\x", u"\\\\?/C:\\x", u"\\\\?\\ C:\\x", u"\\\\?x\\y", u"\\\\?\\UNC\\\\h\\s",
+                                             u"\\\\?\\C: ", u"\\\\?\\1:\\x"};
+    return pick(rng, broken).toString();
+}
+
+QString longPathText(Rng& rng) {
+    if (rng.chance(0.15)) return QString(rng.between(4990, 5010), u'x');
+    QString out = driveOf(rng) + u":\\"_s;
+    while (out.size() < 300) out += QString(rng.between(5, 60), QChar(kAscii[rng.between(0, 25)])) + u'\\';
+    out += lastPart(rng);
+    return out;
+}
+
+QString forbiddenPathText(Rng& rng) {
+    static constexpr QStringView forbidden[] = {u"*", u"?", u"\"", u"<", u">", u"|", u":", QStringView(u"\0", 1), u"\u0001",
+                                                u"\t", u"\u001F", u"\n"};
+    QString path = u"C:\\"_s + winParts(rng, 0);
+    path.insert(rng.between(3, int(path.size())), pick(rng, forbidden).toString());
+    return path;
+}
+
+QString pathText(Rng& rng) {
+    const double roll = rng.next();
+    const int style = separatorStyle(rng);
+    if (roll < 0.24) return driveOf(rng) + u':' + winSeparator(rng, style) + winParts(rng, style);
+    if (roll < 0.30) return driveOf(rng) + u':' + (rng.chance(0.2) ? QString() : winParts(rng, style));
+    if (roll < 0.37) {
+        static constexpr QStringView roots[] = {u"C:\\", u"C:/", u"C:", u"\\", u"/", u"C:\\\\", u"c:", u"D:\\", u"\\\\", u"//"};
+        return pick(rng, roots).toString();
+    }
+    if (roll < 0.47) {
+        static constexpr QStringView leads[] = {u"", u"", u"", u".\\", u"..\\", u"./", u"..\\..\\"};
+        return pick(rng, leads).toString() + winParts(rng, style);
+    }
+    if (roll < 0.51) return winSeparator(rng, style == 2 ? 0 : style) + winParts(rng, style);
+    if (roll < 0.63) return uncText(rng);
+    if (roll < 0.71) return verbatimText(rng);
+    if (roll < 0.76) {
+        static constexpr QStringView blanks[] = {u"", u"", u" ", u"   ", u"\u3000", u" \t"};
+        return pick(rng, blanks).toString();
+    }
+    if (roll < 0.79) {
+        const QString quote = rng.chance(0.7) ? u"\""_s : u"'"_s;
+        return quote + driveOf(rng) + u":\\"_s + winParts(rng, 0) + quote;
+    }
+    if (roll < 0.83) return longPathText(rng);
+    if (roll < 0.88) return forbiddenPathText(rng);
+    if (roll < 0.93) return text(rng, 12);
+    // a drive path whose parts end in spaces or dots
+    QString path = driveOf(rng) + u":\\"_s + winParts(rng, 0);
+    path += pick(rng, {u" "_s, u"."_s, u". "_s, u"  "_s, u" ."_s});
+    return path;
+}
+
+// one unit replaced, inserted or deleted at a random place
+QString corrupted(Rng& rng, const QString& value) {
+    QString out = value;
+    const int at = rng.between(0, int(out.size()));
+    const double roll = rng.next();
+    if (roll < 0.25 && !out.isEmpty()) {
+        out.remove(std::min(at, int(out.size()) - 1), 1);
+    } else if (roll < 0.6 && !out.isEmpty()) {
+        out.replace(std::min(at, int(out.size()) - 1), 1, pick(rng, kCorruptions).toString());
+    } else {
+        out.insert(at, pick(rng, kCorruptions).toString());
+    }
+    return out;
+}
+
+QString pathField(Rng& rng, bool corrupt) {
+    const QString path = pathText(rng);
+    return hex(corrupt ? corrupted(rng, path) : path);
+}
+
+// The name of a pc case: mostly a relative name, sometimes a root, a drive, an absolute path or the empty text.
+QString childName(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.45) return lastPart(rng);
+    if (roll < 0.6) return winParts(rng, separatorStyle(rng));
+    if (roll < 0.68) {
+        static constexpr QStringView rooted[] = {u"\\x", u"/", u"\\", u"C:x", u"c:x", u"D:x", u"C:", u"D:", u"C: ", u"\\ ", u"/a/b"};
+        return pick(rng, rooted).toString();
+    }
+    // drive-relative on the directory's usual drives, in either case (C: or c: continues C:\... and c:\...)
+    if (roll < 0.74) return pick(rng, {u"C:"_s, u"c:"_s, u"D:"_s, u"d:"_s}) + lastPart(rng);
+    if (roll < 0.8) return pathText(rng);
+    if (roll < 0.9) return QString();
+    return pick(rng, kSpecialParts).toString();
+}
+
+QString generatePn(Rng& rng) {
+    return pathField(rng, rng.chance(0.3));
+}
+
+QString generatePc(Rng& rng) {
+    const bool corrupt = rng.chance(0.3);
+    const bool inName = rng.chance(0.5);
+    const QString name = childName(rng);
+    return pathField(rng, corrupt && !inName) + u'\t' + hex(corrupt && inName ? corrupted(rng, name) : name);
+}
+
+struct WOp {
+    QStringView name;
+    Generator fields;   // the fields after the op
+};
+constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}};
+
+QString generateW(Rng& rng) {
+    const WOp& op = pick(rng, kWOps);
+    return op.name.toString() + u'\t' + op.fields(rng);
+}
+
 }  // namespace
 
 void registerKind(char kind, Generator gen) {
@@ -2730,6 +2942,7 @@ void registerGenerators() {
     registerKind('K', generateK);
     registerKind('A', generateA);
     registerKind('I', generateI);
+    registerKind('W', generateW);
 }
 
 // Weights of fuzz.mts's token(); the tricky case letters take 4% from the Korean share (16% -> 12%).
