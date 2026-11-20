@@ -86,4 +86,9 @@ QStringList downloadCommand(const ToolPaths& tools, const QString& url, const QS
     return command;
 }
 
+QString escapeOutputTemplateDirectory(const QString& dir) {
+    QString escaped = dir;
+    return escaped.replace(u'%', u"%%"_s);
+}
+
 }  // namespace xgs::ytdlp

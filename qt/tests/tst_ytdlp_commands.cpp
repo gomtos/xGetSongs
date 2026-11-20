@@ -126,6 +126,19 @@ private slots:
             QVERIFY(command.at(command.indexOf(u"-o"_s) + 1).endsWith(id + u".%(ext)s"_s));
         }
     }
+
+    // Not in Kotlin: yt-dlp reads the output directory as part of its template (`%(id)s` is expanded, `%%` is one `%`), so the
+    // caller doubles every `%` of the directory first. tst_real_ytdlp shows the real yt-dlp then writes into the folder itself.
+    void escapeOutputTemplateDirectoryDoublesEveryPercentSign() {
+        using xgs::ytdlp::escapeOutputTemplateDirectory;
+        QCOMPARE(escapeOutputTemplateDirectory(u"C:\\work\\job-1"_s), u"C:\\work\\job-1"_s);
+        QCOMPARE(escapeOutputTemplateDirectory(QString()), QString());
+        QCOMPARE(escapeOutputTemplateDirectory(u"%"_s), u"%%"_s);
+        QCOMPARE(escapeOutputTemplateDirectory(u"C:\\100% 노래\\a%(id)s b\\50%%x"_s), u"C:\\100%% 노래\\a%%(id)s b\\50%%%%x"_s);
+        const QStringList command = xgs::ytdlp::downloadCommand(
+            testTools(), url, escapeOutputTemplateDirectory(u"C:\\100% %(id)s"_s), u"dQw4w9WgXcQ"_s);
+        QCOMPARE(command.at(command.indexOf(u"-o"_s) + 1), u"C:\\100%% %%(id)s\\dQw4w9WgXcQ.%(ext)s"_s);
+    }
 };
 
 QTEST_APPLESS_MAIN(YtDlpCommandsTest)

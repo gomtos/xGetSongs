@@ -47,7 +47,7 @@
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/YtDlpCommandsTest.kt",
     "exe": "tst_ytdlp_commands",
-    "added": ["downloadRejectsAVideoIdThatIsNotAPlainFileNamePart"]
+    "added": ["downloadRejectsAVideoIdThatIsNotAPlainFileNamePart", "escapeOutputTemplateDirectoryDoublesEveryPercentSign"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/ytdlp/FfmpegCommandsTest.kt",
@@ -104,5 +104,15 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/output/LocalFolderSinkTest.kt",
     "exe": "tst_local_folder_sink",
     "added": ["putWorksWhenTheTargetPathIsLongerThan260"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealFfmpegTaggingIntegrationTest.kt",
+    "exe": "tst_real_ffmpeg_tagging",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealYtDlpIntegrationTest.kt",
+    "exe": "tst_real_ytdlp",
+    "added": ["anOutputFolderWithSpacesKoreanAndAnAmpersandWorks", "aPercentSignInTheOutputFolderIsReportedNotSilentlyMisplaced"]
   }
 ]

@@ -29,4 +29,12 @@ QStringList resolveVideoCommand(const ToolPaths& tools, const QString& url);    
 // function does not escape it (neither does Kotlin); the caller owns that.
 QStringList downloadCommand(const ToolPaths& tools, const QString& url, const QString& outputDir, const QString& videoId);
 
+// Not in Kotlin: dir with every `%` doubled, so yt-dlp's output template gives the directory back letter for letter. Pass the
+// result as downloadCommand's outputDir (the caller does; downloadCommand itself stays as Kotlin's). Observed with the real
+// yt-dlp 2026.08.19 (offline with --load-info-json and --print filename; tst_real_ytdlp's
+// aPercentSignInTheOutputFolderIsReportedNotSilentlyMisplaced checks the escaped form against YouTube): without it a `%(id)s` in
+// the directory becomes the video id and `%%` becomes `%`, so the files land silently in another folder (a lone `%` such as
+// `100%` happens to survive); with it the directory is kept as it is.
+QString escapeOutputTemplateDirectory(const QString& dir);
+
 }  // namespace xgs::ytdlp
