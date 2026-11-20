@@ -1,3 +1,8 @@
+# Qt Test writes each test's full output to qttest/<name>.txt in the build folder as well as to the console, so a failed
+# ctest run leaves its output behind even without --output-on-failure.
+set(XGS_QTTEST_OUTPUT_DIR ${CMAKE_BINARY_DIR}/qttest)
+file(MAKE_DIRECTORY ${XGS_QTTEST_OUTPUT_DIR})
+
 # xgs_add_test(<name> <sources...>): console Qt Test executable linked with xgscore, registered with ctest.
 function(xgs_add_test name)
     add_executable(${name} ${ARGN})
@@ -7,7 +12,7 @@ function(xgs_add_test name)
     # (qstringalgorithms.h, lengthHelperContainerLoop), when a u"..." literal becomes a QStringView. The warning is about
     # Qt's header, not about the test; /W4 /WX would fail every test file that uses such a literal.
     target_compile_options(${name} PRIVATE /wd4702)
-    add_test(NAME ${name} COMMAND ${name})
+    add_test(NAME ${name} COMMAND ${name} -o ${XGS_QTTEST_OUTPUT_DIR}/${name}.txt,txt -o -,txt)
 endfunction()
 
 xgs_add_test(tst_smoke tst_smoke.cpp)
@@ -43,6 +48,8 @@ target_link_libraries(tst_ffmetadata_reader PRIVATE xgstestsupport)
 xgs_add_test(tst_m4a_tagger tst_m4a_tagger.cpp)
 target_link_libraries(tst_m4a_tagger PRIVATE xgstestsupport)
 xgs_add_test(tst_local_folder_sink tst_local_folder_sink.cpp)
+xgs_add_test(tst_qt_http_client tst_qt_http_client.cpp)
+target_link_libraries(tst_qt_http_client PRIVATE xgstestsupport ws2_32)
 add_subdirectory(integration)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
