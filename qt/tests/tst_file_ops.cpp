@@ -170,6 +170,28 @@ private slots:
         xgs::fs::removeQuietly(present);
         QVERIFY(!QFile::exists(present));
     }
+
+    void existsSeesFilesAndDirectories() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString base = windowsPath(dir.path());
+        QVERIFY(xgs::fs::exists(base));   // a directory exists
+        const QString file = base + u"\\a.m4a"_s;
+        QVERIFY(!xgs::fs::exists(file));
+        writeFile(file, "x");
+        QVERIFY(xgs::fs::exists(file));
+        // a path of more than 260 units (the folder stays under 248 units, so QTemporaryDir can remove it)
+        if (base.size() > 200) QSKIP("the temporary folder's path is too long for this test");
+        const QString folder = base + u'\\' + QString(239 - base.size(), u'd');
+        QVERIFY(xgs::fs::makeDirectories(folder));
+        const QString longFile = folder + u'\\' + QString(60, u'f') + u".m4a"_s;
+        QVERIFY(longFile.size() > 260);
+        QVERIFY(!xgs::fs::exists(longFile));
+        QVERIFY(xgs::fs::writeBytes(longFile, "x").isOk());
+        QVERIFY(xgs::fs::exists(longFile));
+        xgs::fs::removeQuietly(longFile);
+        QVERIFY(!xgs::fs::exists(longFile));
+    }
 };
 
 QTEST_GUILESS_MAIN(FileOpsTest)

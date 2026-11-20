@@ -20,6 +20,7 @@
 #include <QMap>
 #include <QString>
 #include <QStringList>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <bit>
@@ -42,6 +43,7 @@
 #include "lyrics/lyrics_extractor.h"
 #include "lyrics/lyrics_matcher.h"
 #include "model/models.h"
+#include "output/local_folder_sink.h"
 #include "paths/paths.h"
 #include "process/line_splitter.h"
 #include "process/process_runner.h"
@@ -390,6 +392,7 @@ QString answerI(const QStringList& fields) {
 // W px path -> hex of paths::nameWithoutExtension(fromText(path)) | ERR
 // W ln bytes chunkSize... -> OK <each line as hex> (answerLn)
 // W st yt-dlp ffmpeg js / W up yt-dlp -> tools::ToolManager on a runner that plays the case (answerSt, answerUp)
+// W fn name -> 0 when output::LocalFolderSink::exists(name) throws std::invalid_argument, else 1 (answerFn)
 // One answerer per op (kWAnswers); the op's fields follow the op.
 QString pathOrErr(const std::optional<QString>& path) {
     return path ? hexText(*path) : QStringLiteral("ERR");
@@ -542,12 +545,32 @@ QString answerUp(const QStringList& fields) {
     return (result.isOk() ? QStringLiteral("OK ") + hexText(*result.value) : QStringLiteral("ERR ") + hexText(result.error)) + runner.commands;
 }
 
+// W fn name -> 0 | 1: does the output folder accept the file name? As Oracle.java, exists() on a sink two levels inside a
+// temporary folder (Windows resolves some accepted names, such as `...` or `.. `, to the folder or to its parent; exists only
+// reads attributes). The folder is created at the first case and removed when the program ends.
+QString answerFn(const QStringList& fields) {
+    static QTemporaryDir temp;
+    static std::optional<output::LocalFolderSink> sink;
+    if (!sink) {
+        if (!temp.isValid()) return QStringLiteral("?");
+        const std::optional<QString> root = paths::fromText(temp.path().replace(u'/', u'\\'));
+        if (!root) return QStringLiteral("?");
+        sink.emplace(*paths::child(*paths::child(*root, QStringLiteral("x")), QStringLiteral("sink")));
+    }
+    try {
+        sink->exists(textOf(fields.at(0)));
+        return QStringLiteral("1");
+    } catch (const std::invalid_argument&) {
+        return QStringLiteral("0");
+    }
+}
+
 struct WAnswer {
     QStringView op;
     Answerer answer;   // gets the fields after the op (at least one)
 };
 constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}, {u"ln", answerLn},
-                                {u"st", answerSt}, {u"up", answerUp}};
+                                {u"st", answerSt}, {u"up", answerUp}, {u"fn", answerFn}};
 
 QString answerW(const QStringList& fields) {
     if (fields.size() < 2) return QStringLiteral("?");

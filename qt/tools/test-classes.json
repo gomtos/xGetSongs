@@ -89,5 +89,20 @@
     "exe": "tst_ytdlp_resolver",
     "added": ["aCancelledRunIsCancelledAndFetchesNothing", "aPlaylistOfExactly999IsNotTruncated",
               "resolvesAFiveThousandEntryPlaylistQuickly"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/testutil/FfmetadataReaderTest.kt",
+    "exe": "tst_ffmetadata_reader",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/tags/M4aTaggerTest.kt",
+    "exe": "tst_m4a_tagger",
+    "added": ["aStartFailureOfFfmpegIsAFailureAndKeepsTheOriginal"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/output/LocalFolderSinkTest.kt",
+    "exe": "tst_local_folder_sink",
+    "added": ["putWorksWhenTheTargetPathIsLongerThan260"]
   }
 ]

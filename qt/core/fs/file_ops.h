@@ -33,6 +33,9 @@ Outcome<std::monostate> writeUtf8(const QString& path, const QString& text);
 /// true when path names an existing file that is not a directory.
 bool isRegularFile(const QString& path);
 
+/// true when path names an existing file or directory (Kotlin's `Files.exists`).
+bool exists(const QString& path);
+
 /// Deletes a file; a missing file or a failure is ignored.
 void removeQuietly(const QString& path);
 

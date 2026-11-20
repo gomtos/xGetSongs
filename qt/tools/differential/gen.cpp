@@ -3218,12 +3218,60 @@ QString generateUp(Rng& rng) {
     return hex(pick(rng, kToolDirs).toString() + u"\\yt-dlp.exe"_s) + u'\t' + runField(rng, 0.08, 0.37) + u'\t' + updateLines(rng);
 }
 
+// fn name: a file name for the output folder. The answers of kind F's file name generator (FilenameFormatter, accepted), and
+// the names around LocalFolderSink's check: `.`, `..`, the empty text, blanks, separators (`\`, `/`) and paths, drives
+// (`C:a`, `C:`), trailing spaces and dots, names of dots and spaces only, forbidden characters and control characters,
+// reserved device names (`CON`, `nul.m4a`), very long names (300 and 5000 units), path parts of the other W ops and text().
+// Then 20% get one unit replaced, inserted or deleted (corrupted, with `\`, `/`, `:`, forbidden characters, spaces, dots).
+constexpr QStringView kFnSpecial[] = {u".", u"..", u"", u" ", u"   ", u"\t", u"\u3000", u"\\", u"/", u"\\\\", u"//",
+                                      u"a\\b", u"a/b", u"..\\x", u"../evil.mp3", u"sub/evil.mp3", u".\\a.m4a", u"a\\",
+                                      u"a/", u"\\a.m4a", u"/a.m4a", u"C:a", u"C:", u"c:x.m4a", u"C:\\a.m4a", u"D:/a",
+                                      u"a ", u"a.", u"a. ", u"a .", u"a.m4a ", u"a.m4a.", u" a", u"...", u".. ", u" ..",
+                                      u". .", u"....", u"a:b", u"a.m4a:x", u"\\\\host\\share", u"\\\\?\\C:\\a", u"\"a\"",
+                                      u"\uFEFF", u"\u00A0", QStringView(u"a\0b", 3), u"null", u"x\xD83D", u"\xDE00.m4a"};
+
+QString generateFn(Rng& rng) {
+    const double roll = rng.next();
+    QString name;
+    if (roll < 0.25) {
+        const int rank = rng.between(filename::MinRank, filename::MaxRank);
+        const QString artist = rng.chance(0.3) ? nearLimit(rng, 80) : text(rng, 6);
+        const QString title = rng.chance(0.3) ? nearLimit(rng, 120) : text(rng, 8);
+        name = filename::format(rank, artist, title, rng.chance(0.5));
+    } else if (roll < 0.42) {
+        name = pick(rng, kFnSpecial).toString();
+    } else if (roll < 0.52) {
+        name = rng.chance(0.5) ? lastPart(rng) : winPart(rng);
+    } else if (roll < 0.59) {
+        name = pathText(rng);
+    } else if (roll < 0.67) {
+        name = pick(rng, kDevices).toString() + (rng.chance(0.5) ? pick(rng, kDeviceTails) : pick(rng, kDeviceExtensions)).toString();
+    } else if (roll < 0.72) {
+        const int length = rng.chance(0.8) ? rng.between(250, 320) : 5000;
+        for (int i = 0; i < length; ++i) name += rng.chance(0.7) ? charOf(rng, kAscii) : charOf(rng, kKorean);
+        if (rng.chance(0.3)) name += pick(rng, {u".m4a"_s, u" "_s, u"."_s, u"\\x"_s, u"*"_s});
+    } else if (roll < 0.79) {
+        // one forbidden or control character in a name
+        const QString base = pick(rng, kOneDotNames).toString();
+        const QString bad = rng.chance(0.6) ? QString(charOf(rng, kForbidden)) : pick(rng, kControl).toString();
+        const int at = rng.between(0, int(base.size()));
+        name = base.left(at) + bad + base.mid(at);
+    } else if (roll < 0.84) {
+        const int length = rng.between(1, 4);
+        for (int i = 0; i < length; ++i) name += rng.chance(0.7) ? pick(rng, kWhitespace).toString() : pick(rng, kSpaces).toString();
+    } else {
+        name = text(rng, 6);
+    }
+    if (rng.chance(0.2)) name = corrupted(rng, name);
+    return hex(name);
+}
+
 struct WOp {
     QStringView name;
     Generator fields;   // the fields after the op
 };
 constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn},
-                         {u"st", generateSt}, {u"up", generateUp}};
+                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}};
 
 QString generateW(Rng& rng) {
     const WOp& op = pick(rng, kWOps);

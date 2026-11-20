@@ -113,6 +113,10 @@ bool isRegularFile(const QString& path) {
     return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
+bool exists(const QString& path) {
+    return attributesOf(path) != INVALID_FILE_ATTRIBUTES;
+}
+
 void removeQuietly(const QString& path) {
     DeleteFileW(wide(win32Path(path)));
 }

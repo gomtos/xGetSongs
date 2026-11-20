@@ -1,6 +1,7 @@
 import com.xgetsongs.engine.lyrics.LyricsCandidate;
 import com.xgetsongs.engine.lyrics.LyricsMatcher;
 import com.xgetsongs.engine.lyrics.LyricsQuery;
+import com.xgetsongs.engine.output.LocalFolderSink;
 import com.xgetsongs.engine.tags.Ffmetadata;
 import com.xgetsongs.engine.tags.TrackTags;
 import com.xgetsongs.engine.ResolveException;
@@ -116,7 +117,8 @@ import kotlinx.serialization.json.JsonPrimitive;
  *         W op fields...                     paths and files, one op per case (answerW): pn text, pc dir name, pf path,
  *                                            px path, ln bytes chunkSize... (the lines of a child's output, answerLines),
  *                                            st and up (DefaultToolManager.status and updateYtDlp on a runner that plays
- *                                            the case: answerTools)
+ *                                            the case: answerTools), fn name (does LocalFolderSink accept the file
+ *                                            name: 0 | 1, answerFileName)
  *         P op fields...                     YtDlpResolver on a runner that plays the case, one op per case (answerP): rs input
  *                                            run stdout stderr..., fx videoId run stdout stderr...
  *
@@ -543,6 +545,7 @@ public class Oracle {
     //   pc dir name   Path.of(dir).resolve(name).toString()           -> hex | ERR
     //   pf path       Path.of(path).getFileName(), "-" for null       -> hex | - | ERR
     //   px path       kotlin.io.path nameWithoutExtension of Path.of(path)   -> hex | ERR
+    //   fn name       LocalFolderSink(a JVM temp folder).exists(name) throws: 0, else 1 (answerFileName)
     static String answerW(String[] part) throws Exception {
         try {
             switch (part[1]) {
@@ -561,11 +564,45 @@ public class Oracle {
                 case "st":
                 case "up":
                     return answerTools(part);
+                case "fn":
+                    return answerFileName(dec(part[2]));
                 default:
                     return "?";
             }
         } catch (java.nio.file.InvalidPathException e) {
             return "ERR";
+        }
+    }
+
+    // W fn: does LocalFolderSink accept this file name? Its private resolve() is reached through exists(), which calls it
+    // before any file access (`Files.exists(resolve(fileName))`); resolve's require throws IllegalArgumentException (or
+    // InvalidPathException, a subclass, from Path.of) for a rejected name, and Path.of(name).fileName.toString() throws
+    // NullPointerException for a name that is a root only (`C:`, `\`; observed). Either answers 0. Files.exists only reads
+    // attributes. A name is one path part at most, but Windows resolves some accepted names (`...`, `.. `) to the folder or
+    // to its parent (observed: exists is true), so the sink folder is two levels inside the temp folder: nothing outside
+    // that folder is ever looked at. The folder is created at the first fn case and removed when the JVM exits.
+    static LocalFolderSink fileNameSink;
+
+    static String answerFileName(String name) throws Exception {
+        if (fileNameSink == null) {
+            java.nio.file.Path root = java.nio.file.Files.createTempDirectory("xgs-diff-sink-");
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> deleteTree(root)));
+            fileNameSink = new LocalFolderSink(root.resolve("x").resolve("sink"));
+        }
+        try {
+            kotlinx.coroutines.BuildersKt.<Boolean>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+                (scope, continuation) -> fileNameSink.exists(name, continuation));
+            return "1";
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return "0";
+        }
+    }
+
+    static void deleteTree(java.nio.file.Path root) {
+        try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(root)) {
+            for (java.nio.file.Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList()) java.nio.file.Files.deleteIfExists(p);
+        } catch (java.io.IOException e) {
+            System.err.println("could not remove " + root + ": " + e);
         }
     }
 

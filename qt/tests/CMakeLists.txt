@@ -38,6 +38,11 @@ xgs_add_test(tst_tool_manager tst_tool_manager.cpp)
 target_link_libraries(tst_tool_manager PRIVATE xgstestsupport)
 xgs_add_test(tst_ytdlp_resolver tst_ytdlp_resolver.cpp)
 target_link_libraries(tst_ytdlp_resolver PRIVATE xgstestsupport)
+xgs_add_test(tst_ffmetadata_reader tst_ffmetadata_reader.cpp)
+target_link_libraries(tst_ffmetadata_reader PRIVATE xgstestsupport)
+xgs_add_test(tst_m4a_tagger tst_m4a_tagger.cpp)
+target_link_libraries(tst_m4a_tagger PRIVATE xgstestsupport)
+xgs_add_test(tst_local_folder_sink tst_local_folder_sink.cpp)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
 # XGS_TEST_CHILD.

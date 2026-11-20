@@ -413,6 +413,14 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'up: answer ERR' $err $indexes.Count 0.30
         Test-Share 'W' 'up: yt-dlp does not start' $starts $indexes.Count 0.02
     }
+    # fn name: each answer (accepted 1, rejected 0) 25%
+    fn = {
+        param($cases, $answers, $indexes)
+        $accepted = @($indexes | Where-Object { $answers[$_] -ceq '1' }).Count
+        $rejected = @($indexes | Where-Object { $answers[$_] -ceq '0' }).Count
+        Test-Share 'W' 'fn: answer 1 (accepted)' $accepted $indexes.Count 0.25
+        Test-Share 'W' 'fn: answer 0 (rejected)' $rejected $indexes.Count 0.25
+    }
 }
 # Kind P: one check per op, each on the indexes of that op's cases (thresholds of the Q2b plan, per op). An op of P without an
 # entry here fails the run.
