@@ -307,7 +307,7 @@ controller의 결정(`progress.md`의 "Ruling")과 Task 구현자가 정한 것�
 23. **서버가 보낸 407은 `Failed`**(최종 리뷰 반영에서 관찰). 프록시 없이 닿은 서버가 407을 주면 Qt는 `ProxyAuthenticationRequiredError`(105, 클라이언트가 답으로 보는 201 이상 범위 밖)로 알리고 상태 코드도 주지 않아 Qt 판은 Qt의 문구 `Proxy requires authentication`의 `Failed`다(`Proxy-Authenticate` 머리가 있든 없든, `a407IsAFailureWithQtsTextNotAResponse`). 이것은 릴리스 판의 동작이다. Qt 6.11.3의 디버그 판은 같은 응답에서 자기 단언(`qnetworkaccessauthenticationmanager.cpp`의 `p.type() != QNetworkProxy::NoProxy`)으로 프로세스를 멈춘다(첫 검증의 디버그 `ctest`가 `0xc0000409`로 잡았다). 그래서 이 시험은 디버그 빌드에서 건너뛴다. 앱의 디버그 빌드도 그런 서버를 만나면 멈출 수 있다. Kotlin `HttpClient`는 상태 코드를 응답으로 돌려주고 앱은 `Authenticator`를 두지 않으므로 407 응답을 돌려줄 것으로 보지만 보지 않았다. 예: LRCLIB가 407을 주면 두 쪽 모두 그 요청은 없음(Kotlin: 200 아님, Qt 판: `Failed`). `httpFetch`에서는 Kotlin이라면 `HTTP 407`, Qt 판은 Qt의 문구가 한국어 앞말 뒤에 붙는다.
 24. **리다이렉트는 50번까지 따른다.** Qt의 기본 한도(`QNetworkRequest`의 최대 리다이렉트 50)이고 넘으면 `TooManyRedirectsError`로 `Failed`다(`moreThanFiftyRedirectsAreAFailure`: 서버가 요청 51개를 받음). JDK `HttpClient`의 문서에 적힌 기본 한도는 5(`jdk.httpclient.redirects.retrylimit`)이고 넘었을 때 무엇을 돌려주는지는 보지 않았다. 예: 리다이렉트를 6~50번 거치는 주소는 Qt 판에서 끝까지 따라가 답을 받고, Kotlin에서는 한도에 걸린다. 공급자에게는 넘은 경우 두 쪽 모두 그 요청의 없음일 것이고(Kotlin이 3xx를 돌려주든 `IOException`을 던지든), `httpFetch`는 문구가 다르다.
 25. **자리를 기다리는 호출은 정해진 순서 없이 자리를 받는다.** C++ 공급자는 `std::condition_variable_any`로 기다리므로 자리가 비면 기다리던 호출 중 어느 것이 먼저 받을지 정해져 있지 않다. Kotlin은 `kotlinx.coroutines.sync.Semaphore`이고 리뷰는 그것이 먼저 온 순서(FIFO)라고 지적했다(이 작업에서는 그 문서를 다시 열어 보지 못했다: 네트워크를 쓰지 않는 규칙). 결과(가사와 요청 수)에는 드러나지 않고, 어느 곡을 먼저 묻는지만 다를 수 있다. 예: `maxConcurrent` 1에서 세 곡이 기다리면 Kotlin은 온 순서로, Qt 판은 운영체제가 깨우는 순서로 묻는다.
-26. **Qt의 압축 해제 안전 검사에 걸린 본문은 `Failed`**(최종 리뷰 반영에서 관찰하고 고침). Qt는 gzip 본문을 받은 만큼 한 번에 풀고, 푼 크기가 `QNetworkRequest::decompressedSafetyCheckThreshold`(기본 10 MiB, 시험이 확인)를 넘어 그 검사에 걸리면 `UnknownContentError`(`Decompression failed: The decompressed output exceeds the limits …`)를 알린다. 이때 Qt는 응답을 끝내지 않아서, 고치기 전에는 호출이 전체 시간 제한까지(없으면 영원히) 기다렸다. 이제 클라이언트가 그 응답을 Qt의 오류로 끝낸다(`Failed`). 예: 1MiB 한도로 쉬지 않고 오는 끝없는 gzip 본문은 Qt가 한 번에 10MiB 넘게 풀어 `Failed`(Qt 문구), 20ms마다 조금씩 오는 같은 본문은 클라이언트의 한도가 먼저 걸려 `bodyTooLarge`다. 공급자에게는 둘 다 그 요청의 없음(Kotlin의 200 + 너무 큼도 없음)이고, `httpFetch`에서는 `내려받는 파일이 너무 큽니다.` 대신 Qt의 문구가 붙는다. 한도가 10MiB보다 큰 `httpFetch`(200MiB)에서는 압축률이 높은 10MiB 넘는 gzip 본문이 한도 안이어도 Qt 판에서 실패할 수 있다(Kotlin은 압축을 청하지 않으므로 서버가 그대로 보낸다). Kotlin에는 이 길이 없다.
+26. **Qt의 압축 해제 안전 검사에 걸린 본문은 `Failed`**(최종 리뷰 반영에서 관찰하고 고침). Qt는 gzip 본문을 받은 만큼 한 번에 풀고, 푼 크기가 `QNetworkRequest::decompressedSafetyCheckThreshold`(기본 10 MiB, 시험이 확인)를 넘어 그 검사에 걸리면 `UnknownContentError`(`Decompression failed: The decompressed output exceeds the limits …`)를 알린다. 이때 Qt는 응답을 끝내지 않아서, 고치기 전에는 호출이 전체 시간 제한까지(없으면 영원히) 기다렸다. 이제 클라이언트가 그 응답을 Qt의 오류로 끝낸다(`Failed`). 예: 1MiB 한도로 쉬지 않고 오는 끝없는 gzip 본문은 탐침에서는 Qt가 한 번에 10MiB 넘게 풀어 `Failed`(Qt 문구)였고(시험은 `Failed`와 `bodyTooLarge` 둘 다 받아들이며, 재검증 실행에서 어느 쪽이었는지는 남기지 않았다), 20ms마다 조금씩 오는 같은 본문은 클라이언트의 한도가 먼저 걸려 `bodyTooLarge`다. 공급자에게는 둘 다 그 요청의 없음(Kotlin의 200 + 너무 큼도 없음)이고, `httpFetch`에서는 `내려받는 파일이 너무 큽니다.` 대신 Qt의 문구가 붙는다. 한도가 10MiB보다 큰 `httpFetch`(200MiB)에서는 압축률이 높은 10MiB 넘는 gzip 본문이 한도 안이어도 Qt 판에서 실패할 수 있다(Kotlin은 압축을 청하지 않으므로 서버가 그대로 보낸다). Kotlin에는 이 길이 없다.
 
 ## 고치지 않은 Kotlin 쪽 동작
 
@@ -387,6 +387,9 @@ Q2a·Q2b 보고서의 "고치지 않은 Kotlin 쪽 동작"은 그대로 남아 �
 - **TLS 플러그인은 실행 파일마다 확인한다.** 정적 Schannel 플러그인이 링크됐다는 증거(`theSchannelTlsBackendIsLinkedIn`)는 `tst_qt_http_client.exe`의 것이다. 앱 실행 파일과 `QtHttpClient`를 쓰는 새 실행 파일은 링크 줄이 다르므로, 시작할 때나 시험에서 `QSslSocket::supportsSsl()`과 활성 백엔드 `schannel`을 같은 식으로 확인한다.
 - **클라이언트의 수명.** 앱의 `QtHttpClient` 하나는 `QCoreApplication`보다 먼저 없앤다. LRCLIB 공급자와 `httpFetch`는 클라이언트를 참조로 쥐므로 클라이언트보다 먼저 없어지거나 쉬고 있어야 한다(헤더는 "클라이언트가 더 오래 살아야 한다"고만 적는다).
 - **`Unreachable`과 `Failed`의 뜻을 작업이 지키기.** 공급자는 `Unreachable`을 쉬는 시간의 이유로 쓴다. 다른 호출자가 새 상태를 쓰면 이 구분을 따른다.
+- **멈춘 응답 끝내기의 순서 가정(재리뷰 N-1).** Qt가 오류를 알렸는데 응답을 끝내지 않으면 클라이언트가 줄 세운 확인에서 직접 끝낸다. 보통의 404·429·503도 오류를 알리는 순간에는 아직 끝나지 않았고 `finished`가 뒤따른다(관찰한 것은 순서이지 같은 호출 안이라는 것이 아니다; 코드 주석의 "곧바로 끝낸다"는 관찰보다 세게 적혀 있다). 확인이 먼저 돌아도 추적한 답은 같지만, Qt가 그 순서를 바꾸면 4xx 본문이 잘릴 수 있다. 4xx 본문을 읽는 호출자가 생기면 다시 본다.
+- **상태 400 이상인 응답이 안전 검사에 걸리면(재리뷰 N-2)** 답은 `Failed`가 아니라 그 상태의 `Response`이고 본문은 풀린 데까지이며 `bodyTooLarge`는 꺼져 있다. 헤더 주석은 `Failed`라고만 적는다. 지금은 4xx 본문을 읽는 호출자가 없어 보이는 차이가 없다.
+- 코드 주석의 "시간 제한이 없으면 끝나지 않는다"는 10초 안에 끝나지 않는 것까지만 관찰했다(재리뷰 N-3).
 - Q2b 보고서의 "Q2d에 넘길 것"은 그대로다.
 
 ## 사용자가 정할 것
@@ -422,7 +425,7 @@ Q2a·Q2b 보고서의 "고치지 않은 Kotlin 쪽 동작"은 그대로 남아 �
 - **Kotlin과의 차이 넷(M-2)과 시험 셋.** 위 23~26번. 407(`a407IsAFailureWithQtsTextNotAResponse`, 디버그 빌드에서는 건너뜀: 23번)과 리다이렉트 50번(`moreThanFiftyRedirectsAreAFailure`)을 시험으로 고정했고, 오류 처리를 더한 뒤에도 느린 4xx 본문을 통째로 읽는지 `anErrorAnswerWhoseBodyComesSlowlyIsReadWhole`로 본다(Qt는 4xx 오류를 본문이 다 온 뒤에 알린다: `probe-4xx-timing.txt`). 재사용 연결은 "확인하지 못한 것"에 더했다.
 - **요청 시간 0과 쉬는 시간(M-1).** 시험 이름을 `aRequestTimeoutOfZeroSendsNothing`으로 바꿨고(관찰 2, 19번의 문장도), 대조 통계 "쉬는 시간 시작"은 "요청이 쉬는 시간을 시작"으로 이름을 바꿔 요청 시간이 0 이하인 사례를 양쪽 어디에도 세지 않는다. 문턱(10%)과 생성기는 그대로다.
 - **시간에 기대던 시험 셋(M-3).** `theSlotsAreSharedByEveryCallOfOneProviderButNotByTwoProviders`의 둘째 절반은 두 처리기가 서로 들어올 때까지(최대 5초) 기다린다(단언 `peak == 2`는 그대로). `aConnectionClosedInTheMiddleOfTheBodyIsAFailureNotATimeout`의 재설정 전 기다림은 300ms에서 1초로, `aCallWaitingForASlotReturnsWhenItIsCancelled`의 한계는 1초에서 3초로 늘렸다(주석에 이유).
-- **`tst_real_lrclib`의 값 읽기(M-4).** 불리언은 공급자처럼 대소문자 없이, 수는 `kt::toDoubleOrNull`로 읽는다. 이 실행 파일은 다시 돌리지 않았다(실제 서비스, 아래).
+- **`tst_real_lrclib`의 값 읽기(M-4).** 불리언은 공급자처럼 대소문자 없이, 수는 `kt::toDoubleOrNull`로 읽는다. 이 실행 파일은 실제 서비스로는 다시 돌리지 않았다(`ctest`에서는 건너뜀으로만 돌았다, 아래).
 - **Q2d에 넘길 것(M-6).** TLS 플러그인 확인과 클라이언트 수명 두 줄을 더했다.
 - **Task 6 리뷰의 작은 지적 1·2·3·4·6.** "JSON 아님"의 문장, `null`의 대소문자, `00-timeline-build-run.txt` 끝의 첫 시도, README의 Q2c, 18·19·22번의 예.
 
@@ -454,6 +457,6 @@ Q2a·Q2b 보고서의 "고치지 않은 Kotlin 쪽 동작"은 그대로 남아 �
 
 ## 판정
 
-**Q2c의 관문은 충족됐다.** 이식 대상 Kotlin 단위 시험 62개와 통합 시험 4개는 같은 이름으로 통과하고(이름 대조에서 빠진 것 0, 25개 클래스), 깨끗한 릴리스·디버그 빌드에서 두 `ctest` 35개가 모두 통과했으며(1173 통과·0 실패), 금지 호출 0건, 대조는 다섯 번의 실행에서 26개 종류 모두 불일치 0과 통계 문턱 통과, 디버그 도구는 릴리스와 같았고, 되풀이 실행 160번이 모두 통과했고, 실제 통합 시험은 ffmpeg 8개, LRCLIB 5개, yt-dlp 5개가 통과했다. 관문 사이에는 C++을 고치지 않았다. 관문 뒤 최종 리뷰 반영에서 C++을 고쳤고(HTTP 클라이언트 두 곳과 시험), 그 코드로 빌드·`ctest`·되풀이 실행·두 스크립트·`W` 대조를 다시 돌렸다(아래 "최종 리뷰 반영"). 실제 서비스 통합 시험은 다시 돌리지 않았다.
+**Q2c의 관문은 충족됐다.** 이식 대상 Kotlin 단위 시험 62개와 통합 시험 4개는 같은 이름으로 통과하고(이름 대조에서 빠진 것 0, 25개 클래스), 깨끗한 릴리스·디버그 빌드에서 두 `ctest` 35개가 모두 통과했으며(1173 통과·0 실패), 금지 호출 0건, 대조는 다섯 번의 실행에서 26개 종류 모두 불일치 0과 통계 문턱 통과, 디버그 도구는 릴리스와 같았고, 되풀이 실행 160번이 모두 통과했고, 실제 통합 시험은 ffmpeg 8개, LRCLIB 5개, yt-dlp 5개가 통과했다. 관문 사이에는 C++을 고치지 않았다. 관문 뒤 최종 리뷰 반영에서 C++을 고쳤고(HTTP 클라이언트의 수신 객체·닫는 중 확인·멈춘 응답 끝내기와 시험), 그 코드로 빌드·`ctest`·되풀이 실행·두 스크립트·`W` 대조를 다시 돌렸다(위 "최종 리뷰 반영"). 실제 서비스 통합 시험은 다시 돌리지 않았다.
 
 이 진술이 다루지 않는 것: HTTPS 위의 리다이렉트·시간 제한(루프백 `http`로만 봄), 거절한 `https`→`http` 리다이렉트, 모르는 호스트와 그 밖의 실제 네트워크 오류 길, 프록시 환경, Windows 10, 실제 yt-dlp.exe 내려받기, `yt-dlp -U`, 오디오를 내려받는 통합 시험과 Q2d로 미룬 통합 시험, 디버그 빌드의 통합 시험, 재현되지 않은 Q2b의 실행기 실패 한 번의 원인. 사용자가 정할 것은 위에 모았다.
