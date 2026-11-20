@@ -571,7 +571,8 @@ QString answerFn(const QStringList& fields) {
 }
 
 // W lf artist title album durationSeconds maxRequests timeout step... -> OK <lyrics hex> | NULL, N <requests of the second
-// call>, U <every URL of the first call as hex>: lyrics::LrclibLyricsProvider on xgs::testing::FakeHttpClient, as Oracle.java's
+// call>, C <requests of one call with maxRequests + 1 on a fresh client and provider>, U <every URL of the first call as hex>:
+// lyrics::LrclibLyricsProvider on xgs::testing::FakeHttpClient, as Oracle.java's
 // answerLookUp (which documents the notation). The base URL is http://h/api, the clock never moves, the cool-down is the
 // default. A step: <code>:<bytes> (an answer), <code>:L (an answer whose body is over the limit: bodyTooLarge, no bytes),
 // C / T / U (Unreachable: connection refused, timeout, unknown host), I (Failed: another IO error). Once the steps run out,
@@ -595,14 +596,9 @@ QString answerLf(const QStringList& fields) {
 
     const QStringList steps = fields.mid(6);
     std::mutex mutex;
-    qsizetype next = 0;
     bool bad = false;
-    testing::FakeHttpClient client([&](const net::HttpRequest&, std::stop_token) {
-        QString step = QStringLiteral("404:.");
-        {
-            std::lock_guard lock(mutex);
-            if (next < steps.size()) step = steps.at(next++);
-        }
+    // what the client answers for one step
+    const auto answerStep = [&](const QString& step) {
         net::HttpResponse answer;
         if (step == u"C" || step == u"T" || step == u"U") {
             answer.status = net::HttpStatus::Unreachable;
@@ -627,15 +623,35 @@ QString answerLf(const QStringList& fields) {
             return answer;
         }
         return testing::FakeHttpClient::response(code, body == u"." ? QByteArray() : QByteArray::fromHex(body.toLatin1()));
-    });
+    };
+    // a script that plays the steps from the start, with its own position
+    const auto script = [&](qsizetype& next) {
+        return [&](const net::HttpRequest&, std::stop_token) {
+            QString step = QStringLiteral("404:.");
+            {
+                std::lock_guard lock(mutex);
+                if (next < steps.size()) step = steps.at(next++);
+            }
+            return answerStep(step);
+        };
+    };
+    qsizetype next = 0;
+    testing::FakeHttpClient client(script(next));
     lyrics::LrclibLyricsProvider provider(client, options);
     const std::optional<QString> found = provider.find(query, {});
     const QStringList firstUrls = client.urls();
     provider.find(query, {});
     const qsizetype second = client.urls().size() - firstUrls.size();
+    // the same lookup on a fresh client and provider whose cap is one higher (C)
+    qsizetype widerNext = 0;
+    testing::FakeHttpClient wider(script(widerNext));
+    lyrics::LrclibOptions widerOptions = options;
+    widerOptions.maxRequests = options.maxRequests + 1;
+    lyrics::LrclibLyricsProvider(wider, widerOptions).find(query, {});
     if (bad) return QStringLiteral("?");
     QString out = found ? QStringLiteral("OK ") + hexText(*found) : QStringLiteral("NULL");
-    out += QStringLiteral(" N ") + QString::number(second) + QStringLiteral(" U");
+    out += QStringLiteral(" N ") + QString::number(second) + QStringLiteral(" C ") + QString::number(wider.urls().size()) +
+           QStringLiteral(" U");
     for (const QString& url : firstUrls) out += u' ' + hexText(url);
     return out;
 }

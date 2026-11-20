@@ -425,28 +425,45 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'fn: answer 1 (accepted)' $accepted $indexes.Count 0.25
         Test-Share 'W' 'fn: answer 0 (rejected)' $rejected $indexes.Count 0.25
     }
-    # lf artist title album duration maxRequests timeout step... (Kotlin's answer: OK hex | NULL, N count, U urls): lyrics
-    # found 15%, not found 30%; a request to /search 40%; the cool-down started (the second call of a query that is not blank
-    # made no request) 10%; the cap reached (as many requests as maxRequests, at least one) 5%; a query with a character
-    # outside ASCII 20%, with one of `& = # + %` or a space 10%, with an unpaired surrogate 2%; a requested answer with a
-    # record that has a field of the wrong type 10%, with a body that is not JSON 5%; a requested /search answer with two or
-    # more records 15%
+    # lf artist title album duration maxRequests timeout step... (Kotlin's answer: OK hex | NULL, N count, C count, U urls):
+    # lyrics found 15%, not found 30%; a request to /search 40%; the cool-down started 10%; the cap cut the lookup short 5%;
+    # a query with a character outside ASCII 20%, with one of `& = # + %` or a space 10%, with an unpaired surrogate 2%; a
+    # requested answer with a record that has a field of the wrong type 10%, with a body that is not JSON 5%; a requested
+    # /search answer with two or more records 15%.
+    # The cool-down started exactly when a request of the first call ended in Stop (the provider's only way to start it): the
+    # last request it made was answered 429, 502, 503 or 504 (with any body) or failed to connect, timed out or found no host
+    # (C, T, U), or the request timeout is not positive (0 or N), maxRequests is at least 1 and the artist and the title are
+    # not blank (the one request is then given up at once). Checked both ways (it fails the run otherwise): the second call
+    # made no request in every such case, and at least one in every other case of a query that is not blank with
+    # maxRequests >= 1.
+    # The cap cut the lookup short exactly when one call with maxRequests + 1 on the same steps (C) made more than
+    # maxRequests requests: the two calls are the same up to the cap, so the wider one makes a further request only if the
+    # first call was stopped by the cap.
     lf = {
         param($cases, $answers, $indexes)
         $found = 0; $none = 0; $search = 0; $coolDown = 0; $cap = 0; $nonAscii = 0; $special = 0; $lone = 0; $wrong = 0; $notJson = 0
-        $several = 0
+        $several = 0; $coolDownButAsked = 0
         foreach ($i in $indexes) {
             $case = $cases[$i]
             $tokens = $answers[$i] -split ' '
             if ($tokens[0] -ceq 'OK') { $found++ } elseif ($tokens[0] -ceq 'NULL') { $none++ }
             $at = [Array]::IndexOf($tokens, 'N')
             $second = [int]$tokens[$at + 1]
-            $urls = @(if ($tokens.Count -gt $at + 3) { $tokens[($at + 3)..($tokens.Count - 1)] })
+            $wider = [int]$tokens[$at + 3]
+            $urls = @(if ($tokens.Count -gt $at + 5) { $tokens[($at + 5)..($tokens.Count - 1)] })
             if (@($urls | Where-Object { $_.StartsWith($LfSearchHex, [StringComparison]::Ordinal) }).Count -gt 0) { $search++ }
-            $blank = { param($f) $f -ceq '.' -or (Test-BlankOnly $f) }
-            if ($second -eq 0 -and -not (& $blank $case[1]) -and -not (& $blank $case[2])) { $coolDown++ }
             $max = [int]$case[5]
-            if ($max -gt 0 -and $urls.Count -eq $max) { $cap++ }
+            $started = $false
+            if ($urls.Count -gt 0) {
+                $last = if (7 + $urls.Count - 1 -lt $case.Count) { $case[7 + $urls.Count - 1] } else { '404:.' }
+                $started = $LfStopStep.IsMatch($last)
+            } elseif ($case[6] -cne 'D' -and $max -gt 0 -and -not (Test-KotlinBlank $case[1]) -and -not (Test-KotlinBlank $case[2])) {
+                $started = $true
+            }
+            if ($started) { $coolDown++; if ($second -ne 0) { $coolDownButAsked++ } }
+            # the other way round: without a cool-down, a query that is not blank with maxRequests >= 1 is asked again
+            elseif ($second -eq 0 -and $max -gt 0 -and -not (Test-KotlinBlank $case[1]) -and -not (Test-KotlinBlank $case[2])) { $coolDownButAsked++ }
+            if ($max -gt 0 -and $wider -gt $max) { $cap++ }
             $fields = @($case[1], $case[2], $case[3])
             if (@($fields | Where-Object { $LfNonAsciiHex.IsMatch($_) }).Count -gt 0) { $nonAscii++ }
             if (@($fields | Where-Object { $LfSpecialHex.IsMatch($_) }).Count -gt 0) { $special++ }
@@ -481,7 +498,9 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'lf: no lyrics' $none $n 0.30
         Test-Share 'W' 'lf: a request to /search' $search $n 0.40
         Test-Share 'W' 'lf: the cool-down started' $coolDown $n 0.10
-        Test-Share 'W' 'lf: the cap of requests reached' $cap $n 0.05
+        Write-Host "  W: lf: check, not a threshold: cases where the cool-down rule and the second call disagree: $coolDownButAsked"
+        if ($coolDownButAsked -gt 0) { "W: lf: $coolDownButAsked cases where the cool-down rule of the statistic and the second call disagree (the rule is wrong)" }
+        Test-Share 'W' 'lf: the cap cut the lookup short' $cap $n 0.05
         Test-Share 'W' 'lf: a query with a character outside ASCII' $nonAscii $n 0.20
         Test-Share 'W' 'lf: a query with one of & = # + % or a space' $special $n 0.10
         Test-Share 'W' 'lf: a query with an unpaired surrogate' $lone $n 0.02
@@ -493,13 +512,25 @@ $WOpChecks = [ordered]@{
 # Helpers of the W lf statistics (for counting only; the answers are compared exactly). The URL of a /search request as hex;
 # on a field's hex, a unit outside ASCII and one of `& = # + %` or a space; on a decoded body, a record field of the wrong
 # type (a duration that is not a plain number or null, an instrumental that is not true, false or null, a string field
-# that is not a string or null); the unquoted odd literals that kotlinx reads and System.Text.Json does not (replaced before
-# the strict parse that decides "not JSON").
+# that is not a string or null); the unquoted odd literals that kotlinx reads and System.Text.Json does not (replaced by 0
+# before the strict parse that decides "not JSON"; the replaced run never holds `"` or `\`, so a valid string stays valid);
+# a step that makes the provider stop and start its cool-down. Test-KotlinBlank: Kotlin's isBlank of a field's hex.
+$LfStopStep = [regex]::new('^(?:(?:429|502|503|504):.*|C|T|U)$', 'Compiled')
+function Test-KotlinBlank([string]$field) {
+    if ($field -ceq '.') { return $true }
+    if ($field -ceq '-') { return $false }
+    for ($i = 0; $i -lt $field.Length; $i += 4) {
+        $unit = [Convert]::ToInt32($field.Substring($i, 4), 16)
+        $white = ($unit -ge 0x1C -and $unit -le 0x1F) -or ($unit -ne 0x85 -and [char]::IsWhiteSpace([char]$unit))
+        if (-not $white) { return $false }
+    }
+    return $true
+}
 $LfSearchHex = -join ('http://h/api/search?'.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ })
 $LfNonAsciiHex = [regex]::new('^(?:[0-9a-f]{4})*?(?!00[0-7][0-9a-f])[0-9a-f]{4}', 'Compiled')
 $LfSpecialHex = [regex]::new('^(?:[0-9a-f]{4})*?00(?:26|3d|23|2b|25|20)', 'Compiled')
 $LfWrongType = [regex]::new('"duration":\s*(?!(?:-?[0-9]+(?:\.[0-9]+)?|null)[,}\s])|"instrumental":\s*(?!(?:true|false|null)[,}\s])|"(?:trackName|artistName|albumName|plainLyrics)":\s*(?!"|null[,}\s])', 'Compiled')
-$LfOddLiteral = [regex]::new(':(?!(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)[,}\]\s])[^"\[{\s,}\]][^,}\]\s]*', 'Compiled')
+$LfOddLiteral = [regex]::new(':(?!(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)[,}\]\s"])[^"\\\[{\s,}\]][^"\\,}\]\s]*', 'Compiled')
 $LfStrictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
 # The number of objects directly inside a body whose root is an array (a tolerant scan for the statistics only: it follows
 # strings and brackets and does not check the rest; a root that is not an array counts 0).

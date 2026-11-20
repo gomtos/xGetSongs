@@ -791,8 +791,9 @@ public class Oracle {
     //   <code>:<bytes>   an answer with that status and body (2 hex digits a byte, "." for none)
     //   <code>:L         an answer with that status whose body is 2 MiB + 1 bytes (a stream that makes them as it is read)
     //   C | T | U | I    send throws ConnectException | HttpTimeoutException | UnknownHostException | IOException
-    // -> OK <lyrics hex> | NULL (the first call), then N and the number of requests the second call made, then U and the URL of
-    // every request of the first call as hex (the URL the provider handed to the client: request.uri().toString()).
+    // -> OK <lyrics hex> | NULL (the first call), then N and the number of requests the second call made, then C and the number
+    // of requests one call makes on a fresh client and provider with maxRequests + 1 (the same steps from the start), then U
+    // and the URL of every request of the first call as hex (the URL the provider handed to the client: request.uri().toString()).
     // Nothing is sent anywhere: the client answers from the case.
     static final String LF_BASE_URL = "http://h/api";
 
@@ -938,8 +939,14 @@ public class Oracle {
         kotlinx.coroutines.BuildersKt.<String>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
             (scope, continuation) -> provider.find(query, continuation));
         int second = client.urls.size() - firstUrls.size();
+        // the same lookup on a fresh client and provider whose cap is one higher: more requests than maxRequests means the cap
+        // cut the first call short
+        ScriptClient wider = new ScriptClient(java.util.Arrays.copyOfRange(part, 8, part.length));
+        com.xgetsongs.engine.lyrics.LrclibLyricsProvider widerProvider = lrclibProvider(wider, requestTimeout, maxRequests + 1);
+        kotlinx.coroutines.BuildersKt.<String>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+            (scope, continuation) -> widerProvider.find(query, continuation));
         StringBuilder out = new StringBuilder(lyrics == null ? "NULL" : "OK " + enc(lyrics));
-        out.append(" N ").append(second).append(" U");
+        out.append(" N ").append(second).append(" C ").append(wider.urls.size()).append(" U");
         for (String url : firstUrls) out.append(' ').append(enc(url));
         return out.toString();
     }

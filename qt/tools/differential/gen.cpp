@@ -3275,7 +3275,8 @@ QString generateFn(Rng& rng) {
 // shaped for /get (a record), the others for /search (an array of records). Most are HTTP 200 with a body: records that match
 // the query, other songs, wrong lengths, lyrics too short, instrumentals, loose candidates, with fields of the wrong type
 // (`duration` `"258"`, `NaN`, `1e400`, `0x10`, `258.4`...; `instrumental` `"true"`, `TRUE`, `1`, `null`...; names that are
-// numbers, `null`, objects, arrays), JSON null for a field, unpaired surrogates escaped or raw, malformed UTF-8 bytes inside
+// numbers, `null`, objects, arrays; a third of the records meant to match spell `instrumental` in an odd case: `TRUE`,
+// `fAlSe`...), JSON null for a field, unpaired surrogates escaped or raw, malformed UTF-8 bytes inside
 // strings; also bodies that are not JSON, empty arrays, other JSON values. The rest: 404, 500 and other codes, 429, 502, 503,
 // 504, a body over 2 MiB (L: only a mark, both sides make the bytes up or skip them), a failure to connect, a timeout, an
 // unknown host, another IO error. Every name stays far below 1,000 UTF-16 units (the port's cap is an approved difference).
@@ -3408,33 +3409,44 @@ QByteArray lfNumber(double value) {
 }
 
 // A value of the wrong type (or an odd spelling) for a record field: 0..2 names, 3 duration, 4 instrumental, 5 plainLyrics.
+// The literals the Q2c brief names are entries of their own (duration `"258"`, `NaN`, `1e400`, `0x10`, `258.4`; instrumental
+// `"true"`, `TRUE`, `1`, `null`); others are made from the record's own duration.
 QByteArray lfWrongValue(Rng& rng, int field, const std::optional<double>& duration) {
     const QByteArray wanted = lfNumber(duration.value_or(258.0));
     if (field == 3) {
-        const QByteArray values[] = {"\"" + wanted + "\"", "NaN", "1e400", "0x10", wanted + ".4", "-0", "2.58e2", "Infinity",
-                                     "\"NaN\"", "true", "null", "[" + wanted + "]", "{\"s\":" + wanted + "}", "+" + wanted,
-                                     "0" + wanted, wanted + ".", ".5", "258f", "1_000", "-Infinity", "\"\"", "1e-400", "00",
-                                     "258.0", "\" 258\""};
+        const QByteArray values[] = {"\"258\"", "NaN", "1e400", "0x10", "258.4", "\"" + wanted + "\"", wanted + ".4", "-0",
+                                     "2.58e2", "Infinity", "\"NaN\"", "true", "null", "[" + wanted + "]",
+                                     "{\"s\":" + wanted + "}", "+" + wanted, "0" + wanted, wanted + ".", ".5", "258f", "1_000",
+                                     "-Infinity", "\"\"", "1e-400", "00", "258.0", "\" 258\""};
         return pick(rng, values);
     }
     if (field == 4) {
         static const QByteArray values[] = {"\"true\"", "TRUE", "True", "1", "0", "null", "\"false\"", "yes", "tRuE", "FALSE",
                                             "truex", "[true]", "{}", "\"\"", "fals", "nul", "fal\xC5\xBF" "e", "FAL\xC5\xBF" "E",
-                                            "\xEF\xBD\x94rue", "TRU\xC4\xB0", "True", "fAlSe"};
+                                            "\xEF\xBD\x94rue", "TRU\xC4\xB0", "fAlSe"};
         return pick(rng, values);
     }
     if (field == 5) {
-        static const QByteArray values[] = {"null", "42", "[\"a\",\"b\",\"c\"]", "{\"text\":\"a\\nb\\nc\"}", "true", "NaN"};
+        static const QByteArray values[] = {"null", "42", "[\"a\",\"b\",\"c\"]", "{\"text\":\"a\nb\nc\"}", "true", "NaN"};
         return pick(rng, values);
     }
     static const QByteArray values[] = {"123", "null", "{}", "{\"name\":\"IU\"}", "[\"IU\"]", "true", "12.5", "[]", "IU", "NaN"};
     return pick(rng, values);
 }
 
+// An instrumental flag spelled in an odd case (kotlinx reads `true`/`false` in any case): mostly a true one, so that a record
+// that would otherwise be chosen is refused.
+QByteArray lfOddCaseFlag(Rng& rng) {
+    static const QByteArray trueOnes[] = {"TRUE", "True", "tRuE", "TrUe", "truE"};
+    static const QByteArray falseOnes[] = {"FALSE", "False", "fAlSe", "fal\xC5\xBF" "e", "FAL\xC5\xBF" "E"};
+    return rng.chance(0.75) ? pick(rng, trueOnes) : pick(rng, falseOnes);
+}
+
 // A record as a JSON object: the fields the provider reads (absent when the piece is missing, or JSON null), one field of the
-// wrong type in a fifth of the records, fields it does not read, members in another order now and then.
-QByteArray lfRecordJson(Rng& rng, const CandidatePieces& c) {
-    const int wrongField = rng.chance(0.2) ? (rng.chance(0.7) ? rng.between(3, 4) : pick(rng, {0, 1, 2, 5})) : -1;
+// wrong type in a fifth of the records, fields it does not read, members in another order now and then. With oddFlag the
+// instrumental flag is spelled in an odd case (lfOddCaseFlag) instead.
+QByteArray lfRecordJson(Rng& rng, const CandidatePieces& c, bool oddFlag) {
+    const int wrongField = oddFlag ? 4 : rng.chance(0.2) ? (rng.chance(0.7) ? rng.between(3, 4) : pick(rng, {0, 1, 2, 5})) : -1;
     QList<QByteArray> members;
     if (rng.chance(0.7)) members.append("\"id\":" + QByteArray::number(rng.between(1, 99999)));
     const auto stringMember = [&](const char* key, int field, const std::optional<QString>& value) {
@@ -3449,7 +3461,7 @@ QByteArray lfRecordJson(Rng& rng, const CandidatePieces& c) {
     if (wrongField == 3) members.append("\"duration\":" + lfWrongValue(rng, 3, c.duration));
     else if (c.duration) members.append("\"duration\":" + lfNumber(*c.duration));
     else if (rng.chance(0.5)) members.append("\"duration\":null");
-    if (wrongField == 4) members.append("\"instrumental\":" + lfWrongValue(rng, 4, c.duration));
+    if (wrongField == 4) members.append("\"instrumental\":" + (oddFlag ? lfOddCaseFlag(rng) : lfWrongValue(rng, 4, c.duration)));
     else if (c.instrumental) members.append(QByteArray("\"instrumental\":") + (*c.instrumental ? "true" : "false"));
     else if (rng.chance(0.5)) members.append("\"instrumental\":null");
     stringMember("plainLyrics", 5, c.plainLyrics);
@@ -3462,8 +3474,12 @@ QByteArray lfRecordJson(Rng& rng, const CandidatePieces& c) {
     return "{" + members.join(separator) + "}";
 }
 
+// A record of a random kind; a third of the records meant to match get an odd-case instrumental flag (the flag only matters
+// for a record that would be chosen).
 QByteArray lfRecordOf(Rng& rng, const QueryPieces& q) {
-    return lfRecordJson(rng, lfCandidate(rng, q, lfRecordKind(rng)));
+    const LfRecord kind = lfRecordKind(rng);
+    const bool oddFlag = kind == LfRecord::Match && rng.chance(0.33);
+    return lfRecordJson(rng, lfCandidate(rng, q, kind), oddFlag);
 }
 
 // A body that is not JSON (or not all of it).
