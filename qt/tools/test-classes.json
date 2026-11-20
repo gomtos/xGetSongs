@@ -118,7 +118,7 @@
     "exe": "tst_lrclib_lyrics_provider",
     "added": ["aCallWaitingForASlotReturnsWhenItIsCancelled", "aCancelledCallDoesNotStartTheCoolDown",
               "aNameLongerThanAThousandUnitsIsReadAsMissing", "malformedUtf8InABodyIsReadLikeKotlinDoes",
-              "manyCallsCancelledAtOnceAllReturn", "aRequestTimeoutOfZeroSendsNothingAndStartsTheCoolDown",
+              "manyCallsCancelledAtOnceAllReturn", "aRequestTimeoutOfZeroSendsNothing",
               "anInstrumentalFlagIsReadWhateverItsCase"]
   },
   {

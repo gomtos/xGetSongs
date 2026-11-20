@@ -79,19 +79,30 @@ const xgs::json::Primitive* otherOf(const xgs::json::Object& record, QStringView
     return primitive && !primitive->isString ? primitive : nullptr;
 }
 
+/// Equal under Kotlin's String.equals(other, ignoreCase = true), as the provider compares a flag.
+bool equalsIgnoringCase(QStringView text, QStringView word) {
+    if (text.size() != word.size()) return false;
+    for (qsizetype i = 0; i < text.size(); ++i) {
+        if (!xgs::kt::equalsIgnoreCase(text.at(i), word.at(i))) return false;
+    }
+    return true;
+}
+
+/// kotlinx's booleanOrNull as the provider reads it: `true` or `false` in any case.
 std::optional<bool> booleanOrNull(const xgs::json::Primitive& primitive) {
-    if (primitive.content == u"true") return true;
-    if (primitive.content == u"false") return false;
+    if (equalsIgnoringCase(primitive.content, u"true")) return true;
+    if (equalsIgnoringCase(primitive.content, u"false")) return false;
     return std::nullopt;
 }
 
+/// kotlinx's doubleOrNull as the provider reads it: Kotlin's toDoubleOrNull of the content.
 std::optional<double> doubleOrNull(const xgs::json::Primitive& primitive) {
-    bool ok = false;
-    const double value = primitive.content.toDouble(&ok);
-    return ok ? std::optional<double>(value) : std::nullopt;
+    return xgs::kt::toDoubleOrNull(primitive.content);
 }
 
-/// The record of an LRCLIB answer as the matcher sees it (a field of the wrong type counts as missing).
+/// The record of an LRCLIB answer as the matcher sees it (a field of the wrong type counts as missing). Unlike the
+/// provider it does not read a name over 1,000 UTF-16 units as missing; real records are far shorter, and the count it
+/// feeds ("accepted as the song") is printed only.
 xgs::lyrics::LyricsCandidate candidateOf(const xgs::json::Object& record) {
     xgs::lyrics::LyricsCandidate candidate;
     candidate.trackName = textOf(record, u"trackName");

@@ -23,8 +23,8 @@ namespace xgs::net {
 
 namespace {
 
-// Why the client itself ended a transfer before Qt finished it.
-enum class Ending { None, Cancelled, TotalTimeout, IdleTimeout, TooLarge, Closed };
+// Why the client itself ended a transfer before Qt finished it. Stuck: Qt reported an error but left the reply unfinished.
+enum class Ending { None, Cancelled, TotalTimeout, IdleTimeout, TooLarge, Closed, Stuck };
 
 // The meeting point of the calling thread (which waits) and the network thread (which answers).
 struct Call {
@@ -59,6 +59,9 @@ struct Transfer {
     std::chrono::milliseconds totalTimeout{0};
     std::chrono::milliseconds idleTimeout{0};
     Ending ending = Ending::None;
+    // The first error Qt reported (errorOccurred), kept for a reply that Qt leaves unfinished.
+    QNetworkReply::NetworkError error = QNetworkReply::NoError;
+    QString errorText;
 };
 
 // The error of a call that the destructor ended, or that came after it.
@@ -99,7 +102,9 @@ struct QtHttpClient::Core {
     QThread thread;
     std::atomic<quint64> nextId{1};
 
-    // Network thread only.
+    // Network thread only. The receiver is the same object as context, set once in open() and never cleared, so the
+    // network thread never reads context (which the destructor clears from another thread).
+    QObject* receiver = nullptr;
     QNetworkAccessManager* manager = nullptr;
     std::map<quint64, Transfer> transfers;
 
@@ -111,7 +116,13 @@ struct QtHttpClient::Core {
         return true;
     }
 
-    void open() {
+    bool closing() {
+        std::lock_guard lock(mutex);
+        return context == nullptr;
+    }
+
+    void open(QObject* networkReceiver) {
+        receiver = networkReceiver;
         manager = new QNetworkAccessManager;
         manager->setProxy(QNetworkProxy::NoProxy);
         manager->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -119,6 +130,11 @@ struct QtHttpClient::Core {
     }
 
     void start(quint64 id, const QUrl& url, const HttpRequest& request, const std::shared_ptr<Call>& call) {
+        // Posted before the destructor closed the door but run after: close() comes next and would only abort it.
+        if (closing()) {
+            call->answer(failure(HttpStatus::Failed, closedText()));
+            return;
+        }
         QNetworkRequest networkRequest(url);
         for (const auto& [name, value] : request.headers) networkRequest.setRawHeader(name, value);
         networkRequest.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
@@ -135,27 +151,32 @@ struct QtHttpClient::Core {
         transfer.idleTimeout = request.idleTimeout;
         QNetworkReply* reply = manager->get(networkRequest);
         transfer.reply = reply;
-        // Qt then holds at most one byte more than the limit before read() sees that the body is too large.
+        // Qt then reads no more from the connection once it holds one byte more than the limit, so read() sees that the
+        // body is too large. With a compressed body Qt counts decoded bytes, but it decodes all it has read at once, so it
+        // may hold more than that (observed: about 2 MiB decoded from one 13 KB read under a 2 MiB limit); its own
+        // decompression safety check (10 MiB by default) stops a body that decodes further (see failed()).
         if (request.maxBodyBytes >= 0) reply->setReadBufferSize(request.maxBodyBytes + 1);
 
         if (request.totalTimeout.count() > 0) {
             auto* timer = new QTimer(reply);
             timer->setSingleShot(true);
             timer->setTimerType(Qt::PreciseTimer);
-            QObject::connect(timer, &QTimer::timeout, context, [this, id] { end(id, Ending::TotalTimeout); });
+            QObject::connect(timer, &QTimer::timeout, receiver, [this, id] { end(id, Ending::TotalTimeout); });
             timer->start(request.totalTimeout);
         }
         if (request.idleTimeout.count() > 0) {
             transfer.idleTimer = new QTimer(reply);
             transfer.idleTimer->setSingleShot(true);
             transfer.idleTimer->setTimerType(Qt::PreciseTimer);
-            QObject::connect(transfer.idleTimer, &QTimer::timeout, context, [this, id] { end(id, Ending::IdleTimeout); });
+            QObject::connect(transfer.idleTimer, &QTimer::timeout, receiver, [this, id] { end(id, Ending::IdleTimeout); });
             transfer.idleTimer->start(request.idleTimeout);
         }
-        QObject::connect(reply, &QNetworkReply::metaDataChanged, context, [this, id] { touch(id); });
-        QObject::connect(reply, &QNetworkReply::redirected, context, [this, id] { touch(id); });
-        QObject::connect(reply, &QNetworkReply::readyRead, context, [this, id] { read(id); });
-        QObject::connect(reply, &QNetworkReply::finished, context, [this, id] { finish(id); });
+        QObject::connect(reply, &QNetworkReply::metaDataChanged, receiver, [this, id] { touch(id); });
+        QObject::connect(reply, &QNetworkReply::redirected, receiver, [this, id] { touch(id); });
+        QObject::connect(reply, &QNetworkReply::readyRead, receiver, [this, id] { read(id); });
+        QObject::connect(reply, &QNetworkReply::errorOccurred, receiver,
+                         [this, id](QNetworkReply::NetworkError error) { failed(id, error); });
+        QObject::connect(reply, &QNetworkReply::finished, receiver, [this, id] { finish(id); });
     }
 
     // Something arrived: the idle timeout starts again.
@@ -176,13 +197,30 @@ struct QtHttpClient::Core {
         touch(id);
     }
 
-    // Ends a transfer before Qt does: aborts the reply and answers the call.
+    // Qt reported an error. It normally finishes the reply right after (for a 4xx or 5xx answer, once the body is in).
+    // When its decompression safety check stops a compressed body that goes on, it does not (observed with Qt 6.11.3:
+    // errorOccurred and then nothing until the call's timeout, or never without one), so a reply that is still unfinished
+    // once Qt is back in the event loop is ended here, with the error Qt reported.
+    void failed(quint64 id, QNetworkReply::NetworkError error) {
+        const auto it = transfers.find(id);
+        if (it == transfers.end() || it->second.ending != Ending::None || it->second.error != QNetworkReply::NoError) return;
+        it->second.error = error;
+        it->second.errorText = it->second.reply->errorString();
+        QMetaObject::invokeMethod(receiver, [this, id] {
+            const auto found = transfers.find(id);
+            if (found != transfers.end() && found->second.ending == Ending::None && !found->second.reply->isFinished())
+                end(id, Ending::Stuck);
+        }, Qt::QueuedConnection);
+    }
+
+    // Ends a transfer before Qt does: aborts the reply and answers the call. A stuck reply is not aborted (Qt has already
+    // reported its error and warns when abort() reports another); deleting it closes its connection.
     void end(quint64 id, Ending ending) {
         const auto it = transfers.find(id);
         if (it == transfers.end() || it->second.ending != Ending::None) return;
         it->second.ending = ending;
         QNetworkReply* reply = it->second.reply;
-        reply->abort();   // may emit finished at once
+        if (ending != Ending::Stuck) reply->abort();   // may emit finished at once
         if (transfers.contains(id)) finish(id);
     }
 
@@ -192,7 +230,7 @@ struct QtHttpClient::Core {
         Transfer transfer = std::move(it->second);
         transfers.erase(it);
         QNetworkReply* reply = transfer.reply;
-        reply->disconnect(context);
+        reply->disconnect(receiver);
         reply->deleteLater();   // its timers with it
         transfer.call->answer(answerOf(transfer));
     }
@@ -219,10 +257,12 @@ struct QtHttpClient::Core {
             return response;
         }
         case Ending::None:
+        case Ending::Stuck:
             break;
         }
 
-        const QNetworkReply::NetworkError error = reply->error();
+        const bool stuck = transfer.ending == Ending::Stuck;
+        const QNetworkReply::NetworkError error = stuck ? transfer.error : reply->error();
         // Qt reports a 4xx or 5xx answer as an error from its content, protocol or server ranges (201 and up); it is
         // still an answer. Such an error with a 2xx or 3xx code is a transfer that went wrong, not an answer.
         const bool errorAnswer = code.isValid() && code.value<int>() >= 400 && error >= QNetworkReply::ContentAccessDenied;
@@ -241,7 +281,7 @@ struct QtHttpClient::Core {
         }
         // A redirect from https to http is not followed (NoLessSafeRedirectPolicy) and ends here as Failed
         // (InsecureRedirectError). Kotlin's Redirect.NORMAL returns the 3xx response itself instead.
-        QString text = reply->errorString();
+        QString text = stuck ? transfer.errorText : reply->errorString();
         if (text.isEmpty()) text = u"The request failed (network error %1)."_s.arg(static_cast<int>(error));
         return failure(isUnreachable(error, code.isValid()) ? HttpStatus::Unreachable : HttpStatus::Failed, text);
     }
@@ -263,7 +303,7 @@ QtHttpClient::QtHttpClient() : m_core(std::make_shared<Core>()) {
     m_core->context = context;
     m_core->thread.start();
     Core* core = m_core.get();
-    QMetaObject::invokeMethod(context, [core] { core->open(); }, Qt::BlockingQueuedConnection);
+    QMetaObject::invokeMethod(context, [core, context] { core->open(context); }, Qt::BlockingQueuedConnection);
 }
 
 QtHttpClient::~QtHttpClient() {
@@ -302,6 +342,10 @@ HttpResponse QtHttpClient::get(const HttpRequest& request, std::stop_token stop)
         core->post([target, id] { target->end(id, Ending::Cancelled); });
     });
     return call->wait();
+}
+
+bool test_hooks::postToNetworkThread(QtHttpClient& client, std::function<void()> work) {
+    return client.m_core->post(std::move(work));
 }
 
 }  // namespace xgs::net

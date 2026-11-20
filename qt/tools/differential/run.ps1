@@ -426,17 +426,19 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'fn: answer 0 (rejected)' $rejected $indexes.Count 0.25
     }
     # lf artist title album duration maxRequests timeout step... (Kotlin's answer: OK hex | NULL, N count, C count, U urls):
-    # lyrics found 15%, not found 30%; a request to /search 40%; the cool-down started 10%; the cap cut the lookup short 5%;
+    # lyrics found 15%, not found 30%; a request to /search 40%; a request started the cool-down 10%; the cap cut the lookup
+    # short 5%;
     # a query with a character outside ASCII 20%, with one of `& = # + %` or a space 10%, with an unpaired surrogate 2%; a
     # requested answer with a record that has a field of the wrong type 10%, with a record whose instrumental flag is in an
     # odd case 10% (counted apart: kotlinx reads it as a boolean, so it is not a wrong type), with a body that is
     # not JSON 5%; a requested /search answer with two or more records 15%.
-    # The cool-down started exactly when a request of the first call ended in Stop (the provider's only way to start it): the
+    # A request of the first call started the cool-down exactly when it ended in Stop (the only way a request starts it): the
     # last request it made was answered 429, 502, 503 or 504 (with any body) or failed to connect, timed out or found no host
-    # (C, T, U), or the request timeout is not positive (0 or N), maxRequests is at least 1 and the artist and the title are
-    # not blank (the one request is then given up at once). Checked both ways (it fails the run otherwise): the second call
-    # made no request in every such case, and at least one in every other case of a query that is not blank with
-    # maxRequests >= 1.
+    # (C, T, U). Checked both ways (it fails the run otherwise): the second call made no request in every such case, and at
+    # least one in every other case of a query that is not blank with maxRequests >= 1. A case whose request timeout is not
+    # positive (0 or N) counts on neither side and not in the check: the provider then starts the cool-down without a
+    # request (as Kotlin does), but neither call sends anything either way, so it cannot be seen. The share's denominator
+    # is still every lf case.
     # The cap cut the lookup short exactly when one call with maxRequests + 1 on the same steps (C) made more than
     # maxRequests requests: the two calls are the same up to the cap, so the wider one makes a further request only if the
     # first call was stopped by the cap.
@@ -454,16 +456,18 @@ $WOpChecks = [ordered]@{
             $urls = @(if ($tokens.Count -gt $at + 5) { $tokens[($at + 5)..($tokens.Count - 1)] })
             if (@($urls | Where-Object { $_.StartsWith($LfSearchHex, [StringComparison]::Ordinal) }).Count -gt 0) { $search++ }
             $max = [int]$case[5]
-            $started = $false
-            if ($urls.Count -gt 0) {
-                $last = if (7 + $urls.Count - 1 -lt $case.Count) { $case[7 + $urls.Count - 1] } else { '404:.' }
-                $started = $LfStopStep.IsMatch($last)
-            } elseif ($case[6] -cne 'D' -and $max -gt 0 -and -not (Test-KotlinBlank $case[1]) -and -not (Test-KotlinBlank $case[2])) {
-                $started = $true
+            # a request timeout that is not positive (0 or N): neither call sends anything, so whether the cool-down started
+            # cannot be seen; such a case is counted on neither side of the statistic and its check
+            if ($case[6] -ceq 'D') {
+                $started = $false
+                if ($urls.Count -gt 0) {
+                    $last = if (7 + $urls.Count - 1 -lt $case.Count) { $case[7 + $urls.Count - 1] } else { '404:.' }
+                    $started = $LfStopStep.IsMatch($last)
+                }
+                if ($started) { $coolDown++; if ($second -ne 0) { $coolDownButAsked++ } }
+                # the other way round: without a cool-down, a query that is not blank with maxRequests >= 1 is asked again
+                elseif ($second -eq 0 -and $max -gt 0 -and -not (Test-KotlinBlank $case[1]) -and -not (Test-KotlinBlank $case[2])) { $coolDownButAsked++ }
             }
-            if ($started) { $coolDown++; if ($second -ne 0) { $coolDownButAsked++ } }
-            # the other way round: without a cool-down, a query that is not blank with maxRequests >= 1 is asked again
-            elseif ($second -eq 0 -and $max -gt 0 -and -not (Test-KotlinBlank $case[1]) -and -not (Test-KotlinBlank $case[2])) { $coolDownButAsked++ }
             if ($max -gt 0 -and $wider -gt $max) { $cap++ }
             $fields = @($case[1], $case[2], $case[3])
             if (@($fields | Where-Object { $LfNonAsciiHex.IsMatch($_) }).Count -gt 0) { $nonAscii++ }
@@ -500,7 +504,7 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'lf: lyrics found' $found $n 0.15
         Test-Share 'W' 'lf: no lyrics' $none $n 0.30
         Test-Share 'W' 'lf: a request to /search' $search $n 0.40
-        Test-Share 'W' 'lf: the cool-down started' $coolDown $n 0.10
+        Test-Share 'W' 'lf: a request started the cool-down' $coolDown $n 0.10
         Write-Host "  W: lf: check, not a threshold: cases where the cool-down rule and the second call disagree: $coolDownButAsked"
         if ($coolDownButAsked -gt 0) { "W: lf: $coolDownButAsked cases where the cool-down rule of the statistic and the second call disagree (the rule is wrong)" }
         Test-Share 'W' 'lf: the cap cut the lookup short' $cap $n 0.05

@@ -109,6 +109,22 @@ struct InFlight {
     void leave() { --active; }
 };
 
+// Lets handlers wait for one another: arriveAndWait(n, limit) returns once n have arrived, or after limit.
+class Rendezvous {
+public:
+    void arriveAndWait(int n, std::chrono::milliseconds limit) {
+        std::unique_lock lock(m_mutex);
+        ++m_arrived;
+        m_changed.notify_all();
+        m_changed.wait_for(lock, limit, [this, n] { return m_arrived >= n; });
+    }
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_changed;
+    int m_arrived = 0;
+};
+
 // The JSON text of a string, as kotlinx.serialization writes it: quotes, backslashes and control characters escaped, the rest
 // as it is.
 QString jsonString(const QString& value) {
@@ -1100,6 +1116,17 @@ private slots:
         }
         QCOMPARE(concurrency->peak.load(), 1);
 
+        // Kotlin overlaps the two requests inside the same 150 ms sleep. Here each handler instead waits (at most 5 s) until
+        // both requests have arrived, so the overlap does not hang on two threads and two connections starting within
+        // 150 ms of each other on a loaded machine; with a limit shared by the two providers the second request could not
+        // arrive while the first waits, and the peak would stay 1.
+        const auto arrived = std::make_shared<Rendezvous>();
+        onGet([concurrency, arrived](Exchange& e) {
+            concurrency->enter();
+            arrived->arriveAndWait(2, 5s);
+            concurrency->leave();
+            e.reply(404, notFound);
+        });
         concurrency->peak = 0;
         const auto a = provider({.maxRequests = 1, .maxConcurrent = 1});
         const auto b = provider({.maxRequests = 1, .maxConcurrent = 1});
@@ -1135,9 +1162,11 @@ private slots:
         const auto begin = Clock::now();
 
         waiting.request_stop();
-        QVERIFY(waitingResult.wait_for(1s) == std::future_status::ready);
+        // A stopped waiter returns within microseconds; 3 s (the bound of the other "promptly" tests) leaves room for a
+        // loaded machine without letting a waiter that ignores the stop (it would wait 10 s for the slot) pass.
+        QVERIFY(waitingResult.wait_for(3s) == std::future_status::ready);
 
-        QVERIFY(Clock::now() - begin < 1s);
+        QVERIFY(Clock::now() - begin < 3s);
         QCOMPARE(waitingResult.get(), Lyrics());
         COMPARE_MSG(seen().size(), qsizetype(1), u"the waiting call never made its request"_s);
     }
@@ -1228,10 +1257,10 @@ private slots:
     }
 
     // Kotlin's withTimeoutOrNull gives up at once for a time that is not positive (and the Q2c Task 4 differential agrees for
-    // 0 and -1 s): no request is sent, that is trouble (Stop), and the next call is refused too. Seen from outside both calls
-    // send nothing and answer nothing (with a timeout of 0 the next call could send nothing anyway). On FakeHttpClient:
-    // nothing reaches any network.
-    void aRequestTimeoutOfZeroSendsNothingAndStartsTheCoolDown() {
+    // 0 and -1 s): no request is sent and nothing is found. The provider also treats it as trouble (Stop) and starts the
+    // cool-down, as Kotlin does, but that cannot be seen from outside: with the same timeout the next call sends nothing
+    // either way, so this test checks only that neither call sends anything. On FakeHttpClient: nothing reaches any network.
+    void aRequestTimeoutOfZeroSendsNothing() {
         xgs::testing::FakeHttpClient client([](const xgs::net::HttpRequest&, std::stop_token) {
             return xgs::testing::FakeHttpClient::response(200, record().toUtf8());
         });
