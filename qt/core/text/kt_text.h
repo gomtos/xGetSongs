@@ -52,8 +52,8 @@ QString hexBits(double value);     // the 16 lowercase hex digits of the bit pat
 //   - the second byte after E0 must be A0..BF, after F0 90..BF, after F4 80..8F (else the lead alone is malformed); after ED
 //     it may be 80..BF, and a complete ED A0..BF xx (an encoded surrogate) is one U+FFFD for all three bytes;
 //   - a byte order mark is kept (U+FEFF), NUL is kept.
-// The LRCLIB provider decodes a whole body with it, where Kotlin uses String(bytes, UTF_8); that the two decoders agree is
-// assumed (Q2c Task 4 compares them on the JVM).
+// The LRCLIB provider decodes a whole body with it, where Kotlin uses String(bytes, UTF_8); the two decoders agree on every
+// malformed body of the Q2c Task 4 differential (kind W op lf, on the JVM).
 QString decodeUtf8(QByteArrayView bytes);
 
 // Kotlin's `ignoreCase` argument. An enum, not a bool, so that a position and a case mode can never be swapped silently;

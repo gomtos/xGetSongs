@@ -24,8 +24,10 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -40,6 +42,7 @@
 #include "input/input_classifier.h"
 #include "json/json.h"
 #include "log/log_redaction.h"
+#include "lyrics/lrclib_lyrics_provider.h"
 #include "lyrics/lyrics_extractor.h"
 #include "lyrics/lyrics_matcher.h"
 #include "model/models.h"
@@ -47,6 +50,7 @@
 #include "paths/paths.h"
 #include "process/line_splitter.h"
 #include "process/process_runner.h"
+#include "support/fake_http_client.h"
 #include "tags/ffmetadata.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
@@ -393,6 +397,7 @@ QString answerI(const QStringList& fields) {
 // W ln bytes chunkSize... -> OK <each line as hex> (answerLn)
 // W st yt-dlp ffmpeg js / W up yt-dlp -> tools::ToolManager on a runner that plays the case (answerSt, answerUp)
 // W fn name -> 0 when output::LocalFolderSink::exists(name) throws std::invalid_argument, else 1 (answerFn)
+// W lf query maxRequests timeout step... -> lyrics::LrclibLyricsProvider on a scripted HTTP client (answerLf)
 // One answerer per op (kWAnswers); the op's fields follow the op.
 QString pathOrErr(const std::optional<QString>& path) {
     return path ? hexText(*path) : QStringLiteral("ERR");
@@ -565,12 +570,82 @@ QString answerFn(const QStringList& fields) {
     }
 }
 
+// W lf artist title album durationSeconds maxRequests timeout step... -> OK <lyrics hex> | NULL, N <requests of the second
+// call>, U <every URL of the first call as hex>: lyrics::LrclibLyricsProvider on xgs::testing::FakeHttpClient, as Oracle.java's
+// answerLookUp (which documents the notation). The base URL is http://h/api, the clock never moves, the cool-down is the
+// default. A step: <code>:<bytes> (an answer), <code>:L (an answer whose body is over the limit: bodyTooLarge, no bytes),
+// C / T / U (Unreachable: connection refused, timeout, unknown host), I (Failed: another IO error). Once the steps run out,
+// every request is answered 404 with no body. Nothing is sent anywhere.
+QString answerLf(const QStringList& fields) {
+    if (fields.size() < 6) return QStringLiteral("?");
+    bool ok = true;
+    const LyricsQuery query = lyricsQueryOf(fields, 0, ok);
+    bool parsed = false;
+    lyrics::LrclibOptions options;
+    options.baseUrl = QStringLiteral("http://h/api");
+    options.maxRequests = fields.at(4).toInt(&parsed);
+    ok = ok && parsed;
+    const QString& timeout = fields.at(5);
+    if (timeout == u"D") options.requestTimeout = std::chrono::milliseconds(15000);
+    else if (timeout == u"0") options.requestTimeout = std::chrono::milliseconds(0);
+    else if (timeout == u"N") options.requestTimeout = std::chrono::milliseconds(-1000);
+    else ok = false;
+    options.clock = [] { return std::chrono::nanoseconds(0); };
+    if (!ok) return QStringLiteral("?");
+
+    const QStringList steps = fields.mid(6);
+    std::mutex mutex;
+    qsizetype next = 0;
+    bool bad = false;
+    testing::FakeHttpClient client([&](const net::HttpRequest&, std::stop_token) {
+        QString step = QStringLiteral("404:.");
+        {
+            std::lock_guard lock(mutex);
+            if (next < steps.size()) step = steps.at(next++);
+        }
+        net::HttpResponse answer;
+        if (step == u"C" || step == u"T" || step == u"U") {
+            answer.status = net::HttpStatus::Unreachable;
+            return answer;
+        }
+        if (step == u"I") {
+            answer.status = net::HttpStatus::Failed;
+            return answer;
+        }
+        const qsizetype colon = step.indexOf(u':');
+        bool codeOk = false;
+        const int code = colon < 0 ? 0 : step.left(colon).toInt(&codeOk);
+        if (!codeOk) {
+            std::lock_guard lock(mutex);
+            bad = true;
+            return answer;
+        }
+        const QString body = step.mid(colon + 1);
+        if (body == u"L") {
+            answer = testing::FakeHttpClient::response(code);
+            answer.bodyTooLarge = true;
+            return answer;
+        }
+        return testing::FakeHttpClient::response(code, body == u"." ? QByteArray() : QByteArray::fromHex(body.toLatin1()));
+    });
+    lyrics::LrclibLyricsProvider provider(client, options);
+    const std::optional<QString> found = provider.find(query, {});
+    const QStringList firstUrls = client.urls();
+    provider.find(query, {});
+    const qsizetype second = client.urls().size() - firstUrls.size();
+    if (bad) return QStringLiteral("?");
+    QString out = found ? QStringLiteral("OK ") + hexText(*found) : QStringLiteral("NULL");
+    out += QStringLiteral(" N ") + QString::number(second) + QStringLiteral(" U");
+    for (const QString& url : firstUrls) out += u' ' + hexText(url);
+    return out;
+}
+
 struct WAnswer {
     QStringView op;
     Answerer answer;   // gets the fields after the op (at least one)
 };
 constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}, {u"ln", answerLn},
-                                {u"st", answerSt}, {u"up", answerUp}, {u"fn", answerFn}};
+                                {u"st", answerSt}, {u"up", answerUp}, {u"fn", answerFn}, {u"lf", answerLf}};
 
 QString answerW(const QStringList& fields) {
     if (fields.size() < 2) return QStringLiteral("?");

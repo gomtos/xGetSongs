@@ -111,14 +111,15 @@
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/FallbackLyricsProviderTest.kt",
     "exe": "tst_fallback_lyrics_provider",
-    "added": []
+    "added": ["aStopRequestStopsAskingTheRemainingProviders"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/LrclibLyricsProviderTest.kt",
     "exe": "tst_lrclib_lyrics_provider",
     "added": ["aCallWaitingForASlotReturnsWhenItIsCancelled", "aCancelledCallDoesNotStartTheCoolDown",
               "aNameLongerThanAThousandUnitsIsReadAsMissing", "malformedUtf8InABodyIsReadLikeKotlinDoes",
-              "manyCallsCancelledAtOnceAllReturn"]
+              "manyCallsCancelledAtOnceAllReturn", "aRequestTimeoutOfZeroSendsNothingAndStartsTheCoolDown",
+              "anInstrumentalFlagIsReadWhateverItsCase"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealFfmpegTaggingIntegrationTest.kt",

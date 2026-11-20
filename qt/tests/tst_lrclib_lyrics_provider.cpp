@@ -1220,6 +1220,50 @@ private slots:
         }
         QCOMPARE(seen().size(), 2);
     }
+
+    // Kotlin's withTimeoutOrNull gives up at once for a time that is not positive (and the Q2c Task 4 differential agrees for
+    // 0 and -1 s): no request is sent, that is trouble (Stop), and the next call is refused too. Seen from outside both calls
+    // send nothing and answer nothing (with a timeout of 0 the next call could send nothing anyway). On FakeHttpClient:
+    // nothing reaches any network.
+    void aRequestTimeoutOfZeroSendsNothingAndStartsTheCoolDown() {
+        xgs::testing::FakeHttpClient client([](const xgs::net::HttpRequest&, std::stop_token) {
+            return xgs::testing::FakeHttpClient::response(200, record().toUtf8());
+        });
+        LrclibOptions options;
+        options.baseUrl = u"http://h/api"_s;
+        options.requestTimeout = 0ms;
+        options.clock = testClock();
+        LrclibLyricsProvider provider(client, options);
+
+        QCOMPARE(provider.find(query(), {}), Lyrics());
+        QCOMPARE(client.urls(), QStringList());
+        QCOMPARE(provider.find(query(), {}), Lyrics());
+        QCOMPARE(client.urls(), QStringList());
+    }
+
+    // Found by the Q2c Task 4 differential: kotlinx's booleanOrNull reads `true` and `false` in any case (as
+    // String.equals(ignoreCase = true), so `falſe` with U+017F counts too); `1` and `ｔrue` are null. An instrumental flag
+    // `TRUE` makes the record no answer, `falſe` and an unknown flag do not. On FakeHttpClient (no network).
+    void anInstrumentalFlagIsReadWhateverItsCase() {
+        const auto lookUp = [this](const QString& flag) {
+            const QByteArray body = record({.lyrics = lyricsOf(u"flag"_s)}).replace(u"\"instrumental\":false"_s, u"\"instrumental\":"_s + flag).toUtf8();
+            xgs::testing::FakeHttpClient client([body](const xgs::net::HttpRequest& request, std::stop_token) {
+                return request.url.contains(u"/get?"_s) ? xgs::testing::FakeHttpClient::response(200, body)
+                                                        : xgs::testing::FakeHttpClient::response(200, "[]");
+            });
+            LrclibOptions options;
+            options.baseUrl = u"http://h/api"_s;
+            options.clock = testClock();
+            return LrclibLyricsProvider(client, options).find(query(), {});
+        };
+        QCOMPARE(lookUp(u"TRUE"_s), Lyrics());
+        QCOMPARE(lookUp(u"tRuE"_s), Lyrics());
+        QCOMPARE(lookUp(u"false"_s), Lyrics(lyricsOf(u"flag"_s)));
+        QCOMPARE(lookUp(u"FALSE"_s), Lyrics(lyricsOf(u"flag"_s)));
+        QCOMPARE(lookUp(u"falſe"_s), Lyrics(lyricsOf(u"flag"_s)));
+        QCOMPARE(lookUp(u"1"_s), Lyrics(lyricsOf(u"flag"_s)));
+        QCOMPARE(lookUp(u"ｔrue"_s), Lyrics(lyricsOf(u"flag"_s)));
+    }
 };
 
 QTEST_GUILESS_MAIN(LrclibLyricsProviderTest)

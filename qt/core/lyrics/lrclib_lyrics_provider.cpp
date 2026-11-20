@@ -33,7 +33,7 @@ void appendPercentByte(QString& out, unsigned byte) {
 // ASCII letters and digits and `.`, `-`, `*`, `_` stay as they are, a space is `%20` (URLEncoder's `+`, replaced; a `+` of
 // the value itself is `%2B`, so only spaces become `%20`), and every other character is its UTF-8 bytes as `%XX` with
 // upper-case hex digits. An unpaired surrogate, which has no UTF-8 form, is `%3F` (the `?` that the JVM's encoders put in
-// place of what they cannot encode): a guess where the description is silent, settled by the Q2c Task 4 differential.
+// place of what they cannot encode): observed on the JVM by the Q2c Task 4 differential (kind W op lf), as was the rest.
 QString encode(const QString& value) {
     QString out;
     out.reserve(value.size() * 3);
@@ -104,13 +104,23 @@ std::optional<double> number(const json::Object& record, QStringView key) {
     return kt::toDoubleOrNull(value->content);
 }
 
-// kotlinx's booleanOrNull of a primitive that is not a string. Only the literals `true` and `false` are read; which other
-// texts kotlinx accepts is settled by the Q2c Task 4 differential.
+// Equal to word under Kotlin's String.equals(other, ignoreCase = true): the same length and each unit equal under
+// Char.equals(ignoreCase = true).
+bool equalsIgnoringCase(QStringView text, QStringView word) {
+    if (text.size() != word.size()) return false;
+    for (qsizetype i = 0; i < text.size(); ++i)
+        if (!kt::equalsIgnoreCase(text.at(i), word.at(i))) return false;
+    return true;
+}
+
+// kotlinx's booleanOrNull of a primitive that is not a string. Observed on the JVM (Q2c Task 4 differential): the content
+// `true` or `false` in any case is read (`TRUE`, `tRuE`, even `falſe` with U+017F, which uppercases to `S`), as
+// String.equals(ignoreCase = true) compares; anything else (`1`, `yes`, `null`, `ｔrue`) is null.
 std::optional<bool> flag(const json::Object& record, QStringView key) {
     const json::Primitive* value = primitive(record, key);
     if (!value || value->isString) return std::nullopt;
-    if (value->content == u"true") return true;
-    if (value->content == u"false") return false;
+    if (equalsIgnoringCase(value->content, u"true")) return true;
+    if (equalsIgnoringCase(value->content, u"false")) return false;
     return std::nullopt;
 }
 

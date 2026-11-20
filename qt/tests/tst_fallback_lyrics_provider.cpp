@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include <optional>
+#include <stop_token>
 
 #include "lyrics/lyrics_provider.h"
 #include "support/fake_lyrics_provider.h"
@@ -50,6 +51,20 @@ private slots:
         FakeLyricsProvider b;
         QCOMPARE(FallbackLyricsProvider({&a, &b}).find(query, {}), std::optional<QString>());
         QCOMPARE(FallbackLyricsProvider({}).find(query, {}), std::optional<QString>());
+    }
+
+    // ---- added in the port (qt/tools/test-classes.json) ----
+
+    // Where Kotlin's cancelled find throws (so no later provider is asked), a stop request ends the loop: the remaining
+    // providers are not asked and the answer is nothing.
+    void aStopRequestStopsAskingTheRemainingProviders() {
+        std::stop_source stopped;
+        stopped.request_stop();
+        FakeLyricsProvider first([](const LyricsQuery&) { return std::optional<QString>(); });
+        FakeLyricsProvider second([](const LyricsQuery&) { return std::optional<QString>(u"둘째 더미"_s); });
+
+        QCOMPARE(FallbackLyricsProvider({&first, &second}).find(query, stopped.get_token()), std::optional<QString>());
+        QCOMPARE(second.queries(), QList<LyricsQuery>());
     }
 };
 

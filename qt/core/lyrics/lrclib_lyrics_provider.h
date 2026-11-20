@@ -64,7 +64,9 @@ inline constexpr qsizetype LrclibMaxNameUnits = 1000;
 ///
 /// Differences from Kotlin (all from the Q2c brief): a stopped call returns nothing where Kotlin throws a
 /// CancellationException; the client is always given (Kotlin builds one when it is null), so there is no connect timeout of
-/// the provider's own; names longer than LrclibMaxNameUnits read as missing.
+/// the provider's own; names longer than LrclibMaxNameUnits read as missing. Also: an unexpected C++ exception (from the
+/// client, the JSON reader or the matcher) ends the whole call with nothing, where Kotlin turns an exception that is not an
+/// IOException into a miss of that one request and goes on with the next.
 class LrclibLyricsProvider final : public LyricsProvider {
 public:
     /// The client is referenced and must outlive the provider.

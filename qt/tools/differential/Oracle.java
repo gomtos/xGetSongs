@@ -118,7 +118,9 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            px path, ln bytes chunkSize... (the lines of a child's output, answerLines),
  *                                            st and up (DefaultToolManager.status and updateYtDlp on a runner that plays
  *                                            the case: answerTools), fn name (does LocalFolderSink accept the file
- *                                            name: 0 | 1, answerFileName)
+ *                                            name: 0 | 1, answerFileName), lf query maxRequests timeout step...
+ *                                            (LrclibLyricsProvider on an HttpClient that answers from the case and sends
+ *                                            nothing: answerLookUp)
  *         P op fields...                     YtDlpResolver on a runner that plays the case, one op per case (answerP): rs input
  *                                            run stdout stderr..., fx videoId run stdout stderr...
  *
@@ -546,6 +548,7 @@ public class Oracle {
     //   pf path       Path.of(path).getFileName(), "-" for null       -> hex | - | ERR
     //   px path       kotlin.io.path nameWithoutExtension of Path.of(path)   -> hex | ERR
     //   fn name       LocalFolderSink(a JVM temp folder).exists(name) throws: 0, else 1 (answerFileName)
+    //   lf query maxRequests timeout step...   LrclibLyricsProvider on a scripted HttpClient (answerLookUp)
     static String answerW(String[] part) throws Exception {
         try {
             switch (part[1]) {
@@ -566,6 +569,8 @@ public class Oracle {
                     return answerTools(part);
                 case "fn":
                     return answerFileName(dec(part[2]));
+                case "lf":
+                    return answerLookUp(part);
                 default:
                     return "?";
             }
@@ -777,6 +782,166 @@ public class Oracle {
             else answer = "THROW " + e.getClass().getName();
         }
         return answer + runner.commands;
+    }
+
+    // W lf artist title album durationSeconds maxRequests timeout step...: LrclibLyricsProvider(client = a ScriptClient,
+    // baseUrl = "http://h/api", requestTimeout, maxRequests, timeSource = a TestTimeSource that is never moved) and find(query)
+    // twice. The query is 4 fields as kind I's; maxRequests in decimal; timeout D (15 s), 0 (zero) or N (minus one second).
+    // A step is what the client does for one request, in order across both calls (once the steps run out, 404 with no body):
+    //   <code>:<bytes>   an answer with that status and body (2 hex digits a byte, "." for none)
+    //   <code>:L         an answer with that status whose body is 2 MiB + 1 bytes (a stream that makes them as it is read)
+    //   C | T | U | I    send throws ConnectException | HttpTimeoutException | UnknownHostException | IOException
+    // -> OK <lyrics hex> | NULL (the first call), then N and the number of requests the second call made, then U and the URL of
+    // every request of the first call as hex (the URL the provider handed to the client: request.uri().toString()).
+    // Nothing is sent anywhere: the client answers from the case.
+    static final String LF_BASE_URL = "http://h/api";
+
+    static final class ScriptClient extends java.net.http.HttpClient {
+        final String[] steps;
+        int next;
+        final java.util.List<String> urls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        ScriptClient(String[] steps) {
+            this.steps = steps;
+        }
+
+        @Override
+        public java.util.Optional<java.net.CookieHandler> cookieHandler() { return java.util.Optional.empty(); }
+        @Override
+        public java.util.Optional<java.time.Duration> connectTimeout() { return java.util.Optional.empty(); }
+        @Override
+        public Redirect followRedirects() { return Redirect.NEVER; }
+        @Override
+        public java.util.Optional<java.net.ProxySelector> proxy() { return java.util.Optional.empty(); }
+        @Override
+        public javax.net.ssl.SSLContext sslContext() { throw new UnsupportedOperationException(); }
+        @Override
+        public javax.net.ssl.SSLParameters sslParameters() { throw new UnsupportedOperationException(); }
+        @Override
+        public java.util.Optional<java.net.Authenticator> authenticator() { return java.util.Optional.empty(); }
+        @Override
+        public Version version() { return Version.HTTP_1_1; }
+        @Override
+        public java.util.Optional<java.util.concurrent.Executor> executor() { return java.util.Optional.empty(); }
+        @Override
+        public <T> java.util.concurrent.CompletableFuture<java.net.http.HttpResponse<T>> sendAsync(java.net.http.HttpRequest request,
+                java.net.http.HttpResponse.BodyHandler<T> handler) { throw new UnsupportedOperationException(); }
+        @Override
+        public <T> java.util.concurrent.CompletableFuture<java.net.http.HttpResponse<T>> sendAsync(java.net.http.HttpRequest request,
+                java.net.http.HttpResponse.BodyHandler<T> handler, java.net.http.HttpResponse.PushPromiseHandler<T> push) {
+            throw new UnsupportedOperationException();
+        }
+
+        // The provider asks for BodyHandlers.ofInputStream(); the answer's body is an InputStream whatever the handler.
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> java.net.http.HttpResponse<T> send(java.net.http.HttpRequest request, java.net.http.HttpResponse.BodyHandler<T> handler)
+                throws java.io.IOException {
+            urls.add(request.uri().toString());
+            String step;
+            synchronized (this) {
+                step = next < steps.length ? steps[next++] : "404:.";
+            }
+            switch (step) {
+                case "C" -> throw new java.net.ConnectException("connection refused (differential test)");
+                case "T" -> throw new java.net.http.HttpTimeoutException("request timed out (differential test)");
+                case "U" -> throw new java.net.UnknownHostException("h");
+                case "I" -> throw new java.io.IOException("connection reset (differential test)");
+                default -> { }
+            }
+            int colon = step.indexOf(':');
+            int code = Integer.parseInt(step.substring(0, colon));
+            String body = step.substring(colon + 1);
+            java.io.InputStream stream = body.equals("L") ? new LongBody() : new java.io.ByteArrayInputStream(decBytes(body));
+            return (java.net.http.HttpResponse<T>) new ScriptResponse(request, code, stream);
+        }
+    }
+
+    // A body of 2 MiB + 1 bytes, made as it is read (never held in full by the stream).
+    static final class LongBody extends java.io.InputStream {
+        long left = 2L * 1024 * 1024 + 1;
+
+        @Override
+        public int read() {
+            if (left == 0) return -1;
+            left--;
+            return 'x';
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            if (length == 0) return 0;
+            if (left == 0) return -1;
+            int count = (int) Math.min(length, left);
+            java.util.Arrays.fill(buffer, offset, offset + count, (byte) 'x');
+            left -= count;
+            return count;
+        }
+    }
+
+    record ScriptResponse(java.net.http.HttpRequest request, int statusCode, java.io.InputStream body)
+            implements java.net.http.HttpResponse<java.io.InputStream> {
+        @Override
+        public java.util.Optional<java.net.http.HttpResponse<java.io.InputStream>> previousResponse() { return java.util.Optional.empty(); }
+        @Override
+        public java.net.http.HttpHeaders headers() { return java.net.http.HttpHeaders.of(java.util.Map.of(), (name, value) -> true); }
+        @Override
+        public java.util.Optional<javax.net.ssl.SSLSession> sslSession() { return java.util.Optional.empty(); }
+        @Override
+        public java.net.URI uri() { return request.uri(); }
+        @Override
+        public java.net.http.HttpClient.Version version() { return java.net.http.HttpClient.Version.HTTP_1_1; }
+    }
+
+    // LrclibLyricsProvider's constructor takes kotlin.time.Duration values, an inline class: its JVM constructor is the
+    // synthetic one with a DefaultConstructorMarker, and a Duration is passed as the long that Duration.parse returns (the
+    // public JVM form of both). The one with the default mask leaves userAgent, connectTimeout, maxConcurrent and coolDown
+    // (5 minutes) at their defaults.
+    static java.lang.reflect.Constructor<?> lrclibConstructor;
+    static java.lang.reflect.Method durationParse;
+
+    static long duration(String text) throws Exception {
+        if (durationParse == null) durationParse = kotlin.time.Duration.Companion.class.getMethod("parse-UwyO8pc", String.class);
+        return (Long) durationParse.invoke(kotlin.time.Duration.Companion, text);
+    }
+
+    static com.xgetsongs.engine.lyrics.LrclibLyricsProvider lrclibProvider(ScriptClient client, long requestTimeout, int maxRequests)
+            throws Exception {
+        if (lrclibConstructor == null) {
+            lrclibConstructor = com.xgetsongs.engine.lyrics.LrclibLyricsProvider.class.getConstructor(java.net.http.HttpClient.class,
+                String.class, String.class, long.class, long.class, int.class, int.class, long.class, kotlin.time.TimeSource.class,
+                int.class, kotlin.jvm.internal.DefaultConstructorMarker.class);
+        }
+        // the mask: bit i stands for the i-th parameter taking its default (2 userAgent, 3 connectTimeout, 6 maxConcurrent, 7 coolDown)
+        int mask = (1 << 2) | (1 << 3) | (1 << 6) | (1 << 7);
+        return (com.xgetsongs.engine.lyrics.LrclibLyricsProvider) lrclibConstructor.newInstance(client, LF_BASE_URL, null, 0L,
+            requestTimeout, maxRequests, 0, 0L, new kotlin.time.TestTimeSource(), mask, null);
+    }
+
+    static String answerLookUp(String[] part) throws Exception {
+        LyricsQuery query = lyricsQuery(part, 2);
+        int maxRequests = Integer.parseInt(part[6]);
+        long requestTimeout = duration(switch (part[7]) {
+            case "D" -> "15s";
+            case "0" -> "0s";
+            case "N" -> "-1s";
+            default -> throw new IllegalArgumentException("timeout " + part[7]);
+        });
+        ScriptClient client = new ScriptClient(java.util.Arrays.copyOfRange(part, 8, part.length));
+        com.xgetsongs.engine.lyrics.LrclibLyricsProvider provider = lrclibProvider(client, requestTimeout, maxRequests);
+        String lyrics = kotlinx.coroutines.BuildersKt.<String>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+            (scope, continuation) -> provider.find(query, continuation));
+        java.util.List<String> firstUrls;
+        synchronized (client.urls) {
+            firstUrls = new java.util.ArrayList<>(client.urls);
+        }
+        kotlinx.coroutines.BuildersKt.<String>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+            (scope, continuation) -> provider.find(query, continuation));
+        int second = client.urls.size() - firstUrls.size();
+        StringBuilder out = new StringBuilder(lyrics == null ? "NULL" : "OK " + enc(lyrics));
+        out.append(" N ").append(second).append(" U");
+        for (String url : firstUrls) out.append(' ').append(enc(url));
+        return out.toString();
     }
 
     // argv <helper>: an observation, not a gate (Q2b Task 2 Step 4). For each argument list on stdin (one per line, every

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -3266,12 +3267,301 @@ QString generateFn(Rng& rng) {
     return hex(name);
 }
 
+// ---- kind W op lf: LrclibLyricsProvider on a scripted HTTP client ----
+// lf artist title album durationSeconds maxRequests timeout step... (Oracle.java answerLookUp has the notation; nothing is
+// sent anywhere). The query is kind I's (queryPieces: Korean, brackets, credits, quotes) with, now and then, `& = # + % ~ * '
+// ( )`, spaces, NUL and unpaired surrogates put into the artist, the title or the album. maxRequests is 8 half the time, else
+// 0, -1 or 1..12; the request timeout is 15 s, now and then 0 or -1 s. The steps answer the requests in order: the first is
+// shaped for /get (a record), the others for /search (an array of records). Most are HTTP 200 with a body: records that match
+// the query, other songs, wrong lengths, lyrics too short, instrumentals, loose candidates, with fields of the wrong type
+// (`duration` `"258"`, `NaN`, `1e400`, `0x10`, `258.4`...; `instrumental` `"true"`, `TRUE`, `1`, `null`...; names that are
+// numbers, `null`, objects, arrays), JSON null for a field, unpaired surrogates escaped or raw, malformed UTF-8 bytes inside
+// strings; also bodies that are not JSON, empty arrays, other JSON values. The rest: 404, 500 and other codes, 429, 502, 503,
+// 504, a body over 2 MiB (L: only a mark, both sides make the bytes up or skip them), a failure to connect, a timeout, an
+// unknown host, another IO error. Every name stays far below 1,000 UTF-16 units (the port's cap is an approved difference).
+constexpr QStringView kLfSpecials[] = {u"&", u"=", u"#", u"+", u"%", u"~", u"*", u"'", u"(", u")", u" ", u"  ",
+                                       QStringView(u"\0", 1), u"a&b=c", u"100%", u"#1", u"C++", u"%20", u"%zz", u"?", u"/",
+                                       u"\\", u"~*'()", u".-_"};
+const QByteArray kLfMalformed[] = {"\x80", "\xBF", "\xC0\xAF", "\xC1\xBF", "\xC2", "\xE3\x81", "\xE3", "\xE0\x80\xAF",
+                                   "\xE0\x9F\x80", "\xED\xA0\x80", "\xED\xB0\x80", "\xED\xA0", "\xED\xBF\xBF", "\xF0\x80\x80\x80",
+                                   "\xF0\x9F\x98", "\xF4\x90\x80\x80", "\xF4\x8F", "\xF5", "\xF8\x80\x80\x80\x80", "\xFE", "\xFF",
+                                   "\xE3\x81\x41", "\xF0\x9F\x41", "\xED\xA0\xED\xB0\x80", "\xE0\xA0", "\xC2\xC2\xA9"};
+
+// value with one to three specials (or an unpaired surrogate) put in at random places
+QString lfInject(Rng& rng, const QString& value) {
+    QString out = value;
+    const int count = rng.between(1, 3);
+    for (int i = 0; i < count; ++i) {
+        const QString piece = rng.chance(0.15) ? pick(rng, kLone).toString() : pick(rng, kLfSpecials).toString();
+        out.insert(rng.between(0, int(out.size())), piece);
+    }
+    return out;
+}
+
+// Lyrics that lyrics::tidy keeps (three to eight lines, most of them not blank), with line breaks of every kind.
+QString lfLyrics(Rng& rng) {
+    QString out;
+    if (rng.chance(0.1)) out += u"\n \n"_s;
+    const int lines = rng.between(3, 8);
+    for (int i = 0; i < lines; ++i) {
+        if (i > 0) {
+            const double roll = rng.next();
+            out += roll < 0.75 ? u"\n"_s : roll < 0.85 ? u"\r\n"_s : roll < 0.95 ? u"\n\n"_s : u"\n  \n\n"_s;
+        }
+        out += rng.chance(0.75) ? songWords(rng, 1, 5) : text(rng, 6);
+        if (rng.chance(0.1)) out += u"  "_s;
+    }
+    return out;
+}
+
+// One or two lines: not lyrics for lyrics::tidy.
+QString lfShortLyrics(Rng& rng) {
+    return rng.chance(0.5) ? songWords(rng, 1, 4) : songWords(rng, 1, 3) + u"\n"_s + songWords(rng, 1, 3);
+}
+
+enum class LfRecord { Match, OtherSong, WrongLength, ShortLyrics, Instrumental, Loose };
+
+LfRecord lfRecordKind(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.42) return LfRecord::Match;
+    if (roll < 0.55) return LfRecord::OtherSong;
+    if (roll < 0.65) return LfRecord::WrongLength;
+    if (roll < 0.75) return LfRecord::ShortLyrics;
+    if (roll < 0.83) return LfRecord::Instrumental;
+    return LfRecord::Loose;
+}
+
+CandidatePieces lfCandidate(Rng& rng, const QueryPieces& q, LfRecord kind) {
+    if (kind == LfRecord::OtherSong) {
+        CandidatePieces c = candidatePieces(rng, queryPieces(rng), true);
+        c.plainLyrics = lfLyrics(rng);
+        return c;
+    }
+    if (kind == LfRecord::Loose) return candidatePieces(rng, q, rng.chance(0.5));
+    CandidatePieces c = candidatePieces(rng, q, true);
+    if (rng.chance(0.4)) c.trackName = q.titleText;
+    if (rng.chance(0.4)) c.artistName = q.artist.text;
+    c.plainLyrics = lfLyrics(rng);
+    if (q.duration && rng.chance(0.8)) {
+        static constexpr double near[] = {0.0, 0.0, 0.0, 1.0, -2.0, 0.4, 5.0, -7.5};
+        c.duration = double(*q.duration) + pick(rng, near);
+    }
+    c.instrumental = rng.chance(0.75) ? std::optional<bool>(false) : std::nullopt;
+    switch (kind) {
+    case LfRecord::WrongLength:
+        c.duration = double(q.duration.value_or(200)) + (rng.chance(0.5) ? 1.0 : -1.0) * double(rng.between(9, 120));
+        break;
+    case LfRecord::ShortLyrics: c.plainLyrics = lfShortLyrics(rng); break;
+    case LfRecord::Instrumental:
+        c.instrumental = true;
+        if (rng.chance(0.5)) c.plainLyrics = std::nullopt;
+        break;
+    default: break;
+    }
+    return c;
+}
+
+QByteArray lfHex4(char16_t unit) {
+    return QByteArray::number(unit, 16).rightJustified(4, '0');
+}
+
+// The JSON text of a string (sigma-free, as every lyrics field of the differential): escaped as JSON needs, now and then with
+// all non-ASCII escaped; an unpaired surrogate escaped (\uXXXX) or raw (its three-byte form, malformed for a UTF-8
+// decoder); now and then a malformed UTF-8 sequence somewhere inside.
+QByteArray lfJsonString(Rng& rng, const QString& raw) {
+    const QString value = sigmaFree(raw);
+    const bool escapeAll = rng.chance(0.05);
+    const qsizetype malformedAt = rng.chance(0.06) ? rng.between(0, int(value.size())) : -1;
+    QByteArray out = "\"";
+    for (qsizetype i = 0; i <= value.size(); ++i) {
+        if (i == malformedAt) out += pick(rng, kLfMalformed);
+        if (i == value.size()) break;
+        const char16_t unit = value.at(i).unicode();
+        switch (unit) {
+        case u'"': out += "\\\""; continue;
+        case u'\\': out += "\\\\"; continue;
+        case u'\n': out += "\\n"; continue;
+        case u'\r': out += "\\r"; continue;
+        case u'\t': out += "\\t"; continue;
+        default: break;
+        }
+        if (unit < 0x20 || (escapeAll && unit >= 0x80)) {
+            out += "\\u" + lfHex4(unit);
+        } else if (QChar::isHighSurrogate(unit) && i + 1 < value.size() && value.at(i + 1).isLowSurrogate()) {
+            out += value.mid(i, 2).toUtf8();
+            ++i;
+        } else if (QChar::isSurrogate(unit)) {
+            out += rng.chance(0.5) ? "\\u" + lfHex4(unit) : utf8Of(QString(QChar(unit)), true);
+        } else {
+            out += QString(QChar(unit)).toUtf8();
+        }
+    }
+    return out + "\"";
+}
+
+QByteArray lfNumber(double value) {
+    if (std::isnan(value)) return "NaN";
+    if (std::isinf(value)) return value > 0 ? "Infinity" : "-Infinity";
+    if (value == 0.0 && std::signbit(value)) return "-0.0";
+    if (value == std::floor(value) && std::fabs(value) < 1e15) return QByteArray::number(qint64(value));
+    return QByteArray::number(value, 'g', 17);
+}
+
+// A value of the wrong type (or an odd spelling) for a record field: 0..2 names, 3 duration, 4 instrumental, 5 plainLyrics.
+QByteArray lfWrongValue(Rng& rng, int field, const std::optional<double>& duration) {
+    const QByteArray wanted = lfNumber(duration.value_or(258.0));
+    if (field == 3) {
+        const QByteArray values[] = {"\"" + wanted + "\"", "NaN", "1e400", "0x10", wanted + ".4", "-0", "2.58e2", "Infinity",
+                                     "\"NaN\"", "true", "null", "[" + wanted + "]", "{\"s\":" + wanted + "}", "+" + wanted,
+                                     "0" + wanted, wanted + ".", ".5", "258f", "1_000", "-Infinity", "\"\"", "1e-400", "00",
+                                     "258.0", "\" 258\""};
+        return pick(rng, values);
+    }
+    if (field == 4) {
+        static const QByteArray values[] = {"\"true\"", "TRUE", "True", "1", "0", "null", "\"false\"", "yes", "tRuE", "FALSE",
+                                            "truex", "[true]", "{}", "\"\"", "fals", "nul", "fal\xC5\xBF" "e", "FAL\xC5\xBF" "E",
+                                            "\xEF\xBD\x94rue", "TRU\xC4\xB0", "True", "fAlSe"};
+        return pick(rng, values);
+    }
+    if (field == 5) {
+        static const QByteArray values[] = {"null", "42", "[\"a\",\"b\",\"c\"]", "{\"text\":\"a\\nb\\nc\"}", "true", "NaN"};
+        return pick(rng, values);
+    }
+    static const QByteArray values[] = {"123", "null", "{}", "{\"name\":\"IU\"}", "[\"IU\"]", "true", "12.5", "[]", "IU", "NaN"};
+    return pick(rng, values);
+}
+
+// A record as a JSON object: the fields the provider reads (absent when the piece is missing, or JSON null), one field of the
+// wrong type in a fifth of the records, fields it does not read, members in another order now and then.
+QByteArray lfRecordJson(Rng& rng, const CandidatePieces& c) {
+    const int wrongField = rng.chance(0.2) ? (rng.chance(0.7) ? rng.between(3, 4) : pick(rng, {0, 1, 2, 5})) : -1;
+    QList<QByteArray> members;
+    if (rng.chance(0.7)) members.append("\"id\":" + QByteArray::number(rng.between(1, 99999)));
+    const auto stringMember = [&](const char* key, int field, const std::optional<QString>& value) {
+        const QByteArray name = QByteArray("\"") + key + "\":";
+        if (field == wrongField) members.append(name + lfWrongValue(rng, field, c.duration));
+        else if (value) members.append(name + lfJsonString(rng, *value));
+        else if (rng.chance(0.5)) members.append(name + "null");
+    };
+    stringMember("trackName", 0, c.trackName);
+    stringMember("artistName", 1, c.artistName);
+    stringMember("albumName", 2, c.albumName);
+    if (wrongField == 3) members.append("\"duration\":" + lfWrongValue(rng, 3, c.duration));
+    else if (c.duration) members.append("\"duration\":" + lfNumber(*c.duration));
+    else if (rng.chance(0.5)) members.append("\"duration\":null");
+    if (wrongField == 4) members.append("\"instrumental\":" + lfWrongValue(rng, 4, c.duration));
+    else if (c.instrumental) members.append(QByteArray("\"instrumental\":") + (*c.instrumental ? "true" : "false"));
+    else if (rng.chance(0.5)) members.append("\"instrumental\":null");
+    stringMember("plainLyrics", 5, c.plainLyrics);
+    if (rng.chance(0.3)) members.append("\"syncedLyrics\":\"[00:01.00] synthetic\"");
+    if (rng.chance(0.2)) members.append("\"name\":" + lfJsonString(rng, c.trackName.value_or(u"x"_s)));
+    if (rng.chance(0.15)) {
+        for (qsizetype i = members.size() - 1; i > 0; --i) members.swapItemsAt(i, rng.between(0, int(i)));
+    }
+    const QByteArray separator = rng.chance(0.8) ? QByteArray(",") : rng.chance(0.5) ? QByteArray(", ") : QByteArray(",\n  ");
+    return "{" + members.join(separator) + "}";
+}
+
+QByteArray lfRecordOf(Rng& rng, const QueryPieces& q) {
+    return lfRecordJson(rng, lfCandidate(rng, q, lfRecordKind(rng)));
+}
+
+// A body that is not JSON (or not all of it).
+QByteArray lfNotJson(Rng& rng, const QueryPieces& q) {
+    const double roll = rng.next();
+    if (roll < 0.3) {
+        static const QByteArray texts[] = {"<html><body><h1>502 Bad Gateway</h1></body></html>", "not json", "", "{", "[",
+                                           "}{", "[{\"trackName\":", "Too Many Requests", "{\"trackName\" \"x\"}", "\xEF\xBB\xBF{}",
+                                           "[1 2]", "{'trackName':'x'}", "\"unterminated", "[{}]]", "nul"};
+        return pick(rng, texts);
+    }
+    const QByteArray whole = rng.chance(0.5) ? lfRecordOf(rng, q) : "[" + lfRecordOf(rng, q) + "," + lfRecordOf(rng, q) + "]";
+    if (roll < 0.8) return whole.left(rng.between(1, int(whole.size()) - 1));   // cut off
+    return whole + pick(rng, {QByteArray("x"), QByteArray("}"), QByteArray(" ]"), QByteArray(",")});
+}
+
+QByteArray lfOtherJson(Rng& rng) {
+    static const QByteArray values[] = {"null", "\"lyrics\"", "123", "{}", "true", "[[]]", "[null]",
+                                        "{\"code\":404,\"name\":\"TrackNotFound\",\"message\":\"Failed to find specified track\"}"};
+    return pick(rng, values);
+}
+
+// The body of an answer to /get: a record mostly.
+QByteArray lfGetBody(Rng& rng, const QueryPieces& q) {
+    const double roll = rng.next();
+    if (roll < 0.64) return lfRecordOf(rng, q);
+    if (roll < 0.70) return "[" + lfRecordOf(rng, q) + "]";
+    if (roll < 0.80) return lfNotJson(rng, q);
+    if (roll < 0.86) return "[]";
+    return lfOtherJson(rng);
+}
+
+// The body of an answer to /search: an array of records mostly, two or more in most of them, now and then with items that are
+// not objects.
+QByteArray lfSearchBody(Rng& rng, const QueryPieces& q) {
+    const double roll = rng.next();
+    if (roll < 0.70) {
+        const int count = rng.chance(0.15) ? rng.between(0, 1) : rng.between(2, 6);
+        QList<QByteArray> items;
+        for (int i = 0; i < count; ++i) {
+            if (rng.chance(0.1)) items.append(pick(rng, {QByteArray("1"), QByteArray("\"x\""), QByteArray("null"), QByteArray("[]"),
+                                                         QByteArray("true"), QByteArray("[{}]")}));
+            else items.append(lfRecordOf(rng, q));
+        }
+        return "[" + items.join(rng.chance(0.9) ? QByteArray(",") : QByteArray(",\n")) + "]";
+    }
+    if (roll < 0.78) return "[]";
+    if (roll < 0.88) return lfNotJson(rng, q);
+    if (roll < 0.93) return lfRecordOf(rng, q);
+    return lfOtherJson(rng);
+}
+
+// One step: what the client does for one request (the first is shaped for /get, the others for /search).
+QString lfStep(Rng& rng, const QueryPieces& q, bool get) {
+    const double roll = rng.next();
+    const auto answer = [](int code, const QByteArray& body) { return QString::number(code) + u':' + bytesField(body); };
+    if (roll < 0.70) return answer(200, get ? lfGetBody(rng, q) : lfSearchBody(rng, q));
+    if (roll < 0.73) return u"200:L"_s;
+    if (roll < 0.79) {
+        static constexpr int codes[] = {404, 404, 404, 500, 400, 403, 301, 204, 201};
+        const int code = pick(rng, codes);
+        return answer(code, rng.chance(0.5) ? lfOtherJson(rng) : (get ? lfGetBody(rng, q) : lfSearchBody(rng, q)));
+    }
+    if (roll < 0.85) {
+        static constexpr int codes[] = {429, 502, 503, 504};
+        const int code = pick(rng, codes);
+        return rng.chance(0.15) ? QString::number(code) + u":L"_s : answer(code, rng.chance(0.5) ? QByteArray() : lfOtherJson(rng));
+    }
+    if (roll < 0.90) return pick(rng, {u"C"_s, u"T"_s, u"U"_s});
+    if (roll < 0.95) return u"I"_s;
+    return answer(200, get ? lfSearchBody(rng, q) : lfGetBody(rng, q));   // the other shape
+}
+
+QString generateLf(Rng& rng) {
+    QueryPieces q = queryPieces(rng);
+    if (rng.chance(0.25)) q.artist.text = lfInject(rng, q.artist.text);
+    if (rng.chance(0.3)) q.titleText = lfInject(rng, q.titleText);
+    if (q.album && rng.chance(0.2)) q.album = lfInject(rng, *q.album);
+    const double requests = rng.next();
+    int maxRequests = 8;
+    if (requests < 0.2) maxRequests = rng.between(1, 3);
+    else if (requests < 0.24) maxRequests = 0;
+    else if (requests < 0.26) maxRequests = -1;
+    else if (requests < 0.5) maxRequests = rng.between(4, 12);
+    const double timeout = rng.next();
+    const QString timeoutField = timeout < 0.95 ? u"D"_s : timeout < 0.975 ? u"0"_s : u"N"_s;
+    QString line = queryFields(q) + u'\t' + QString::number(maxRequests) + u'\t' + timeoutField;
+    const int steps = rng.chance(0.08) ? 0 : rng.between(1, std::clamp(maxRequests, 1, 12) + 2);
+    for (int i = 0; i < steps; ++i) line += u'\t' + lfStep(rng, q, i == 0);
+    return line;
+}
+
 struct WOp {
     QStringView name;
     Generator fields;   // the fields after the op
 };
 constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn},
-                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}};
+                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}, {u"lf", generateLf}};
 
 QString generateW(Rng& rng) {
     const WOp& op = pick(rng, kWOps);
