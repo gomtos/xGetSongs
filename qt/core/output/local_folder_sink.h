@@ -12,7 +12,7 @@ namespace xgs::output {
 /// The check of Kotlin's LocalFolderSink.resolve: fileName is not blank (Kotlin's isBlank), not `.` or `..`, and is a path
 /// whose file name is itself (so it holds no separator, no drive and no character a path cannot have). Observed through the
 /// differential (kind W, op fn). Names of dots and spaces only, such as `...` or `.. `, are accepted, as in Kotlin, although
-/// Windows resolves them to the folder itself or to its parent.
+/// Windows resolves them to the folder itself.
 bool isAcceptedFileName(const QString& fileName);
 
 class LocalFolderSink final : public OutputSink {
