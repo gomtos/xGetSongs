@@ -50,7 +50,7 @@ $env:XGS_INTEGRATION='1'; build/qt/tst_real_ffmpeg_tagging.exe -o "$env:TEMP\xgs
 
 ## 관문
 
-Q1(`shared` 이식), Q2a(`engine`의 순수 로직), Q2b(프로세스·도구·조회·태그·출력 폴더)의 관문은 설계 §4의 두 조건이다: 이식 대상 Kotlin 테스트가 같은 이름으로 모두 통과하고, 대조에서 불일치가 0이다. 대조는 모든 종류(Q1·Q2a·Q2b의 것)를 돈다. Q2b부터는 두 `ctest` 다음에 위 "실제 도구 통합 테스트"의 명령을 릴리스 빌드로 한 번 돌린다(`XGS_INTEGRATION_AUDIO`는 켜지 않는다). 우리 대상을 깨끗이 다시 빌드한 뒤(아래 "깨끗한 빌드", 릴리스와 디버그 둘 다) 저장소 루트에서 차례로 돌린다. 하나라도 실패하면 C++을 고치고 처음부터 다시 돌린다(Kotlin 코드, 기대값, 문턱, 생성기의 강도는 바꾸지 않는다).
+Q1(`shared` 이식), Q2a(`engine`의 순수 로직), Q2b(프로세스·도구·조회·태그·출력 폴더), Q2c(HTTP·yt-dlp 내려받기·LRCLIB)의 관문은 설계 §4의 두 조건이다: 이식 대상 Kotlin 테스트가 같은 이름으로 모두 통과하고, 대조에서 불일치가 0이다. 대조는 모든 종류(Q1·Q2a·Q2b의 것)를 돈다. Q2b부터는 두 `ctest` 다음에 위 "실제 도구 통합 테스트"의 명령을 릴리스 빌드로 한 번 돌린다(`XGS_INTEGRATION_AUDIO`와 `XGS_INTEGRATION_DOWNLOAD`는 켜지 않는다; `tst_real_lrclib`는 실제 lrclib.net에 묻으므로 사용자가 허락한 횟수만 돌린다). 우리 대상을 깨끗이 다시 빌드한 뒤(아래 "깨끗한 빌드", 릴리스와 디버그 둘 다) 저장소 루트에서 차례로 돌린다. 하나라도 실패하면 C++을 고치고 처음부터 다시 돌린다(Kotlin 코드, 기대값, 문턱, 생성기의 강도는 바꾸지 않는다).
 
 ```
 ctest --test-dir build/qt --output-on-failure
