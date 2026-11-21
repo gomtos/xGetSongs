@@ -973,16 +973,19 @@ public class Oracle {
     //           of the ffmetadata input is read before anything else
     //   lyrics  per find: - (null) | . | hex | X (find throws IllegalStateException)
     //   put     per put: S (stored: the name joins the sink's names) | A<hex or .> (FileAlreadyExistsException(fileName); the
-    //           text is the C++ result's only) | F<code>/<hex> (code 5: AccessDeniedException(fileName), else
+    //           text is the C++ result's only) | a<hex or .> (the same after the name joins the sink's names: another
+    //           program put it there first) | F<code>/<hex> (code 5: AccessDeniedException(fileName), else
     //           IOException(text); the generator writes the codes 112 and 39 only with a disk-full marker in the text)
     //   exists(name) is whether the sink's names hold it.
-    // -> E <event>... M <ffmetadata text hex>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>:
+    // -> E <event>... T <videoId>... M <ffmetadata text hex>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>:
     //   every event in order: S,rank,videoId,fileName | P,rank,D|F,percent (- for null, N when not finite, else the 16 hex
     //   digits of doubleToRawLongBits) | D,rank,fileName,lyrics (the LyricsOutcome's name or -) | K,rank,reason |
-    //   F,rank,message | J,status,succeeded,skipped,failed; the ffmetadata text of each tag run; each lyrics query
+    //   F,rank,message | J,status,succeeded,skipped,failed; the video ID of each metadata fetch (hex); the ffmetadata text
+    //   of each tag run; each lyrics query
     //   (artist/title/album/durationSeconds, hex or "-", the duration in decimal); the rank folder of each yt-dlp run and of
     //   each tag run; the rank folder of each put's source and the file name it was given; the entries left in the
-    //   temporary folder after the job.
+    //   temporary folder after the job. Anything the job throws out of runBlocking answers THROW <class> <message hex> for
+    //   that case (a loud mismatch that names the case, instead of ending the oracle).
     static final String JOB_YT_DLP = "C:\\tools\\yt-dlp.exe";
     static final String JOB_FFMPEG = "C:\\tools\\ffmpeg.exe";
     static java.lang.reflect.Method durationBox;
@@ -1098,6 +1101,12 @@ public class Oracle {
                     return kotlin.Unit.INSTANCE;
                 }
                 case 'A' -> Oracle.<RuntimeException>sneakyThrow(new java.nio.file.FileAlreadyExistsException(fileName));
+                case 'a' -> {
+                    synchronized (names) {
+                        names.add(fileName);
+                    }
+                    Oracle.<RuntimeException>sneakyThrow(new java.nio.file.FileAlreadyExistsException(fileName));
+                }
                 case 'F' -> {
                     int slash = entry.indexOf('/');
                     int code = Integer.parseInt(entry.substring(1, slash));
@@ -1156,10 +1165,12 @@ public class Oracle {
         Script lyricsScript = new Script(part[scripts + 3]);
         JobSink sink = new JobSink(part[7], part[scripts + 4]);
         java.util.List<String> queries = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        java.util.List<String> fetches = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
         ToolPaths toolPaths = new ToolPaths(java.nio.file.Path.of(JOB_YT_DLP), java.nio.file.Path.of(JOB_FFMPEG),
             java.nio.file.Path.of("C:\\tools\\node.exe"));
         com.xgetsongs.engine.ytdlp.VideoMetadataSource metadata = (videoId, continuation) -> {
+            fetches.add(enc(videoId));
             String entry = meta.take();
             if (entry.equals("-")) return null;
             String[] f = entry.split("/", -1);
@@ -1183,19 +1194,26 @@ public class Oracle {
 
         java.nio.file.Path tempRoot = java.nio.file.Files.createTempDirectory("xgs-diff-jb-");
         try {
-            java.util.List<Object> events = kotlinx.coroutines.BuildersKt.<java.util.List<Object>>runBlocking(
-                kotlin.coroutines.EmptyCoroutineContext.INSTANCE, (scope, continuation) -> {
-                    com.xgetsongs.engine.job.DefaultDownloadService service =
-                        new com.xgetsongs.engine.job.DefaultDownloadService(downloader, tempRoot, scope, delays);
-                    return kotlinx.coroutines.channels.ChannelsKt.toList(service.start(request).getEvents(),
-                        (kotlin.coroutines.Continuation) continuation);
-                });
+            java.util.List<Object> events;
+            try {
+                events = kotlinx.coroutines.BuildersKt.<java.util.List<Object>>runBlocking(
+                    kotlin.coroutines.EmptyCoroutineContext.INSTANCE, (scope, continuation) -> {
+                        com.xgetsongs.engine.job.DefaultDownloadService service =
+                            new com.xgetsongs.engine.job.DefaultDownloadService(downloader, tempRoot, scope, delays);
+                        return kotlinx.coroutines.channels.ChannelsKt.toList(service.start(request).getEvents(),
+                            (kotlin.coroutines.Continuation) continuation);
+                    });
+            } catch (Throwable e) {
+                return "THROW " + e.getClass().getName() + " " + enc(String.valueOf(e.getMessage()));
+            }
             long remaining;
             try (java.util.stream.Stream<java.nio.file.Path> list = java.nio.file.Files.list(tempRoot)) {
                 remaining = list.count();
             }
             StringBuilder out = new StringBuilder("E");
             for (Object event : events) out.append(' ').append(eventOf(event));
+            out.append(" T");
+            for (String videoId : fetches) out.append(' ').append(videoId);
             out.append(" M");
             for (String text : runner.ffmetadata) out.append(' ').append(text);
             out.append(" Q");

@@ -670,13 +670,14 @@ QString answerLf(const QStringList& fields) {
 }
 
 // W jb overwrite includeRank album albumOverride searchLyrics existing n item... meta ytdlp ffmpeg lyrics put -> E <event>...
-// M <ffmetadata hex>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>: job::DefaultDownloadService
-// (job::ItemDownloader on a testsupport::FakeProcessRunner, testsupport::FixedTools, testsupport::FakeMetadata and
+// T <fetched videoId>... M <ffmetadata hex>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>:
+// job::DefaultDownloadService (job::ItemDownloader on a testsupport::FakeProcessRunner, testsupport::FixedTools, testsupport::FakeMetadata and
 // testing::FakeLyricsProvider; retry delays 0 and 0; the temporary folder a QTemporaryDir) runs one request (concurrency 1) on
 // a testing::FakeOutputSink, and every event is read with nextEvent. Oracle.java's answerJob documents the notation; the
 // fakes do what its fakes do: the same script rule (call order, then the last entry again), the same files, the same lines in
 // the same order. The put results stand for Kotlin's exceptions by decision 5 of the Q2d plan: S Stored, A<text>
-// AlreadyExists with that error text, F<code>/<text> Failed with that code and text.
+// AlreadyExists with that error text, a<text> the same after the name joined the sink's names (another program put it
+// there first), F<code>/<text> Failed with that code and text.
 class JbScript {
 public:
     explicit JbScript(const QString& field) : m_entries(field.split(u',')) {}
@@ -762,7 +763,7 @@ QString answerJb(const QStringList& fields) {
     JbScript putScript(fields.at(scripts + 4));
 
     std::mutex mutex;   // guards what the fakes record and the sink's names
-    QStringList ytDlpRanks, ffmpegRanks, ffmetadata, queries, puts;
+    QStringList ytDlpRanks, ffmpegRanks, ffmetadata, queries, puts, fetches;
     QSet<QString> names;
     if (fields.at(5) != u"~") {
         for (const QString& name : fields.at(5).split(u',')) names.insert(textOf(name));
@@ -797,7 +798,11 @@ QString answerJb(const QStringList& fields) {
         return entry.at(0).toInt();
     });
     const testsupport::FixedTools tools;
-    testsupport::FakeMetadata metadata([&](const QString&, std::stop_token) -> std::optional<ytdlp::VideoMeta> {
+    testsupport::FakeMetadata metadata([&](const QString& videoId, std::stop_token) -> std::optional<ytdlp::VideoMeta> {
+        {
+            const std::lock_guard lock(mutex);
+            fetches.append(hexText(videoId));
+        }
         const QString entry = meta.take();
         if (entry == u"-") return std::nullopt;
         const QStringList f = entry.split(u'/');
@@ -829,7 +834,12 @@ QString answerJb(const QStringList& fields) {
                 names.insert(fileName);
                 return output::PutResult{output::PutStatus::Stored, {}, 0};
             }
-            if (entry.startsWith(u'A')) return output::PutResult{output::PutStatus::AlreadyExists, textOf(entry.mid(1)), 0};
+            if (entry.startsWith(u'a')) {
+                const std::lock_guard lock(mutex);
+                names.insert(fileName);   // another program put the name there first
+            }
+            if (entry.startsWith(u'A') || entry.startsWith(u'a'))
+                return output::PutResult{output::PutStatus::AlreadyExists, textOf(entry.mid(1)), 0};
             const qsizetype slash = entry.indexOf(u'/');
             return output::PutResult{output::PutStatus::Failed, textOf(entry.mid(slash + 1)),
                                      static_cast<quint32>(entry.mid(1, slash - 1).toUInt())};
@@ -850,6 +860,8 @@ QString answerJb(const QStringList& fields) {
     }
     const qsizetype remaining =
         QDir(temp.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System).size();
+    out += QStringLiteral(" T");
+    for (const QString& videoId : fetches) out += u' ' + videoId;
     out += QStringLiteral(" M");
     for (const QString& text : ffmetadata) out += u' ' + text;
     out += QStringLiteral(" Q");

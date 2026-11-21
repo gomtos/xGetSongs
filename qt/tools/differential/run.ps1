@@ -523,7 +523,7 @@ $WOpChecks = [ordered]@{
         param($cases, $answers, $indexes, $portAnswers)
         $alignedPercent = 0; $alignedTail = 0
         $completed = 0; $failedJob = 0; $skipped = 0; $failedItem = 0; $retried = 0; $gaveUp = 0; $reparsed = 0; $sameName = 0
-        $alreadyExists = 0; $denied = 0; $diskFull = 0; $progress3 = 0; $notFinite = 0; $override = 0; $badInfo = 0
+        $alreadyExists = 0; $existsSkip = 0; $denied = 0; $diskFull = 0; $progress3 = 0; $notFinite = 0; $override = 0; $badInfo = 0
         $outcomes = @{ DESCRIPTION = 0; ONLINE = 0; NOT_FOUND = 0; SEARCH_OFF = 0 }
         foreach ($i in $indexes) {
             $case = $cases[$i]
@@ -578,17 +578,24 @@ $WOpChecks = [ordered]@{
             if ($again) { $reparsed++ }
             if ($dup) { $sameName++ }
             # puts: the entry each put took, and what the item reported
-            $exists = $false; $deny = $false; $full = $false
+            $exists = $false; $existsSkipped = $false; $deny = $false; $full = $false
+            $skippedRanks = @{}
+            foreach ($e in $events) { if ($e.StartsWith('K,')) { $skippedRanks[$e.Split(',')[1]] = $true } }
             for ($p = 0; $p -lt $s['P'].Count; $p++) {
                 $rank = $s['P'][$p].Split('/')[0]
                 $entry = $putScript[[Math]::Min($p, $putScript.Count - 1)]
-                if ($entry.StartsWith('A')) { $exists = $true }
+                if ($entry -cmatch '^[Aa]') {
+                    $exists = $true
+                    # skipped after the put: an item skipped up front never reaches its put
+                    if ($skippedRanks.ContainsKey($rank)) { $existsSkipped = $true }
+                }
                 if ($entry.StartsWith('F') -and $failures.ContainsKey($rank)) {
                     if ($failures[$rank] -ceq $JbNoPermissionHex) { $deny = $true }
                     if ($failures[$rank] -ceq $JbDiskFullHex) { $full = $true }
                 }
             }
             if ($exists) { $alreadyExists++ }
+            if ($existsSkipped) { $existsSkip++ }
             if ($deny) { $denied++ }
             if ($full) { $diskFull++ }
             $progressEvents = @($events | Where-Object { $_.StartsWith('P,') })
@@ -623,6 +630,8 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'jb: a lowConfidence item parsed again' $reparsed $n 0.10
         Test-Share 'W' 'jb: the same file name twice or more in one job' $sameName $n 0.05
         Test-Share 'W' 'jb: a put that answered AlreadyExists' $alreadyExists $n 0.03
+        # (not in the plan's table: added by the Task 4 review, so that the skip of decision 5's second row is reached)
+        Test-Share 'W' 'jb: a put that answered AlreadyExists and the item was skipped' $existsSkip $n 0.02
         Test-Share 'W' 'jb: a put denied access' $denied $n 0.03
         Test-Share 'W' 'jb: a put found the disk full' $diskFull $n 0.03
         Test-Share 'W' 'jb: three or more Progress events' $progress3 $n 0.20
@@ -677,18 +686,20 @@ public static class LfScan {
 }
 '@
 function ConvertTo-HexText([string]$text) { -join ($text.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ }) }
-# Helpers of W jb. Get-JbSections: the sections of an answer (E events, M ffmetadata texts, Q queries, Y yt-dlp run ranks,
-# G tag run ranks, P puts, R the entries left), each a list of its tokens. The messages of ItemFailed after a fatal put, as
-# hex. Test-JbTransient: whether the stderr field of a yt-dlp script entry would be TRANSIENT for ErrorClassifier (its phrase
-# lists, in its order; for counting only, never for an answer). Test-JbInfoReadable: whether an info field holds strict
-# UTF-8 JSON with an object root (System.Text.Json; for counting only).
+# Helpers of W jb. Get-JbSections: the sections of an answer (E events, T video IDs of the metadata fetches, M ffmetadata
+# texts, Q queries, Y yt-dlp run ranks, G tag run ranks, P puts, R the entries left), each a list of its tokens. The
+# messages of ItemFailed after a fatal put, as hex. Test-JbTransient: whether the stderr field of a yt-dlp script entry would
+# be TRANSIENT for ErrorClassifier (its phrase lists, in its order, on the text lowercased with .NET's ToLowerInvariant,
+# which agrees with Kotlin's lowercase on the generator's transient lines, all ASCII; for counting only, never for an
+# answer). Test-JbInfoReadable: whether an info field holds strict UTF-8 JSON with an object root (System.Text.Json; for
+# counting only).
 function Get-JbSections([string]$answer) {
     $sections = @{}
-    foreach ($name in 'E', 'M', 'Q', 'Y', 'G', 'P', 'R') { $sections[$name] = [System.Collections.Generic.List[string]]::new() }
+    foreach ($name in 'E', 'T', 'M', 'Q', 'Y', 'G', 'P', 'R') { $sections[$name] = [System.Collections.Generic.List[string]]::new() }
     if ($null -eq $answer) { return $sections }
     $current = $null
     foreach ($token in $answer.Split(' ')) {
-        if ($token -cmatch '^[EMQYGPR]$') { $current = $token; continue }
+        if ($token -cmatch '^[ETMQYGPR]$') { $current = $token; continue }
         if ($null -ne $current) { $sections[$current].Add($token) }
     }
     return $sections
@@ -725,9 +736,11 @@ function Test-JbInfoReadable([string]$field) {
 }
 # The two known differences of W jb, aligned before the comparison (the plan's `W jb` table): a percent that is not finite is
 # unknown (author decision 8: the Kotlin answer writes N for it, the port sends unknown), and the text after `파일 처리 중 오류: `
-# of the ItemFailed that follows a put answering AlreadyExists (decision 5: Kotlin's message is the exception's, the port's
-# the result's text or the file name). The put that took an `A` entry of the put script is found from the answer's P section
-# (the n-th put took the n-th entry, then the last again); its rank's ItemFailed, if it has the prefix, keeps only the prefix.
+# of the ItemFailed that follows a put answering AlreadyExists with a text of its own (decision 5: Kotlin's message is the
+# exception's, the file name; the port's is the result's text). Only a put entry `A<text>` or `a<text>` with a non-empty text
+# is aligned: with `A.` or `a.` the port falls back to the file name, which must equal Kotlin's message exactly, and an item
+# that is skipped after the put has no message at all. The put that took the entry is found from the answer's P section (the
+# n-th put took the n-th entry, then the last again); its rank's ItemFailed, if it has the prefix, keeps only the prefix.
 # Nothing else is touched.
 function Format-JbPercents([string]$answer) {
     $tokens = $answer.Split(' ')
@@ -741,7 +754,7 @@ function Format-JbFolded($fields, [string]$answer, [string]$side) {
     $n = [int]$fields[7]
     $putScript = $fields[8 + 7 * $n + 4].Split(',')
     for ($p = 0; $p -lt $s['P'].Count; $p++) {
-        if (-not $putScript[[Math]::Min($p, $putScript.Count - 1)].StartsWith('A')) { continue }
+        if ($putScript[[Math]::Min($p, $putScript.Count - 1)] -cnotmatch '^[Aa][0-9a-f]+$') { continue }
         $head = 'F,' + $s['P'][$p].Split('/')[0] + ',' + $JbFileErrorHex
         for ($t = 0; $t -lt $tokens.Count; $t++) { if ($tokens[$t].StartsWith($head, [StringComparison]::Ordinal)) { $tokens[$t] = $head } }
     }
@@ -1559,7 +1572,7 @@ $Folding = @{
         Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'lower' -and (Test-HasCapitalSigma $fields[1])) { Format-FoldedSigma $answer } else { $answer } }
     }
     W = @{
-        Note = 'W: op jb is compared with its two known differences aligned (Format-JbFolded: a percent that is not finite in the Kotlin answer is unknown; the tail of an ItemFailed after a put that answered AlreadyExists is dropped in both answers); every other op and all else exactly'
+        Note = 'W: op jb is compared with its two known differences aligned (Format-JbFolded: a percent that is not finite in the Kotlin answer is unknown; the tail of an ItemFailed after a put that answered AlreadyExists with a non-empty text of its own is dropped in both answers); every other op and all else exactly'
         Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'jb' -and $null -ne $answer) { Format-JbFolded $fields $answer $side } else { $answer } }
     }
 }

@@ -3859,8 +3859,10 @@ QString jbPutFailure(int code, QStringView text) {
 
 QString jbPut(Rng& rng) {
     const double roll = rng.next();
-    if (roll < 0.63) return u"S"_s;
-    if (roll < 0.74) return u"A"_s + (rng.chance(0.5) ? u"."_s : hex(pick(rng, kJbExistsTexts).toString()));
+    if (roll < 0.58) return u"S"_s;
+    if (roll < 0.67) return u"A"_s + (rng.chance(0.5) ? u"."_s : hex(pick(rng, kJbExistsTexts).toString()));
+    // AlreadyExists because another program put the name there first: the name exists now
+    if (roll < 0.74) return u"a"_s + (rng.chance(0.5) ? u"."_s : hex(pick(rng, kJbExistsTexts).toString()));
     if (roll < 0.83) return jbPutFailure(5, u"Access is denied.");
     if (roll < 0.89) {
         const auto& [code, message] = pick(rng, kJbDiskFull);

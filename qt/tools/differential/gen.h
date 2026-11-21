@@ -34,13 +34,15 @@ struct Rng {
 //     ffmpeg  per tag run: exit/writes/stderr (writes 1: the output file, the last argument, is written)
 //     lyrics  per lookup: - (none) | . | text | X (the provider throws)
 //     put     per put: S (Stored; the name joins the sink's names) | A<text or .> (AlreadyExists with that error text; Kotlin:
-//             FileAlreadyExistsException(fileName)) | F<code>/<text> (Failed with that Win32 code and text; Kotlin: code 5
+//             FileAlreadyExistsException(fileName)) | a<text or .> (the same after the name joins the sink's names: another
+//             program put it there first) | F<code>/<text> (Failed with that Win32 code and text; Kotlin: code 5
 //             AccessDeniedException, else IOException(text); codes 112 and 39 only with a disk-full marker in the text)
 //   exists(name) answers whether the sink's names hold it.
-// The answer: E <event>... M <ffmetadata text>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>
+// The answer: E <event>... T <videoId>... M <ffmetadata text>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>
 //   events in order: S,rank,videoId,fileName | P,rank,D|F,percent (- unknown, the 16 hex digits of the bits; the Kotlin side
 //   writes N for a percent that is not finite) | D,rank,fileName,DESCRIPTION|ONLINE|NOT_FOUND|SEARCH_OFF|- | K,rank,reason |
-//   F,rank,message | J,COMPLETED|CANCELLED|FAILED,succeeded,skipped,failed; the text of the ffmetadata file of each tag run;
+//   F,rank,message | J,COMPLETED|CANCELLED|FAILED,succeeded,skipped,failed; the video ID of each metadata fetch; the text of
+//   the ffmetadata file of each tag run;
 //   each lyrics query artist/title/album/durationSeconds; the rank folder of each yt-dlp run (Y) and tag run (G); the rank
 //   folder of each put's source and its file name; the entries left in the temporary folder after the job.
 using Generator = QString (*)(Rng&);
