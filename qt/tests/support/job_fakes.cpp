@@ -92,7 +92,11 @@ void writeFakeTagged(const QStringList& command) {
 }
 
 QString ffmetadataTextOf(const QStringList& command) {
-    return QString::fromUtf8(readBytes(command.at(command.indexOf(u"ffmetadata"_s) + 2)));
+    // `-f ffmetadata -i <file>`: the file is two places after the format name
+    const qsizetype at = command.indexOf(u"ffmetadata"_s);
+    if (at < 0 || at + 2 >= command.size() || command.at(at + 1) != u"-i"_s)
+        throw std::runtime_error("the command has no ffmetadata input");
+    return QString::fromUtf8(readBytes(command.at(at + 2)));
 }
 
 FakeProcessRunner downloadRunner(ProcessHandler ytDlp) {
@@ -122,6 +126,8 @@ QList<QStringList> ffmpegCommands(const FakeProcessRunner& runner) {
 }
 
 void awaitStop(std::stop_token stop) {
+    // A token without a stop state can never be stopped: waiting on it would hang the test instead of failing it.
+    if (!stop.stop_possible()) throw std::logic_error("awaitStop was given a token that can never be stopped");
     std::mutex mutex;
     std::condition_variable_any changed;
     std::unique_lock lock(mutex);

@@ -136,13 +136,21 @@ bool removeEmptyDirectory(const QString& path) {
 }
 
 bool makeDirectories(const QString& path) {
+    quint32 errorCode = 0;
+    return makeDirectories(path, errorCode);
+}
+
+bool makeDirectories(const QString& path, quint32& errorCode) {
+    errorCode = 0;
     if (isDirectory(path)) return true;
     // every directory from the top down; creating the drive or a UNC host fails and is ignored, the last check decides
     const QString full = fullPath(path);
     for (qsizetype at = full.indexOf(u'\\', 3); at >= 0; at = full.indexOf(u'\\', at + 1))
         CreateDirectoryW(wide(win32Path(full.first(at))), nullptr);
-    CreateDirectoryW(wide(win32Path(full)), nullptr);
-    return isDirectory(full);
+    const quint32 lastError = CreateDirectoryW(wide(win32Path(full)), nullptr) ? 0 : GetLastError();
+    if (isDirectory(full)) return true;
+    errorCode = lastError;
+    return false;
 }
 
 }  // namespace xgs::fs

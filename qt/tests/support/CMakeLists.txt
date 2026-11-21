@@ -7,7 +7,8 @@ add_library(xgstestsupport STATIC
     fake_http_server.h fake_http_server.cpp
     fake_http_client.h fake_http_client.cpp
     fake_lyrics_provider.h
-    job_fakes.h job_fakes.cpp)
+    job_fakes.h job_fakes.cpp
+    fake_output_sink.h)
 target_include_directories(xgstestsupport PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(xgstestsupport PUBLIC xgscore ws2_32)
 xgs_target_defaults(xgstestsupport)

@@ -128,6 +128,9 @@ DownloadResult ItemDownloader::download(const PreparedItem& prepared, const QStr
     const process::RunResult run = m_runner.run(
         command,
         [&](const QString& line) {
+            // Nothing once a stop is requested: a line cut short by the kill could still parse as an update, and a cancelled
+            // item emits no further event (author decision 2).
+            if (stop.stop_requested()) return;
             const std::optional<ytdlp::DownloadProgress> update = ytdlp::parseProgress(line);
             if (!update || !throttle.accept(*update)) return;
             // Author decision 8: a percent that is not finite is unknown; the throttle above still counted it as Kotlin does.

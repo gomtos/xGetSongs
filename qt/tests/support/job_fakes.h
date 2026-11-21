@@ -46,7 +46,8 @@ bool isFfmpegCommand(const QStringList& command);
 /// Pretends ffmpeg finished tagging: creates the output file, which is the last argument.
 void writeFakeTagged(const QStringList& command);
 
-/// The text of the ffmetadata file an ffmpeg tagging command reads (the input after `-f ffmetadata`).
+/// The text of the ffmetadata file an ffmpeg tagging command reads (the input after `-f ffmetadata`). Throws
+/// std::runtime_error when the command has no such input.
 QString ffmetadataTextOf(const QStringList& command);
 
 /// A runner for a whole download: the ffmpeg tagging pass succeeds by writing the tagged file, every other command (yt-dlp)
@@ -58,7 +59,8 @@ FakeProcessRunner downloadRunner(StoppableProcessHandler ytDlp);
 QList<QStringList> ytDlpCommands(const FakeProcessRunner& runner);
 QList<QStringList> ffmpegCommands(const FakeProcessRunner& runner);
 
-/// Kotlin's `awaitCancellation()` inside a handler: blocks until stop is requested.
+/// Kotlin's `awaitCancellation()` inside a handler: blocks until stop is requested. Throws std::logic_error for a token that
+/// has no stop state (it could never return).
 void awaitStop(std::stop_token stop);
 
 /// A VideoMetadataSource whose answer is a function; records every video ID it is asked for. Safe to call from several

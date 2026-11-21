@@ -61,4 +61,8 @@ void removeQuietly(const QString& path);
 /// Creates a directory and the missing ones above it. true when the directory exists afterwards.
 bool makeDirectories(const QString& path);
 
+/// The same; when the directory does not exist afterwards, errorCode is the Win32 error code (GetLastError) of the failed
+/// attempt to create the directory itself (ERROR_ALREADY_EXISTS when a file has its name), 0 when Windows gave none.
+bool makeDirectories(const QString& path, quint32& errorCode);
+
 }  // namespace xgs::fs

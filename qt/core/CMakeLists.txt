@@ -31,6 +31,8 @@ add_library(xgscore STATIC
     output/output_sink.h output/local_folder_sink.h output/local_folder_sink.cpp
     job/download_concurrency.h job/download_concurrency.cpp
     job/item_downloader.h job/item_downloader.cpp
+    job/download_service.h job/job_events.h job/job_events.cpp
+    job/default_download_service.h job/default_download_service.cpp
     net/http_client.h net/qt_http_client.h net/qt_http_client.cpp
     net/http_fetch.h net/http_fetch.cpp)
 target_include_directories(xgscore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

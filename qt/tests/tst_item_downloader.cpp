@@ -471,10 +471,8 @@ private slots:
 
         QVERIFY(std::holds_alternative<DownloadCancelled>(result));
         QCOMPARE(ffmpegCommands(runner).size(), 0);
-        for (const JobEvent& event : log.all()) {
-            QVERIFY(std::holds_alternative<Progress>(event));
-            QCOMPARE(std::get<Progress>(event).stage, Stage::Downloading);
-        }
+        // Both lines arrive after the stop: neither may become an event, not even one that parses as an update.
+        QVERIFY2(log.all().isEmpty(), "no event once the stop is requested");
     }
 
     void theInfoFileIsReadOnlyAfterYtDlpHasExited() {
