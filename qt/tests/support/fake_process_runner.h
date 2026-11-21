@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <mutex>
+#include <stop_token>
 
 #include "process/process_runner.h"
 
@@ -15,6 +16,11 @@ namespace xgs::testsupport {
 /// What a FakeProcessRunner does for one command: writes lines to the handlers and returns the exit code.
 using ProcessHandler = std::function<int(const QStringList& command, const process::LineHandler& out,
                                          const process::LineHandler& err)>;
+
+/// The same with the stop token of the run, for a handler that waits for a stop (Kotlin's `awaitCancellation()`): it returns
+/// once the token is stopped, and the run is then Cancelled.
+using StoppableProcessHandler = std::function<int(const QStringList& command, const process::LineHandler& out,
+                                                  const process::LineHandler& err, std::stop_token stop)>;
 
 /// Kotlin's String.lines(): text split at \r\n, \n and \r (an empty text is one empty line).
 QStringList kotlinLines(const QString& text);
@@ -34,6 +40,7 @@ struct RunFailure {
 class FakeProcessRunner final : public process::ProcessRunner {
 public:
     explicit FakeProcessRunner(ProcessHandler handler);
+    explicit FakeProcessRunner(StoppableProcessHandler handler);
 
     /// A stop requested before the call runs nothing (nothing is recorded) and is Cancelled. Otherwise the command is
     /// recorded and the handler runs: a StartFailure it throws is StartFailed, a RunFailure Failed, any other exception propagates, a stop
@@ -45,7 +52,7 @@ public:
     int maxActive() const;
 
 private:
-    ProcessHandler m_handler;
+    StoppableProcessHandler m_handler;
     mutable std::mutex m_mutex;
     QList<QStringList> m_commands;
     int m_active = 0;

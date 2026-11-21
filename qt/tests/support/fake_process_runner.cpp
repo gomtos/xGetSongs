@@ -21,7 +21,13 @@ QStringList kotlinLines(const QString& text) {
     return lines;
 }
 
-FakeProcessRunner::FakeProcessRunner(ProcessHandler handler) : m_handler(std::move(handler)) {}
+FakeProcessRunner::FakeProcessRunner(ProcessHandler handler)
+    : m_handler([handler = std::move(handler)](const QStringList& command, const process::LineHandler& out,
+                                               const process::LineHandler& err, std::stop_token) {
+          return handler(command, out, err);
+      }) {}
+
+FakeProcessRunner::FakeProcessRunner(StoppableProcessHandler handler) : m_handler(std::move(handler)) {}
 
 process::RunResult FakeProcessRunner::run(const QStringList& command, const process::LineHandler& onStdout,
                                           const process::LineHandler& onStderr, std::stop_token stop) {
@@ -41,7 +47,7 @@ process::RunResult FakeProcessRunner::run(const QStringList& command, const proc
     } leave{*this};
 
     try {
-        const int exitCode = m_handler(command, onStdout, onStderr);
+        const int exitCode = m_handler(command, onStdout, onStderr, stop);
         if (stop.stop_requested()) return {process::RunStatus::Cancelled};
         return {process::RunStatus::Exited, exitCode};
     } catch (const StartFailure& failure) {
