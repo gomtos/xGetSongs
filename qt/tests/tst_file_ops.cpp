@@ -250,6 +250,29 @@ private slots:
         xgs::fs::removeQuietly(longFile);
         QVERIFY(!xgs::fs::exists(longFile));
     }
+
+    void makeDirectoriesReportsTheWindowsErrorOfTheLastFolder() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString base = windowsPath(dir.path());
+
+        // success, made now or already there: true and code 0 (a code left from before is cleared)
+        const QString folder = base + u"\\a\\b"_s;
+        quint32 code = 99;
+        QVERIFY(xgs::fs::makeDirectories(folder, code));
+        QCOMPARE(code, 0u);
+        code = 99;
+        QVERIFY(xgs::fs::makeDirectories(folder, code));
+        QCOMPARE(code, 0u);
+        QVERIFY(xgs::fs::isDirectory(folder));
+
+        // a file in the way: false and ERROR_ALREADY_EXISTS (183)
+        const QString blocker = base + u"\\blocker"_s;
+        writeFile(blocker, "x");
+        QVERIFY(!xgs::fs::makeDirectories(blocker, code));
+        QCOMPARE(code, 183u);
+        QVERIFY(xgs::fs::isRegularFile(blocker));
+    }
 };
 
 QTEST_GUILESS_MAIN(FileOpsTest)

@@ -28,6 +28,7 @@
 
 #include "filename/filename_formatter.h"
 #include "fs/file_ops.h"
+#include "input/input_classifier.h"
 #include "job/default_download_service.h"
 #include "job/download_service.h"
 #include "job/item_downloader.h"
@@ -41,6 +42,7 @@
 #include "support/ffmetadata_reader.h"
 #include "support/job_fakes.h"
 #include "support/test_tools.h"
+#include "ytdlp/ytdlp_commands.h"
 
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
@@ -104,6 +106,17 @@ QString windowsPath(const QString& path) {
 
 QString videoIdFor(int number) {
     return u"vid%1"_s.arg(number, 8, 10, QChar(u'0'));
+}
+
+/// Busy-waits for duration (sleep_for on Windows rounds a short pause up to a timer tick of about 1-16 ms).
+void spinFor(std::chrono::microseconds duration) {
+    const auto until = std::chrono::steady_clock::now() + duration;
+    while (std::chrono::steady_clock::now() < until) {
+    }
+}
+
+QString watchUrl(const QString& videoId) {
+    return xgs::ParsedInput{xgs::ParsedInput::Kind::Video, videoId, std::nullopt}.canonicalUrl();
 }
 
 /// Kotlin's `item(rank, artist = "A$rank", track = "T$rank", lowConfidence = false)`.
@@ -2131,8 +2144,9 @@ private slots:
         handle->cancel();
         const QList<JobEvent> events = collect(handle);
 
-        // 2 s is generous for a wake-up that takes microseconds; the delay itself is 60 s.
-        QVERIFY2(timer.elapsed() < 2000, qPrintable(u"took %1 ms"_s.arg(timer.elapsed())));
+        // The wake-up takes microseconds and the delay itself is 60 s. The time also covers removing the work folder, which may
+        // be tried again for 1.52 s (author decision 12), so the bound is 5 s like the neighbouring tests.
+        QVERIFY2(timer.elapsed() < 5000, qPrintable(u"took %1 ms"_s.arg(timer.elapsed())));
         QCOMPARE(done(events).status, JobStatus::Cancelled);
         QCOMPARE(ytDlpCommands(runner).size(), 1);
     }
@@ -2522,8 +2536,10 @@ private slots:
         // Author decision 10. The tagger looks at the token right up to replacing the m4a with the tagged file, so the fake
         // ffmpeg holds the m4a: the replacement waits (fs::moveFile tries again for about 1.5 s), and during that wait the
         // stop is requested and the m4a let go. The tagging then succeeds with the stop already requested, and the job must
-        // not put the file. Time is unavoidable here (100 ms); on a machine so slow that the tagger has not reached the
-        // replacement by then the tagger reports the cancellation itself, with the same outcome: never flaky, only weaker.
+        // not put the file. Time is unavoidable here (100 ms). When the tagger is slow and has not reached the replacement by
+        // then, it reports the cancellation itself, with the same outcome: the test only proves less. When instead the thread
+        // that holds the m4a stalls past fs::moveFile's 1.52 s of retries, the replacement gives up first, the tagging fails
+        // before the stop and the Cancelled check below fails: the test depends on that thread waking within about 1.5 s.
         std::stop_source user;
         FakeOutputSink sink;
         std::optional<HeldFile> held;
@@ -2578,6 +2594,69 @@ private slots:
         const QList<Progress> progress = ofType<Progress>(events);
         QCOMPARE(progress, (QList<Progress>{Progress{1, Stage::Downloading, std::nullopt}, Progress{1, Stage::Finishing, std::nullopt}}));
         QCOMPARE(done(events), (JobDone{JobStatus::Completed, JobSummary{1, 0, 0}}));
+    }
+
+    void everyItemsYtDlpCommandCarriesThatItemsOwnWatchUrl() {
+        // The fakes take the video ID from the `-o` template only, so this is what notices another item's URL handed to yt-dlp.
+        auto runner = succeeding();
+
+        const QList<JobEvent> events = collect(service(runner)->start(request(itemsUpTo(3), {.concurrency = 2})));
+
+        QCOMPARE(done(events), (JobDone{JobStatus::Completed, JobSummary{3, 0, 0}}));
+        const QList<QStringList> commands = ytDlpCommands(runner);
+        QSet<QString> videoIds;
+        for (const QStringList& command : commands) {
+            const QString videoId = videoIdOf(command);
+            videoIds.insert(videoId);
+            QCOMPARE(command.last(), watchUrl(videoId));
+            QCOMPARE(command, xgs::ytdlp::downloadCommand(testTools(), watchUrl(videoId),
+                                                          xgs::ytdlp::escapeOutputTemplateDirectory(outputDirOf(command)),
+                                                          videoId));
+        }
+        QCOMPARE(commands.size(), 3);
+        QCOMPARE(videoIds, (QSet<QString>{videoIdFor(1), videoIdFor(2), videoIdFor(3)}));
+    }
+
+    void aRequestWithoutASinkIsRefusedBeforeAnythingIsCreated() {
+        auto runner = succeeding();
+        auto svc = service(runner);
+        DownloadRequest withoutSink = request({item(1)});
+        withoutSink.sink = nullptr;
+
+        QVERIFY_THROWS_EXCEPTION(std::invalid_argument, svc->start(std::move(withoutSink)));
+
+        QVERIFY2(!xgs::fs::exists(m_tempRoot), "no work folder is made for a request that is refused");
+        QCOMPARE(runner.commands().size(), 0);
+    }
+
+    void startingAndCancellingAtOnceEndsWithOneJobDoneCancelled() {
+        // No pre-stopped source: the stop races the job's own thread. Every yt-dlp run waits until it is stopped, so no item
+        // can end before the stop and the end status is exactly Cancelled (author decision 3 lets a cancel look Completed only
+        // after the last item has ended).
+        auto runner = downloadRunner(StoppableProcessHandler(
+            [](const QStringList&, const LineHandler&, const LineHandler&, std::stop_token stop) {
+                awaitStop(stop);
+                return 0;
+            }));
+        auto svc = service(runner);
+        // The pause between start and cancel (0 to 2.95 ms) spreads the stop over the job's life: before its thread looks
+        // at the stop, while the workers start, and while items run. (Measured once on this machine: about a quarter of the
+        // rounds ended before any ItemStarted, and yt-dlp was run about 180 times in the 300 rounds.)
+        for (int round = 0; round < 300; ++round) {
+            auto handle = svc->start(request(itemsUpTo(3), {.concurrency = 2}));
+            spinFor(std::chrono::microseconds(round % 60 * 50));
+            handle->cancel();
+            const QList<JobEvent> events = collect(handle);
+
+            const QString context = u"round %1: %2"_s.arg(round).arg(xgs::eventsText(events));
+            QVERIFY2(countOf<JobDone>(events) == 1, qPrintable(context));
+            QVERIFY2(!events.isEmpty() && std::holds_alternative<JobDone>(events.last()), qPrintable(context));
+            QVERIFY2(std::get<JobDone>(events.last()).status == JobStatus::Cancelled, qPrintable(context));
+            QVERIFY2(countOf<ItemDone>(events) + countOf<ItemSkipped>(events) + countOf<ItemFailed>(events) == 0,
+                     qPrintable(context));
+            // The temp root is missing when every stop came before the job made it; otherwise it must be empty again.
+            QVERIFY2(entriesIn(m_tempRoot) <= 0, qPrintable(context));
+        }
     }
 };
 

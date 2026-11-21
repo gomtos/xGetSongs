@@ -9,6 +9,7 @@
 #include <exception>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -31,6 +32,7 @@ const QString kNoPermission = u"출력 폴더에 쓸 권한이 없습니다."_s;
 const QString kDiskFull = u"디스크 공간이 부족합니다."_s;
 const QString kFileError = u"파일 처리 중 오류: "_s;
 const QString kUnknownError = u"알 수 없는 오류"_s;
+const QString kNoWorkFolder = u"작업 폴더를 만들 수 없습니다."_s;
 
 constexpr quint32 kErrorAccessDenied = 5;      // ERROR_ACCESS_DENIED
 constexpr quint32 kErrorHandleDiskFull = 39;   // ERROR_HANDLE_DISK_FULL
@@ -134,8 +136,11 @@ private:
         const std::optional<QString> itemDir = paths::child(m_job.workRoot, QString::number(m_item.rank));
         quint32 errorCode = 0;
         if (!itemDir || !fs::makeDirectories(*itemDir, errorCode)) {
-            // Kotlin's Files.createDirectories throws an IOException: read like a failed put (author decision 5).
-            if (!cancelled()) readFailure(PutResult{PutStatus::Failed, fs::errorText(errorCode), errorCode});
+            // Kotlin's Files.createDirectories throws an IOException: read like a failed put (author decision 5). Without a
+            // Windows error (no path, or a folder that went away right after it was made) the text of error 0 would say that
+            // all went well, so the message says what failed instead (Kotlin would carry the exception's own text).
+            const QString reason = errorCode == 0 ? kNoWorkFolder : fs::errorText(errorCode);
+            if (!cancelled()) readFailure(PutResult{PutStatus::Failed, reason, errorCode});
             return;
         }
 
@@ -293,17 +298,25 @@ void runJob(ItemDownloader& downloader, const QString& tempRoot, const std::vect
             status = JobStatus::Cancelled;   // cancelled before it started: no folder is made
         } else if ((workRoot = makeWorkRoot(tempRoot))) {
             Job job{request, downloader, retryDelays, *workRoot, events};
+            bool allWorkersStarted = true;
             {
                 const std::stop_callback forward(userStop, [&job] { job.workStop.request_stop(); });
-                runWorkers(job);
+                try {
+                    runWorkers(job);
+                } catch (...) {
+                    allWorkersStarted = false;   // a worker thread that could not start; the started ones have ended
+                }
             }
+            // Read in either case: the workers that did start may have finished items already.
             summary = JobSummary{job.succeeded.load(), job.skipped.load(), job.failed.load()};
-            // Author decision 3: a fatal failure wins over the user's stop.
-            status = job.fatal ? JobStatus::Failed : userStop.stop_requested() ? JobStatus::Cancelled : JobStatus::Completed;
+            // Author decision 3: a fatal failure wins over the user's stop. A job whose workers could not all start failed.
+            status = !allWorkersStarted || job.fatal ? JobStatus::Failed
+                     : userStop.stop_requested()     ? JobStatus::Cancelled
+                                                     : JobStatus::Completed;
         }
         // else: the work folder could not be made; no item was started, so there is no item event (Failed, 0/0/0).
     } catch (...) {
-        status = JobStatus::Failed;   // a worker thread that could not start
+        status = JobStatus::Failed;   // the job's own state could not be set up (an allocation failure): no item has run
     }
     try {
         if (workRoot) removeWorkRoot(*workRoot);
@@ -320,6 +333,8 @@ DefaultDownloadService::DefaultDownloadService(ItemDownloader& downloader, QStri
     : m_downloader(downloader), m_tempRoot(std::move(tempRoot)), m_retryDelays(std::move(retryDelays)) {}
 
 std::unique_ptr<JobHandle> DefaultDownloadService::start(DownloadRequest request, std::stop_source stop) {
+    // Before anything is made: a worker would otherwise dereference the null sink on its own thread.
+    if (!request.sink) throw std::invalid_argument("the download request has no sink");
     auto events = std::make_unique<JobEvents>();
     std::jthread job([&downloader = m_downloader, tempRoot = m_tempRoot, retryDelays = m_retryDelays, request = std::move(request),
                       userStop = stop.get_token(), events = events.get()] {

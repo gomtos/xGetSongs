@@ -376,6 +376,10 @@ private slots:
         const DownloadResult result = downloader.download(preparedOf(1, kVideoId), workDir, log.emitter(), {});
 
         const QStringList command = ytDlpCommands(runner).value(0);
+        // The whole command, URL included: the fakes read only the `-o` template, so nothing else would notice another
+        // video's URL, the bare ID or an empty URL here.
+        QCOMPARE(command, xgs::ytdlp::downloadCommand(testTools(), watchUrl(kVideoId),
+                                                      xgs::ytdlp::escapeOutputTemplateDirectory(workDir), kVideoId));
         const QString outputTemplate = command.value(command.indexOf(u"-o"_s) + 1);
         QCOMPARE(outputTemplate, xgs::ytdlp::escapeOutputTemplateDirectory(workDir) + u"\\"_s + kVideoId + u".%(ext)s"_s);
         QVERIFY(outputTemplate.contains(u"100%% %%(id)s 한글"_s));

@@ -27,7 +27,7 @@ namespace xgs::job {
 /// lookup still goes by the video's own album (else album).
 struct DownloadRequest {
     QList<ResolvedItem> items;                 // already carry their final ranks
-    output::OutputSink* sink = nullptr;        // referenced, not owned: must outlive the job
+    output::OutputSink* sink = nullptr;        // referenced, not owned: must outlive the job; start refuses a null one
     bool overwrite = false;
     int concurrency = 1;                       // below 1 is 1; no upper limit of the service's own
     std::optional<QString> album;
@@ -63,6 +63,10 @@ class DownloadService {
 public:
     virtual ~DownloadService() = default;
     /// Starts the job. A stop requested on stop (now or later) cancels it, as cancel() does.
+    ///
+    /// Throws std::invalid_argument when request.sink is null, before anything is created (no thread, no folder, no event).
+    /// Throws std::system_error when the job's own thread cannot be started, and std::bad_alloc when memory runs out; nothing
+    /// of the job is left running then. Once start has returned, every failure reaches the reader as events.
     virtual std::unique_ptr<JobHandle> start(DownloadRequest request, std::stop_source stop = std::stop_source()) = 0;
 };
 

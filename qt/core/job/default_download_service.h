@@ -19,7 +19,8 @@
 // removed (tried again for about 1.5 s when something holds a file in it), JobDone is queued once and the queue is closed.
 //
 // The end status (author decision 3): Failed when an item failed fatally (disk full, no permission, no yt-dlp or ffmpeg) or the
-// job folder could not be made; else Cancelled when a stop was requested on the job's stop source; else Completed. A fatal
+// job folder could not be made or a worker thread could not be started (the summary then counts the items that the started
+// workers finished); else Cancelled when a stop was requested on the job's stop source; else Completed. A fatal
 // failure stops the other workers through an inner stop source, so their items end as cancelled and are not counted.
 //
 // A cancelled item emits nothing more (author decision 2): once a stop is requested an item emits no event until it ends,
