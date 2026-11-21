@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stop_token>
 #include <thread>
 #include <vector>
 
@@ -118,6 +119,21 @@ QString eventsText(const QList<JobEvent>& events) {
     return u"["_s + parts.join(u", "_s) + u"]"_s;
 }
 
+/// True when both ItemStarted events of a two-item job come before the first event that ends an item (ItemDone, ItemSkipped
+/// or ItemFailed): the two items were in the job at the same time.
+bool bothStartedBeforeEitherEnded(const QList<JobEvent>& events) {
+    int started = 0;
+    for (const JobEvent& event : events) {
+        if (std::holds_alternative<ItemStarted>(event)) {
+            if (++started == 2) return true;
+        } else if (std::holds_alternative<ItemDone>(event) || std::holds_alternative<ItemSkipped>(event) ||
+                   std::holds_alternative<ItemFailed>(event)) {
+            return false;
+        }
+    }
+    return false;
+}
+
 std::optional<JobDone> lastDone(const QList<JobEvent>& events) {
     if (events.isEmpty() || !std::holds_alternative<JobDone>(events.last())) return std::nullopt;
     return std::get<JobDone>(events.last());
@@ -127,16 +143,28 @@ std::optional<JobDone> lastDone(const QList<JobEvent>& events) {
 /// becomes `fakeytdlp <ms>` (or, with a pid folder, `fakeytdlpspawn <pid file> <ms>`, a new pid file per run), the ffmpeg
 /// becomes `fakeffmpeg`; the arguments follow as the engine built them. Anything else becomes the unknown mode `notatool`
 /// (exit code 2).
+///
+/// With meetCount, each yt-dlp run first waits until meetCount yt-dlp runs have begun (or the stop is requested), so that
+/// many items are known to be downloading at once: the job pushes ItemStarted before it calls the downloader, so every one of
+/// those ItemStarted events is queued before any of the items can end.
 class ChildToolRunner final : public xgs::process::ProcessRunner {
 public:
-    explicit ChildToolRunner(int ytDlpMilliseconds, std::optional<QString> pidDir = std::nullopt)
-        : m_ytDlpMilliseconds(ytDlpMilliseconds), m_pidDir(std::move(pidDir)) {}
+    explicit ChildToolRunner(int ytDlpMilliseconds, std::optional<QString> pidDir = std::nullopt, int meetCount = 0)
+        : m_ytDlpMilliseconds(ytDlpMilliseconds), m_pidDir(std::move(pidDir)), m_meetCount(meetCount) {}
 
     RunResult run(const QStringList& command, const LineHandler& onStdout, const LineHandler& onStderr,
                   std::stop_token stop) override {
         const xgs::ToolPaths tools = testTools();
         QStringList real{child()};
         if (!command.isEmpty() && command.first() == tools.ytDlp) {
+            if (m_meetCount > 0) {
+                // The runs meet in well under a second; 30 s is a safety net only. When it passes, the run goes on alone
+                // and the test's overlap assertion fails (it does not hang).
+                std::unique_lock lock(m_mutex);
+                ++m_arrived;
+                m_met.notify_all();
+                m_met.wait_for(lock, stop, 30s, [this] { return m_arrived >= m_meetCount; });
+            }
             if (m_pidDir) {
                 const QString pidFile = childOf(*m_pidDir, u"run-%1.pid"_s.arg(m_runs.fetch_add(1) + 1));
                 {
@@ -166,8 +194,11 @@ private:
     SystemProcessRunner m_real;
     const int m_ytDlpMilliseconds;
     const std::optional<QString> m_pidDir;
+    const int m_meetCount;
     std::atomic<int> m_runs{0};
     mutable std::mutex m_mutex;
+    std::condition_variable_any m_met;
+    int m_arrived = 0;
     QStringList m_pidFiles;
 };
 
@@ -435,9 +466,10 @@ private slots:
             QVERIFY(dir.isValid());
             const QString tempRoot = windowsPath(dir.filePath(u"work"_s));
             const QString outDir = windowsPath(dir.filePath(u"out"_s));
-            // Both downloads sleep 300 ms after writing, so with two workers they run at the same time and the two puts
-            // come close together.
-            ChildToolRunner runner(300);
+            // The two yt-dlp runs wait for each other before they start (an event, see ChildToolRunner), so both items
+            // have passed the job's `exists` check and are downloading at once; both then sleep 300 ms after writing, so
+            // the two puts come close together.
+            ChildToolRunner runner(300, std::nullopt, 2);
             Service service(runner, tempRoot);
             LocalFolderSink sink(outDir);
             const QList<ResolvedItem> items{item(1, std::nullopt, u"Same"_s, u"Song"_s), item(2, std::nullopt, u"Same"_s, u"Song"_s)};
@@ -449,6 +481,7 @@ private slots:
             const JobSummary expected = overwrite ? JobSummary{2, 0, 0} : JobSummary{1, 1, 0};
             QVERIFY2(done && done->status == JobStatus::Completed && done->summary == expected,
                      qPrintable(u"overwrite=%1: "_s.arg(overwrite) + eventsText(events)));
+            QVERIFY2(bothStartedBeforeEitherEnded(events), qPrintable(u"overwrite=%1: "_s.arg(overwrite) + eventsText(events)));
             const QString fileName = xgs::filename::format(1, u"Same"_s, u"Song"_s, false);
             QCOMPARE(namesIn(outDir), QStringList{fileName});
             QCOMPARE(namesIn(tempRoot), QStringList());
@@ -461,7 +494,7 @@ private slots:
         QVERIFY(dir.isValid());
         const QString tempRoot = windowsPath(dir.filePath(u"work"_s));
         const QString outDir = windowsPath(dir.filePath(u"out"_s));
-        ChildToolRunner runner(300);   // the two downloads overlap
+        ChildToolRunner runner(300, std::nullopt, 2);   // the two yt-dlp runs wait for each other: the downloads overlap
         Service service(runner, tempRoot);
         LocalFolderSink sink(outDir);
         const QList<ResolvedItem> items{item(1, u"sameVideo01"_s), item(2, u"sameVideo01"_s)};
@@ -472,6 +505,7 @@ private slots:
         const std::optional<JobDone> done = lastDone(events);
         QVERIFY2(done && done->status == JobStatus::Completed && done->summary == (JobSummary{2, 0, 0}),
                  qPrintable(eventsText(events)));
+        QVERIFY2(bothStartedBeforeEitherEnded(events), qPrintable(eventsText(events)));
         QStringList expected{*items[0].expectedFileName, *items[1].expectedFileName};
         std::sort(expected.begin(), expected.end());
         QCOMPARE(namesIn(outDir), expected);

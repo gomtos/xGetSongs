@@ -53,8 +53,8 @@ QStringList namesIn(const QString& dir) {
     return names;
 }
 
-/// The events of a job without any text a service returned (file names hold the song's name): kinds, ranks, stages and the
-/// end status only. Kotlin puts `events.toString()` into its failure messages; here they must not carry a song name.
+/// The events of a job without any text a service or a tool returned (file names, skip reasons and failure messages can hold
+/// the song's name): kinds, ranks, stages, text lengths and the end status only. Kotlin puts `events.toString()` into its failure messages; here they must not carry a song name.
 QString eventsShape(const QList<JobEvent>& events) {
     QStringList parts;
     for (const JobEvent& event : events) {
@@ -62,8 +62,11 @@ QString eventsShape(const QList<JobEvent>& events) {
         else if (const auto* p = std::get_if<Progress>(&event))
             parts << u"Progress(%1, %2)"_s.arg(p->rank).arg(p->stage == Stage::Downloading ? u"Downloading"_s : u"Finishing"_s);
         else if (const auto* d = std::get_if<ItemDone>(&event)) parts << u"ItemDone(%1)"_s.arg(d->rank);
-        else if (const auto* s = std::get_if<ItemSkipped>(&event)) parts << u"ItemSkipped(%1, %2)"_s.arg(s->rank).arg(s->reason);
-        else if (const auto* f = std::get_if<ItemFailed>(&event)) parts << u"ItemFailed(%1, %2)"_s.arg(f->rank).arg(f->message);
+        // A skip reason or a failure message can hold tool stderr or a path with the song's name: only its length is shown.
+        else if (const auto* s = std::get_if<ItemSkipped>(&event))
+            parts << u"ItemSkipped(%1, reason of %2 characters)"_s.arg(s->rank).arg(s->reason.size());
+        else if (const auto* f = std::get_if<ItemFailed>(&event))
+            parts << u"ItemFailed(%1, message of %2 characters)"_s.arg(f->rank).arg(f->message.size());
         else {
             const auto& j = std::get<JobDone>(event);
             parts << u"JobDone(%1, %2/%3/%4)"_s.arg(int(j.status)).arg(j.summary.succeeded).arg(j.summary.skipped).arg(j.summary.failed);
@@ -291,20 +294,31 @@ private slots:
         const std::unique_ptr<xgs::job::JobHandle> handle = service.start(std::move(request), jobStop);
 
         QList<JobEvent> events;
+        bool sawProgress = false;
         qsizetype runningAtCancel = -1;
         while (std::optional<JobEvent> event = handle->nextEvent()) {
             events.append(*event);
-            if (runningAtCancel < 0 && std::holds_alternative<Progress>(*event)) {
+            if (!sawProgress && std::holds_alternative<Progress>(*event)) {
+                sawProgress = true;
                 // The first progress event comes from a line yt-dlp wrote, so yt-dlp is running now.
                 runningAtCancel = xgs::testsupport::processesMentioning(token, since).size();
                 handle->cancel();
             }
         }
         QVERIFY2(!deadline.expired(), qPrintable(u"timed out: "_s + eventsShape(events)));
-        QVERIFY2(runningAtCancel >= 1,
-                 qPrintable(u"no progress event, or no running process of the job was seen: "_s + eventsShape(events)));
         QVERIFY2(!events.isEmpty() && std::holds_alternative<JobDone>(events.last()), qPrintable(eventsShape(events)));
-        QVERIFY2(std::get<JobDone>(events.last()).status == JobStatus::Cancelled, qPrintable(eventsShape(events)));
+        const JobStatus status = std::get<JobDone>(events.last()).status;
+        // Author decision 3: a cancel that comes after the last item finished may end the job as Completed. That says nothing
+        // about the cancel; the source is too short for this machine and connection.
+        if (status == JobStatus::Completed) {
+            QFAIL(qPrintable(u"the download finished before the cancel took hold, so nothing was cancelled; a longer source is "
+                             u"needed (a progress event was %1seen): "_s.arg(sawProgress ? u""_s : u"not "_s) +
+                             eventsShape(events)));
+        }
+        QVERIFY2(sawProgress, qPrintable(u"no progress event was seen, so the job was never cancelled: "_s + eventsShape(events)));
+        QVERIFY2(runningAtCancel >= 1,
+                 qPrintable(u"no running process of the job was seen at the first progress event: "_s + eventsShape(events)));
+        QVERIFY2(status == JobStatus::Cancelled, qPrintable(eventsShape(events)));
         // The runner kills each run's Job Object before it returns; 10 s is only a bound for Windows to finish them.
         const QList<xgs::testsupport::SeenProcess> left = xgs::testsupport::waitForNoneMentioning(token, since, 10'000);
         QStringList leftImages;
