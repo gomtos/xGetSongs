@@ -1,7 +1,8 @@
 # Compares the names of the Kotlin @Test functions of the ported test classes with the names of the Qt Test functions of
 # their test executables (`build/qt/<exe>.exe -functions`, without the trailing "()"). The classes are listed in
 # qt/tools/test-classes.json: an array of { "kotlin": <the Kotlin test file, relative to the repository root>,
-# "exe": <the Qt test executable's name>, "added": [<names the port adds on purpose, not in the Kotlin class>] }.
+# "exe": <the Qt test executable's name, or an array of names when the port of one Kotlin class is split over several
+# executables; their functions are then taken together>, "added": [<names the port adds on purpose, not in the Kotlin class>] }.
 #
 #   pwsh qt/tools/test-names.ps1
 #
@@ -25,9 +26,11 @@ foreach ($spec in $classes) {
     $class = [System.IO.Path]::GetFileNameWithoutExtension($spec.kotlin)
     $allowed = @($spec.added)
     $source = Join-Path $root $spec.kotlin
-    $exe = Join-Path $root "build/qt/$($spec.exe).exe"
+    $exeNames = @($spec.exe)
     if (-not (Test-Path $source)) { Write-Output "${class}: no Kotlin file $source"; $failed = $true; continue }
-    if (-not (Test-Path $exe)) { Write-Output "${class}: no executable $exe (build first, see qt/README.md)"; $failed = $true; continue }
+    $exes = @($exeNames | ForEach-Object { Join-Path $root "build/qt/$_.exe" })
+    $absentExe = @($exes | Where-Object { -not (Test-Path $_) })
+    if ($absentExe.Count -gt 0) { Write-Output "${class}: no executable $($absentExe -join ', ') (build first, see qt/README.md)"; $failed = $true; continue }
 
     # `fun <name>(` on the line right after `@Test` (a name may be written on the @Test line itself too)
     $lines = [System.IO.File]::ReadAllLines($source)
@@ -41,8 +44,14 @@ foreach ($spec in $classes) {
 
     if ($kotlin.Count -eq 0) { Write-Output "${class}: no @Test names found in $source (the file moved or its form changed)"; $failed = $true; continue }
 
-    $listed = @(& $exe -functions)
-    if ($LASTEXITCODE -ne 0) { Write-Output "${class}: $($spec.exe) -functions exited with $LASTEXITCODE"; $failed = $true; continue }
+    $listed = [System.Collections.Generic.List[string]]::new()
+    $listFailed = $false
+    for ($e = 0; $e -lt $exes.Count; $e++) {
+        $output = @(& $exes[$e] -functions)
+        if ($LASTEXITCODE -ne 0) { Write-Output "${class}: $($exeNames[$e]) -functions exited with $LASTEXITCODE"; $listFailed = $true; break }
+        foreach ($line in $output) { $listed.Add($line) }
+    }
+    if ($listFailed) { $failed = $true; continue }
     $qt = @($listed | ForEach-Object { $_.Trim() -replace '\(\)$', '' } | Where-Object { $_ -and $_ -cne 'initTestCase' -and $_ -cne 'cleanupTestCase' })
 
     $kotlinSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$kotlin, [StringComparer]::Ordinal)

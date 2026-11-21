@@ -70,3 +70,9 @@ xgs_add_test(tst_system_process_runner tst_system_process_runner.cpp helpers/arg
 target_include_directories(tst_system_process_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(tst_system_process_runner PRIVATE XGS_TEST_CHILD="$<TARGET_FILE:xgs-test-child>")
 add_dependencies(tst_system_process_runner xgs-test-child)
+# The download job through the real runner and the real folder sink, with xgs-test-child playing yt-dlp and ffmpeg (no Kotlin
+# pair: the Kotlin job is tested with fakes only).
+xgs_add_test(tst_job_with_real_processes tst_job_with_real_processes.cpp)
+target_link_libraries(tst_job_with_real_processes PRIVATE xgstestsupport)
+target_compile_definitions(tst_job_with_real_processes PRIVATE XGS_TEST_CHILD="$<TARGET_FILE:xgs-test-child>")
+add_dependencies(tst_job_with_real_processes xgs-test-child)

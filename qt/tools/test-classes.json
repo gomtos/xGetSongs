@@ -128,8 +128,9 @@
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealYtDlpIntegrationTest.kt",
-    "exe": "tst_real_ytdlp",
-    "added": ["anOutputFolderWithSpacesKoreanAndAnAmpersandWorks", "aPercentSignInTheOutputFolderIsReportedNotSilentlyMisplaced"]
+    "exe": ["tst_real_ytdlp", "tst_real_download"],
+    "added": ["anOutputFolderWithSpacesKoreanAndAnAmpersandWorks", "aPercentSignInTheOutputFolderIsReportedNotSilentlyMisplaced",
+              "cancellingARealDownloadLeavesNoToolProcessBehind"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealLrclibIntegrationTest.kt",

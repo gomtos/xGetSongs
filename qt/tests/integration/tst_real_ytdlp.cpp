@@ -12,7 +12,6 @@
 #include <mutex>
 #include <optional>
 
-#include "ffprobe.h"
 #include "fs/file_ops.h"
 #include "input/input_classifier.h"
 #include "integration_support.h"
@@ -29,7 +28,6 @@
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
 using xgs::integration::Deadline;
-using xgs::integration::Ffprobe;
 using xgs::process::RunResult;
 using xgs::process::RunStatus;
 
@@ -325,15 +323,9 @@ private slots:
         QVERIFY(!lyrics->contains(u'\r'));
     }
 
-    // The Kotlin test runs the whole download service (DefaultDownloadService, ItemDownloader, LrclibLyricsProvider) on a
-    // 19-second video. The lyrics lookup is ported (Q2c); the download job that joins the download, the lyrics and the tagging
-    // comes in Q2d, so the body cannot be ported yet and the test skips with that reason after Kotlin's own ffprobe assumption.
-    void downloadsAShortVideoAsM4aWithoutReencoding() {
-        const std::optional<QString> ffprobePath = Ffprobe::besides(m_locator->current().ffmpeg);
-        if (!ffprobePath) QSKIP("ffprobe must be installed next to ffmpeg");
-        QSKIP("needs the download job that joins the download, the lyrics and the tagging (DefaultDownloadService, "
-              "ItemDownloader: Q2d), which is not ported yet");
-    }
+    // Kotlin's downloadsAShortVideoAsM4aWithoutReencoding runs the whole download job and downloads audio; its port is in
+    // tst_real_download.cpp (it needs XGS_INTEGRATION_AUDIO=1 as well). qt/tools/test-classes.json lists both executables for
+    // this Kotlin class.
 
     // Not in Kotlin. The info-only command (--skip-download) into a folder whose name has spaces, Korean and `&`: the files
     // land in that folder (no shell reads the `&`, and the name reaches yt-dlp as one argument).
