@@ -17,7 +17,9 @@
 //   xgs-diff qt-casetable               for each unit: QString::toUpper and QString::toLower of it, as hex (gen-tables.ps1)
 //   xgs-diff qt-lettertable               as lettertable, from Qt's categories only (gen-tables.ps1)
 //   xgs-diff qt-version                  the Qt version the tables were compared with
+#include <QDir>
 #include <QMap>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTemporaryDir>
@@ -41,6 +43,8 @@
 #include "filename/filename_formatter.h"
 #include "gen.h"
 #include "input/input_classifier.h"
+#include "job/default_download_service.h"
+#include "job/item_downloader.h"
 #include "json/json.h"
 #include "log/log_redaction.h"
 #include "lyrics/lrclib_lyrics_provider.h"
@@ -52,6 +56,11 @@
 #include "process/line_splitter.h"
 #include "process/process_runner.h"
 #include "support/fake_http_client.h"
+#include "support/fake_lyrics_provider.h"
+#include "support/fake_output_sink.h"
+#include "support/fake_process_runner.h"
+#include "support/job_fakes.h"
+#include "support/test_tools.h"
 #include "tags/ffmetadata.h"
 #include "text/kt_text.h"
 #include "title/title_parser.h"
@@ -399,6 +408,7 @@ QString answerI(const QStringList& fields) {
 // W st yt-dlp ffmpeg js / W up yt-dlp -> tools::ToolManager on a runner that plays the case (answerSt, answerUp)
 // W fn name -> 0 when output::LocalFolderSink::exists(name) throws std::invalid_argument, else 1 (answerFn)
 // W lf query maxRequests timeout step... -> lyrics::LrclibLyricsProvider on a scripted HTTP client (answerLf)
+// W jb request items scripts... -> job::DefaultDownloadService on scripted collaborators (answerJb)
 // One answerer per op (kWAnswers); the op's fields follow the op.
 QString pathOrErr(const std::optional<QString>& path) {
     return path ? hexText(*path) : QStringLiteral("ERR");
@@ -659,12 +669,206 @@ QString answerLf(const QStringList& fields) {
     return out;
 }
 
+// W jb overwrite includeRank album albumOverride searchLyrics existing n item... meta ytdlp ffmpeg lyrics put -> E <event>...
+// M <ffmetadata hex>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>: job::DefaultDownloadService
+// (job::ItemDownloader on a testsupport::FakeProcessRunner, testsupport::FixedTools, testsupport::FakeMetadata and
+// testing::FakeLyricsProvider; retry delays 0 and 0; the temporary folder a QTemporaryDir) runs one request (concurrency 1) on
+// a testing::FakeOutputSink, and every event is read with nextEvent. Oracle.java's answerJob documents the notation; the
+// fakes do what its fakes do: the same script rule (call order, then the last entry again), the same files, the same lines in
+// the same order. The put results stand for Kotlin's exceptions by decision 5 of the Q2d plan: S Stored, A<text>
+// AlreadyExists with that error text, F<code>/<text> Failed with that code and text.
+class JbScript {
+public:
+    explicit JbScript(const QString& field) : m_entries(field.split(u',')) {}
+    QString take() {
+        const std::lock_guard lock(m_mutex);
+        const QString entry = m_entries.at(std::min<qsizetype>(m_next, m_entries.size() - 1));
+        ++m_next;
+        return entry;
+    }
+
+private:
+    std::mutex m_mutex;
+    QStringList m_entries;
+    qsizetype m_next = 0;
+};
+
+QStringList jbLines(const QString& field) {
+    QStringList lines;
+    if (field != u"~") {
+        for (const QString& line : field.split(u'+')) lines.append(textOf(line));
+    }
+    return lines;
+}
+
+// the rank folder of a file in the job folder (<job>\<rank>\<file>)
+QString jbRankOf(const QString& file) {
+    const QString dir = file.left(file.lastIndexOf(u'\\'));
+    return dir.mid(dir.lastIndexOf(u'\\') + 1);
+}
+
+QString jbPercent(const std::optional<double>& percent) {
+    return percent ? kt::hexBits(*percent) : QStringLiteral("-");
+}
+
+QString jbEvent(const JobEvent& event) {
+    static const QString outcomes[] = {QStringLiteral("DESCRIPTION"), QStringLiteral("ONLINE"), QStringLiteral("NOT_FOUND"),
+                                       QStringLiteral("SEARCH_OFF")};
+    static const QString statuses[] = {QStringLiteral("COMPLETED"), QStringLiteral("CANCELLED"), QStringLiteral("FAILED")};
+    const QString comma = QStringLiteral(",");
+    if (const auto* e = std::get_if<ItemStarted>(&event))
+        return QStringLiteral("S,") + QString::number(e->rank) + comma + hexText(e->videoId) + comma + hexText(e->fileName);
+    if (const auto* e = std::get_if<Progress>(&event))
+        return QStringLiteral("P,") + QString::number(e->rank) + comma + (e->stage == Stage::Downloading ? QStringLiteral("D") : QStringLiteral("F")) + comma + jbPercent(e->percent);
+    if (const auto* e = std::get_if<ItemDone>(&event))
+        return QStringLiteral("D,") + QString::number(e->rank) + comma + hexText(e->fileName) + comma +
+               (e->lyrics ? outcomes[static_cast<int>(*e->lyrics)] : QStringLiteral("-"));
+    if (const auto* e = std::get_if<ItemSkipped>(&event)) return QStringLiteral("K,") + QString::number(e->rank) + comma + hexText(e->reason);
+    if (const auto* e = std::get_if<ItemFailed>(&event)) return QStringLiteral("F,") + QString::number(e->rank) + comma + hexText(e->message);
+    const JobDone& done = std::get<JobDone>(event);
+    return QStringLiteral("J,") + statuses[static_cast<int>(done.status)] + comma + QString::number(done.summary.succeeded) + comma +
+           QString::number(done.summary.skipped) + comma + QString::number(done.summary.failed);
+}
+
+QString answerJb(const QStringList& fields) {
+    if (fields.size() < 7) return QStringLiteral("?");
+    bool ok = false;
+    const int n = fields.at(6).toInt(&ok);
+    if (!ok || n < 1 || fields.size() != 7 + 7 * n + 5) return QStringLiteral("?");
+    job::DownloadRequest request;
+    request.overwrite = fields.at(0) == u"1";
+    request.includeRank = fields.at(1) == u"1";
+    request.album = unhex(fields.at(2));
+    request.albumOverride = unhex(fields.at(3));
+    request.searchLyricsOnline = fields.at(4) == u"1";
+    request.concurrency = 1;
+    for (int i = 0; i < n; ++i) {
+        const qsizetype at = 7 + 7 * i;
+        ResolvedItem item;
+        item.rank = fields.at(at).toInt();
+        item.videoId = textOf(fields.at(at + 1));
+        item.title = textOf(fields.at(at + 2));
+        item.channel = unhex(fields.at(at + 3));
+        item.artist = textOf(fields.at(at + 4));
+        item.track = textOf(fields.at(at + 5));
+        item.lowConfidence = fields.at(at + 6) == u"1";
+        request.items.append(item);
+    }
+    const qsizetype scripts = 7 + 7 * n;
+    JbScript meta(fields.at(scripts));
+    JbScript ytDlp(fields.at(scripts + 1));
+    JbScript ffmpeg(fields.at(scripts + 2));
+    JbScript lyricsScript(fields.at(scripts + 3));
+    JbScript putScript(fields.at(scripts + 4));
+
+    std::mutex mutex;   // guards what the fakes record and the sink's names
+    QStringList ytDlpRanks, ffmpegRanks, ffmetadata, queries, puts;
+    QSet<QString> names;
+    if (fields.at(5) != u"~") {
+        for (const QString& name : fields.at(5).split(u',')) names.insert(textOf(name));
+    }
+
+    testsupport::FakeProcessRunner runner([&](const QStringList& command, const process::LineHandler& out,
+                                              const process::LineHandler& err) {
+        if (testsupport::isFfmpegCommand(command)) {
+            const QString text = testsupport::ffmetadataTextOf(command);
+            {
+                const std::lock_guard lock(mutex);
+                ffmpegRanks.append(jbRankOf(command.last()));
+                ffmetadata.append(hexText(text));
+            }
+            const QStringList entry = ffmpeg.take().split(u'/');
+            if (entry.at(1) == u"1") testsupport::writeFakeTagged(command);
+            for (const QString& line : jbLines(entry.at(2))) err(line);
+            return entry.at(0).toInt();
+        }
+        const QString dir = testsupport::outputDirOf(command);
+        {
+            const std::lock_guard lock(mutex);
+            ytDlpRanks.append(dir.mid(dir.lastIndexOf(u'\\') + 1));
+        }
+        const QStringList entry = ytDlp.take().split(u'/');
+        if (entry.at(1) == u"1") testsupport::writeFakeM4a(command);
+        if (entry.at(2) == u"1") testsupport::writeFakeCover(command);
+        if (entry.at(3) != u"-")
+            testsupport::writeFakeInfo(command, entry.at(3) == u"." ? QByteArray() : QByteArray::fromHex(entry.at(3).toLatin1()));
+        for (const QString& line : jbLines(entry.at(4))) out(line);
+        for (const QString& line : jbLines(entry.at(5))) err(line);
+        return entry.at(0).toInt();
+    });
+    const testsupport::FixedTools tools;
+    testsupport::FakeMetadata metadata([&](const QString&, std::stop_token) -> std::optional<ytdlp::VideoMeta> {
+        const QString entry = meta.take();
+        if (entry == u"-") return std::nullopt;
+        const QStringList f = entry.split(u'/');
+        return ytdlp::VideoMeta{unhex(f.at(0)), unhex(f.at(1)), unhex(f.at(2)), unhex(f.at(3))};
+    });
+    testing::FakeLyricsProvider lyrics([&](const LyricsQuery& query) -> std::optional<QString> {
+        {
+            const std::lock_guard lock(mutex);
+            queries.append(hex(query.artist) + u'/' + hex(query.title) + u'/' + hex(query.album) + u'/' +
+                           (query.durationSeconds ? QString::number(*query.durationSeconds) : QStringLiteral("-")));
+        }
+        const QString entry = lyricsScript.take();
+        if (entry == u"X") throw std::runtime_error("the lookup failed (differential test)");
+        return unhex(entry);
+    });
+    testing::FakeOutputSink sink(
+        [&](const QString& fileName) {
+            const std::lock_guard lock(mutex);
+            return names.contains(fileName);
+        },
+        [&](const QString& fileName, const QString& source, bool) {
+            {
+                const std::lock_guard lock(mutex);
+                puts.append(jbRankOf(source) + u'/' + hexText(fileName));
+            }
+            const QString entry = putScript.take();
+            if (entry == u"S") {
+                const std::lock_guard lock(mutex);
+                names.insert(fileName);
+                return output::PutResult{output::PutStatus::Stored, {}, 0};
+            }
+            if (entry.startsWith(u'A')) return output::PutResult{output::PutStatus::AlreadyExists, textOf(entry.mid(1)), 0};
+            const qsizetype slash = entry.indexOf(u'/');
+            return output::PutResult{output::PutStatus::Failed, textOf(entry.mid(slash + 1)),
+                                     static_cast<quint32>(entry.mid(1, slash - 1).toUInt())};
+        });
+    request.sink = &sink;
+
+    QTemporaryDir temp;
+    if (!temp.isValid()) return QStringLiteral("?");
+    const std::optional<QString> tempRoot = paths::fromText(QDir::toNativeSeparators(temp.path()));
+    if (!tempRoot) return QStringLiteral("?");
+    job::ItemDownloader downloader(runner, tools, metadata, lyrics);
+    job::DefaultDownloadService service(downloader, *tempRoot, {std::chrono::milliseconds(0), std::chrono::milliseconds(0)});
+    QString out = QStringLiteral("E");
+    {
+        const std::unique_ptr<job::JobHandle> handle = service.start(std::move(request));
+        while (const std::optional<JobEvent> event = handle->nextEvent()) out += u' ' + jbEvent(*event);
+        handle->join();
+    }
+    const qsizetype remaining =
+        QDir(temp.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System).size();
+    out += QStringLiteral(" M");
+    for (const QString& text : ffmetadata) out += u' ' + text;
+    out += QStringLiteral(" Q");
+    for (const QString& query : queries) out += u' ' + query;
+    out += QStringLiteral(" Y");
+    for (const QString& rank : ytDlpRanks) out += u' ' + rank;
+    out += QStringLiteral(" G");
+    for (const QString& rank : ffmpegRanks) out += u' ' + rank;
+    out += QStringLiteral(" P");
+    for (const QString& put : puts) out += u' ' + put;
+    return out + QStringLiteral(" R ") + QString::number(remaining);
+}
+
 struct WAnswer {
     QStringView op;
     Answerer answer;   // gets the fields after the op (at least one)
 };
 constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}, {u"ln", answerLn},
-                                {u"st", answerSt}, {u"up", answerUp}, {u"fn", answerFn}, {u"lf", answerLf}};
+                                {u"st", answerSt}, {u"up", answerUp}, {u"fn", answerFn}, {u"lf", answerLf}, {u"jb", answerJb}};
 
 QString answerW(const QStringList& fields) {
     if (fields.size() < 2) return QStringLiteral("?");

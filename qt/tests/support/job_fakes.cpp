@@ -129,9 +129,10 @@ QList<QStringList> ffmpegCommands(const FakeProcessRunner& runner) {
 void awaitStop(std::stop_token stop) {
     // A token without a stop state can never be stopped: waiting on it would hang the test instead of failing it.
     if (!stop.stop_possible()) throw std::logic_error("awaitStop was given a token that can never be stopped");
-    // The limit is only a safety net: a broken service that never requests the stop fails the test (the exception becomes a
-    // failed item, and the test's assertions catch that) instead of hanging the whole run. 30 s is far beyond any wait a
-    // working service causes.
+    // The limit is only a safety net: a broken service that never requests the stop fails the test instead of hanging the
+    // whole run (in a process handler the exception becomes a failed item; in a lyrics provider it is swallowed as "no
+    // lyrics" and the item goes on; either way the test's assertions see a result a working service never gives). 30 s is
+    // far beyond any wait a working service causes.
     constexpr std::chrono::seconds kSafetyLimit{30};
     std::mutex mutex;
     std::condition_variable_any changed;

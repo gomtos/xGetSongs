@@ -1649,6 +1649,7 @@ private slots:
         auto runner = infoRunner(nullptr, infoWithDescription(descriptionWithoutLyrics));
         auto svc = service(runner, {.lyrics = &provider});
         auto handle = svc->start(request({item(1)}, {.searchLyricsOnline = true}));
+        // (10 s is only a safety net in place of Kotlin's unbounded wait: a working job reaches the lookup at once)
         QVERIFY(inLookup.waitFor(10s));
 
         handle->cancel();
@@ -1690,7 +1691,9 @@ private slots:
         FakeMetadata metadata;
         ItemDownloader downloader(runner, tools, metadata);
 
-        // Kotlin's prepare(item(1)): album null, includeRank true, searchLyricsOnline false, albumOverride null.
+        // Kotlin's prepare(item(1)): album null, includeRank true, searchLyricsOnline false, albumOverride null. The C++ prepare
+        // has no default arguments, so this first assertion passes false explicitly; that the option is off unless the request
+        // turns it on is covered by theOptionIsOffUnlessTheRequestSaysOtherwise.
         QVERIFY2(!downloader.prepare(item(1), std::nullopt, true, false, std::nullopt, {}).searchLyricsOnline,
                  "off by default: the engine never looks anything up unasked");
         QVERIFY(downloader.prepare(item(1), u"My List"_s, true, true, std::nullopt, {}).searchLyricsOnline);

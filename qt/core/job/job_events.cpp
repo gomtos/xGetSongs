@@ -8,13 +8,21 @@
 namespace xgs::job {
 
 void JobEvents::push(JobEvent event) {
+    bool done = false;
     {
         const std::lock_guard lock(m_mutex);
         if (m_closed || m_doneQueued) return;
-        if (std::holds_alternative<JobDone>(event)) m_doneQueued = true;
+        done = std::holds_alternative<JobDone>(event);
+        if (done) m_doneQueued = true;
         m_events.push_back(std::move(event));
     }
-    m_changed.notify_one();
+    // One reader is the contract; the JobDone (like close) still wakes every waiter, so that a second, misbehaving reader
+    // gets its "nothing" too instead of waiting forever.
+    if (done) {
+        m_changed.notify_all();
+    } else {
+        m_changed.notify_one();
+    }
 }
 
 void JobEvents::close() {

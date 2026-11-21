@@ -120,7 +120,8 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            the case: answerTools), fn name (does LocalFolderSink accept the file
  *                                            name: 0 | 1, answerFileName), lf query maxRequests timeout step...
  *                                            (LrclibLyricsProvider on an HttpClient that answers from the case and sends
- *                                            nothing: answerLookUp)
+ *                                            nothing: answerLookUp), jb request items scripts... (the whole
+ *                                            download job on scripted collaborators: answerJob)
  *         P op fields...                     YtDlpResolver on a runner that plays the case, one op per case (answerP): rs input
  *                                            run stdout stderr..., fx videoId run stdout stderr...
  *
@@ -571,6 +572,8 @@ public class Oracle {
                     return answerFileName(dec(part[2]));
                 case "lf":
                     return answerLookUp(part);
+                case "jb":
+                    return answerJob(part);
                 default:
                     return "?";
             }
@@ -951,6 +954,263 @@ public class Oracle {
         out.append(" N ").append(second).append(" C ").append(wider.urls.size()).append(" U");
         for (String url : firstUrls) out.append(' ').append(enc(url));
         return out.toString();
+    }
+
+    // W jb overwrite includeRank album albumOverride searchLyrics existing n item... meta ytdlp ffmpeg lyrics put: the real
+    // DefaultDownloadService(ItemDownloader(a JobRunner, tools C:\tools\yt-dlp.exe ffmpeg.exe node.exe, a scripted
+    // VideoMetadataSource, a scripted LyricsProvider), a fresh temporary folder, the scope of runBlocking, retryDelays = two
+    // zero Durations) runs one DownloadRequest (concurrency 1) on a scripted OutputSink, and the events are read to the end
+    // (ChannelsKt.toList of the job's channel). The notation (gen.h has it too):
+    //   overwrite includeRank searchLyrics 0 | 1; album albumOverride hex | . | -; existing: the names the sink already has,
+    //   "~" or comma-separated hex; n, then per item: rank videoId title channel artist track lowConfidence.
+    //   Five scripts, comma-separated entries, each consumed in call order (the last entry again once they run out):
+    //   meta    per fetch: - (null) or title/channel/artist/track (each hex | . | -)
+    //   ytdlp   per yt-dlp run: exit/m4a/cover/info/stdout/stderr: the exit code; m4a and cover 0 | 1 (the run writes
+    //           <id>.m4a "m4a-data", <id>.jpg "jpg-data" into the folder of its -o template); info - (none written) | . | the
+    //           bytes of <id>.info.json as hex; the stdout and stderr lines, "~" for none, else "+"-separated hex (. an empty
+    //           line). The files are written first, then the stdout lines, then the stderr lines, on the caller's thread.
+    //   ffmpeg  per tag run: exit/writes/stderr (writes 1: the output, the last argument, gets "tagged-m4a-data"); the text
+    //           of the ffmetadata input is read before anything else
+    //   lyrics  per find: - (null) | . | hex | X (find throws IllegalStateException)
+    //   put     per put: S (stored: the name joins the sink's names) | A<hex or .> (FileAlreadyExistsException(fileName); the
+    //           text is the C++ result's only) | F<code>/<hex> (code 5: AccessDeniedException(fileName), else
+    //           IOException(text); the generator writes the codes 112 and 39 only with a disk-full marker in the text)
+    //   exists(name) is whether the sink's names hold it.
+    // -> E <event>... M <ffmetadata text hex>... Q <query>... Y <rank>... G <rank>... P <rank/fileName>... R <count>:
+    //   every event in order: S,rank,videoId,fileName | P,rank,D|F,percent (- for null, N when not finite, else the 16 hex
+    //   digits of doubleToRawLongBits) | D,rank,fileName,lyrics (the LyricsOutcome's name or -) | K,rank,reason |
+    //   F,rank,message | J,status,succeeded,skipped,failed; the ffmetadata text of each tag run; each lyrics query
+    //   (artist/title/album/durationSeconds, hex or "-", the duration in decimal); the rank folder of each yt-dlp run and of
+    //   each tag run; the rank folder of each put's source and the file name it was given; the entries left in the
+    //   temporary folder after the job.
+    static final String JOB_YT_DLP = "C:\\tools\\yt-dlp.exe";
+    static final String JOB_FFMPEG = "C:\\tools\\ffmpeg.exe";
+    static java.lang.reflect.Method durationBox;
+
+    // a Duration of zero, boxed: the element type of DefaultDownloadService's List<Duration> (an inline class in a generic
+    // position is passed boxed; box-impl is its public JVM form)
+    static Object zeroDuration() throws Exception {
+        if (durationBox == null) durationBox = kotlin.time.Duration.class.getMethod("box-impl", long.class);
+        return durationBox.invoke(null, 0L);
+    }
+
+    // A script of jb: its entries in call order, then its last entry again.
+    static final class Script {
+        final String[] entries;
+        int next;
+
+        Script(String field) {
+            entries = field.split(",", -1);
+        }
+
+        synchronized String take() {
+            String entry = entries[Math.min(next, entries.length - 1)];
+            next++;
+            return entry;
+        }
+    }
+
+    static java.util.List<String> jobLines(String field) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (!field.equals("~")) for (String line : field.split("\\+", -1)) lines.add(dec(line));
+        return lines;
+    }
+
+    // the rank folder of a file in the job folder (<job>\<rank>\<file>)
+    static String rankOf(java.nio.file.Path file) {
+        return file.getParent().getFileName().toString();
+    }
+
+    // The ProcessRunner of jb: an ffmpeg command (command[0] is JOB_FFMPEG) plays the ffmpeg script, any other the yt-dlp
+    // script. A failure of the fake's own file work is an AssertionError, which Kotlin does not catch: the oracle fails loudly.
+    static final class JobRunner implements com.xgetsongs.engine.process.ProcessRunner {
+        final Script ytDlp;
+        final Script ffmpeg;
+        final java.util.List<String> ytDlpRanks = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        final java.util.List<String> ffmpegRanks = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        final java.util.List<String> ffmetadata = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        JobRunner(String ytDlp, String ffmpeg) {
+            this.ytDlp = new Script(ytDlp);
+            this.ffmpeg = new Script(ffmpeg);
+        }
+
+        @Override
+        public Object run(java.util.List<String> command, kotlin.jvm.functions.Function1<? super String, kotlin.Unit> onStdout,
+                          kotlin.jvm.functions.Function1<? super String, kotlin.Unit> onStderr,
+                          kotlin.coroutines.Continuation<? super Integer> continuation) {
+            try {
+                if (command.get(0).equals(JOB_FFMPEG)) {
+                    java.nio.file.Path output = java.nio.file.Path.of(command.get(command.size() - 1));
+                    ffmpegRanks.add(rankOf(output));
+                    ffmetadata.add(enc(java.nio.file.Files.readString(java.nio.file.Path.of(command.get(command.indexOf("ffmetadata") + 2)))));
+                    String[] entry = ffmpeg.take().split("/", -1);
+                    if (entry[1].equals("1")) java.nio.file.Files.write(output, "tagged-m4a-data".getBytes(StandardCharsets.ISO_8859_1));
+                    for (String line : jobLines(entry[2])) onStderr.invoke(line);
+                    return Integer.valueOf(Integer.parseInt(entry[0]));
+                }
+                java.nio.file.Path template = java.nio.file.Path.of(command.get(command.indexOf("-o") + 1));
+                java.nio.file.Path dir = template.getParent();
+                String name = template.getFileName().toString();
+                String id = name.endsWith(".%(ext)s") ? name.substring(0, name.length() - ".%(ext)s".length()) : name;
+                ytDlpRanks.add(dir.getFileName().toString());
+                String[] entry = ytDlp.take().split("/", -1);
+                if (entry[1].equals("1")) java.nio.file.Files.writeString(dir.resolve(id + ".m4a"), "m4a-data");
+                if (entry[2].equals("1")) java.nio.file.Files.writeString(dir.resolve(id + ".jpg"), "jpg-data");
+                if (!entry[3].equals("-")) java.nio.file.Files.write(dir.resolve(id + ".info.json"), decBytes(entry[3]));
+                for (String line : jobLines(entry[4])) onStdout.invoke(line);
+                for (String line : jobLines(entry[5])) onStderr.invoke(line);
+                return Integer.valueOf(Integer.parseInt(entry[0]));
+            } catch (java.io.IOException e) {
+                throw new AssertionError("the fake runner of jb could not do its file work", e);
+            }
+        }
+    }
+
+    // The OutputSink of jb (see the put script above).
+    static final class JobSink implements com.xgetsongs.engine.output.OutputSink {
+        final java.util.Set<String> names = new java.util.HashSet<>();
+        final Script script;
+        final java.util.List<String> puts = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        JobSink(String existing, String put) {
+            if (!existing.equals("~")) for (String name : existing.split(",", -1)) names.add(dec(name));
+            script = new Script(put);
+        }
+
+        @Override
+        public Object exists(String fileName, kotlin.coroutines.Continuation<? super Boolean> continuation) {
+            synchronized (names) {
+                return Boolean.valueOf(names.contains(fileName));
+            }
+        }
+
+        @Override
+        public Object put(String fileName, java.nio.file.Path source, boolean overwrite,
+                          kotlin.coroutines.Continuation<? super kotlin.Unit> continuation) {
+            puts.add(rankOf(source) + "/" + enc(fileName));
+            String entry = script.take();
+            switch (entry.charAt(0)) {
+                case 'S' -> {
+                    synchronized (names) {
+                        names.add(fileName);
+                    }
+                    return kotlin.Unit.INSTANCE;
+                }
+                case 'A' -> Oracle.<RuntimeException>sneakyThrow(new java.nio.file.FileAlreadyExistsException(fileName));
+                case 'F' -> {
+                    int slash = entry.indexOf('/');
+                    int code = Integer.parseInt(entry.substring(1, slash));
+                    if (code == 5) Oracle.<RuntimeException>sneakyThrow(new java.nio.file.AccessDeniedException(fileName));
+                    Oracle.<RuntimeException>sneakyThrow(new java.io.IOException(dec(entry.substring(slash + 1))));
+                }
+                default -> { }
+            }
+            throw new AssertionError("put entry " + entry);
+        }
+    }
+
+    static String percentOf(Double percent) {
+        if (percent == null) return "-";
+        if (!Double.isFinite(percent)) return "N";
+        return String.format(Locale.ROOT, "%016x", Double.doubleToRawLongBits(percent));
+    }
+
+    static String eventOf(Object event) {
+        if (event instanceof com.xgetsongs.shared.api.JobEvent.ItemStarted e) {
+            return "S," + e.getRank() + "," + enc(e.getVideoId()) + "," + enc(e.getFileName());
+        }
+        if (event instanceof com.xgetsongs.shared.api.JobEvent.Progress e) {
+            return "P," + e.getRank() + "," + (e.getStage() == com.xgetsongs.shared.api.Stage.DOWNLOADING ? "D" : "F") + ","
+                + percentOf(e.getPercent());
+        }
+        if (event instanceof com.xgetsongs.shared.api.JobEvent.ItemDone e) {
+            return "D," + e.getRank() + "," + enc(e.getFileName()) + "," + (e.getLyrics() == null ? "-" : e.getLyrics().name());
+        }
+        if (event instanceof com.xgetsongs.shared.api.JobEvent.ItemSkipped e) return "K," + e.getRank() + "," + enc(e.getReason());
+        if (event instanceof com.xgetsongs.shared.api.JobEvent.ItemFailed e) return "F," + e.getRank() + "," + enc(e.getMessage());
+        if (event instanceof com.xgetsongs.shared.api.JobEvent.JobDone e) {
+            return "J," + e.getStatus().name() + "," + e.getSummary().getSucceeded() + "," + e.getSummary().getSkipped() + ","
+                + e.getSummary().getFailed();
+        }
+        throw new AssertionError("event " + event);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static String answerJob(String[] part) throws Exception {
+        boolean overwrite = part[2].equals("1");
+        boolean includeRank = part[3].equals("1");
+        String album = dec(part[4]);
+        String albumOverride = dec(part[5]);
+        boolean searchLyrics = part[6].equals("1");
+        int n = Integer.parseInt(part[8]);
+        java.util.List<ResolvedItem> items = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            int at = 9 + 7 * i;
+            items.add(new ResolvedItem(Integer.parseInt(part[at]), dec(part[at + 1]), dec(part[at + 2]), dec(part[at + 3]),
+                dec(part[at + 4]), dec(part[at + 5]), part[at + 6].equals("1"), true, null, null));
+        }
+        int scripts = 9 + 7 * n;
+        Script meta = new Script(part[scripts]);
+        JobRunner runner = new JobRunner(part[scripts + 1], part[scripts + 2]);
+        Script lyricsScript = new Script(part[scripts + 3]);
+        JobSink sink = new JobSink(part[7], part[scripts + 4]);
+        java.util.List<String> queries = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        ToolPaths toolPaths = new ToolPaths(java.nio.file.Path.of(JOB_YT_DLP), java.nio.file.Path.of(JOB_FFMPEG),
+            java.nio.file.Path.of("C:\\tools\\node.exe"));
+        com.xgetsongs.engine.ytdlp.VideoMetadataSource metadata = (videoId, continuation) -> {
+            String entry = meta.take();
+            if (entry.equals("-")) return null;
+            String[] f = entry.split("/", -1);
+            return new VideoMeta(dec(f[0]), dec(f[1]), dec(f[2]), dec(f[3]));
+        };
+        com.xgetsongs.engine.lyrics.LyricsProvider lyrics = new com.xgetsongs.engine.lyrics.LyricsProvider() {
+            @Override
+            public Object find(LyricsQuery query, kotlin.coroutines.Continuation<? super String> continuation) {
+                queries.add(enc(query.getArtist()) + "/" + enc(query.getTitle()) + "/" + enc(query.getAlbum()) + "/"
+                    + (query.getDurationSeconds() == null ? "-" : query.getDurationSeconds().toString()));
+                String entry = lyricsScript.take();
+                if (entry.equals("X")) throw new IllegalStateException("the lookup failed (differential test)");
+                return dec(entry);
+            }
+        };
+        com.xgetsongs.engine.job.ItemDownloader downloader = new com.xgetsongs.engine.job.ItemDownloader(runner, () -> toolPaths,
+            metadata, lyrics);
+        com.xgetsongs.engine.DownloadRequest request = new com.xgetsongs.engine.DownloadRequest(items, sink, overwrite, 1, album,
+            includeRank, searchLyrics, albumOverride);
+        java.util.List delays = java.util.List.of(zeroDuration(), zeroDuration());
+
+        java.nio.file.Path tempRoot = java.nio.file.Files.createTempDirectory("xgs-diff-jb-");
+        try {
+            java.util.List<Object> events = kotlinx.coroutines.BuildersKt.<java.util.List<Object>>runBlocking(
+                kotlin.coroutines.EmptyCoroutineContext.INSTANCE, (scope, continuation) -> {
+                    com.xgetsongs.engine.job.DefaultDownloadService service =
+                        new com.xgetsongs.engine.job.DefaultDownloadService(downloader, tempRoot, scope, delays);
+                    return kotlinx.coroutines.channels.ChannelsKt.toList(service.start(request).getEvents(),
+                        (kotlin.coroutines.Continuation) continuation);
+                });
+            long remaining;
+            try (java.util.stream.Stream<java.nio.file.Path> list = java.nio.file.Files.list(tempRoot)) {
+                remaining = list.count();
+            }
+            StringBuilder out = new StringBuilder("E");
+            for (Object event : events) out.append(' ').append(eventOf(event));
+            out.append(" M");
+            for (String text : runner.ffmetadata) out.append(' ').append(text);
+            out.append(" Q");
+            for (String query : queries) out.append(' ').append(query);
+            out.append(" Y");
+            for (String rank : runner.ytDlpRanks) out.append(' ').append(rank);
+            out.append(" G");
+            for (String rank : runner.ffmpegRanks) out.append(' ').append(rank);
+            out.append(" P");
+            for (String put : sink.puts) out.append(' ').append(put);
+            out.append(" R ").append(remaining);
+            return out.toString();
+        } finally {
+            deleteTree(tempRoot);
+        }
     }
 
     // argv <helper>: an observation, not a gate (Q2b Task 2 Step 4). For each argument list on stdin (one per line, every

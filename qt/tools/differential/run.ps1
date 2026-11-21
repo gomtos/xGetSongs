@@ -516,6 +516,121 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'lf: a requested answer whose body is not JSON' $notJson $n 0.05
         Test-Share 'W' 'lf: a requested /search answer with two or more records' $several $n 0.15
     }
+    # jb: the whole job (the plan's `W jb` table; thresholds verbatim, as shares of the jb cases). Everything is counted from
+    # the Kotlin answer (its events, the rank of each yt-dlp run, each put) and, where an answer says which script entry a
+    # call took (scripts are consumed in call order, then their last entry again), from that entry of the case.
+    jb = {
+        param($cases, $answers, $indexes, $portAnswers)
+        $alignedPercent = 0; $alignedTail = 0
+        $completed = 0; $failedJob = 0; $skipped = 0; $failedItem = 0; $retried = 0; $gaveUp = 0; $reparsed = 0; $sameName = 0
+        $alreadyExists = 0; $denied = 0; $diskFull = 0; $progress3 = 0; $notFinite = 0; $override = 0; $badInfo = 0
+        $outcomes = @{ DESCRIPTION = 0; ONLINE = 0; NOT_FOUND = 0; SEARCH_OFF = 0 }
+        foreach ($i in $indexes) {
+            $case = $cases[$i]
+            $s = Get-JbSections $answers[$i]
+            $n = [int]$case[7]
+            $at = 8 + 7 * $n
+            $lowByRank = @{}
+            for ($k = 0; $k -lt $n; $k++) { $lowByRank[$case[8 + 7 * $k]] = $case[8 + 7 * $k + 6] -ceq '1' }
+            $metaScript = $case[$at].Split(',')
+            $ytDlpScript = $case[$at + 1].Split(',')
+            $putScript = $case[$at + 4].Split(',')
+            $events = $s['E']
+            $done = @($events | Where-Object { $_.StartsWith('J,') })
+            if ($done.Count -eq 1) {
+                if ($done[0].StartsWith('J,COMPLETED,')) { $completed++ } elseif ($done[0].StartsWith('J,FAILED,')) { $failedJob++ }
+            }
+            if (@($events | Where-Object { $_.StartsWith('K,') }).Count -gt 0) { $skipped++ }
+            $failures = @{}
+            foreach ($e in $events) { if ($e.StartsWith('F,')) { $parts = $e.Split(','); $failures[$parts[1]] = $parts[2] } }
+            if ($failures.Count -gt 0) { $failedItem++ }
+            # retries: a rank with two or more yt-dlp runs; giving up: three runs, the third one transient, and the item failed
+            $runsByRank = @{}
+            for ($p = 0; $p -lt $s['Y'].Count; $p++) {
+                $rank = $s['Y'][$p]
+                if (-not $runsByRank.ContainsKey($rank)) { $runsByRank[$rank] = [System.Collections.Generic.List[int]]::new() }
+                $runsByRank[$rank].Add($p)
+            }
+            if (@($runsByRank.Values | Where-Object { $_.Count -ge 2 }).Count -gt 0) { $retried++ }
+            $gave = $false
+            foreach ($rank in $runsByRank.Keys) {
+                $runs = $runsByRank[$rank]
+                if ($runs.Count -ne 3 -or -not $failures.ContainsKey($rank)) { continue }
+                $entry = $ytDlpScript[[Math]::Min($runs[2], $ytDlpScript.Count - 1)].Split('/')
+                if ($entry[0] -cne '0' -and (Test-JbTransient $entry[5])) { $gave = $true }
+            }
+            if ($gave) { $gaveUp++ }
+            # each lyrics outcome once per case
+            $seen = @{}
+            foreach ($e in $events) { if ($e -cmatch '^D,\d+,[^,]+,(DESCRIPTION|ONLINE|NOT_FOUND|SEARCH_OFF)$') { $seen[$Matches[1]] = $true } }
+            foreach ($outcome in $seen.Keys) { $outcomes[$outcome]++ }
+            # lowConfidence parsed again: the items that started, in order; each lowConfidence one took the next metadata answer
+            $metaAt = 0; $again = $false; $names = @{}; $dup = $false
+            foreach ($e in $events) {
+                if (-not $e.StartsWith('S,')) { continue }
+                $parts = $e.Split(',')
+                if ($lowByRank[$parts[1]]) {
+                    if ($metaScript[[Math]::Min($metaAt, $metaScript.Count - 1)] -cne '-') { $again = $true }
+                    $metaAt++
+                }
+                if ($names.ContainsKey($parts[3])) { $dup = $true } else { $names[$parts[3]] = $true }
+            }
+            if ($again) { $reparsed++ }
+            if ($dup) { $sameName++ }
+            # puts: the entry each put took, and what the item reported
+            $exists = $false; $deny = $false; $full = $false
+            for ($p = 0; $p -lt $s['P'].Count; $p++) {
+                $rank = $s['P'][$p].Split('/')[0]
+                $entry = $putScript[[Math]::Min($p, $putScript.Count - 1)]
+                if ($entry.StartsWith('A')) { $exists = $true }
+                if ($entry.StartsWith('F') -and $failures.ContainsKey($rank)) {
+                    if ($failures[$rank] -ceq $JbNoPermissionHex) { $deny = $true }
+                    if ($failures[$rank] -ceq $JbDiskFullHex) { $full = $true }
+                }
+            }
+            if ($exists) { $alreadyExists++ }
+            if ($deny) { $denied++ }
+            if ($full) { $diskFull++ }
+            $progressEvents = @($events | Where-Object { $_.StartsWith('P,') })
+            if ($progressEvents.Count -ge 3) { $progress3++ }
+            if (@($progressEvents | Where-Object { $_.EndsWith(',N') }).Count -gt 0) { $notFinite++ }
+            if ($case[4] -cne '-' -and -not (Test-KotlinBlank $case[4]) -and $s['M'].Count -gt 0) { $override++ }
+            # info files read: a run that exited with 0 and wrote the m4a goes on to read its info file
+            $bad = $false
+            for ($p = 0; $p -lt $s['Y'].Count; $p++) {
+                $entry = $ytDlpScript[[Math]::Min($p, $ytDlpScript.Count - 1)].Split('/')
+                if ($entry[0] -ceq '0' -and $entry[1] -ceq '1' -and -not (Test-JbInfoReadable $entry[3])) { $bad = $true }
+            }
+            if ($bad) { $badInfo++ }
+            # (shown only) the cases whose two answers differ before the alignment and agree after it, by the difference aligned
+            if ($null -ne $portAnswers -and $answers[$i] -cne $portAnswers[$i] -and $null -ne $portAnswers[$i] -and
+                (Format-JbFolded $case $answers[$i] 'kotlin') -ceq (Format-JbFolded $case $portAnswers[$i] 'port')) {
+                if (@($events | Where-Object { $_ -cmatch '^P,-?\d+,[DF],N$' }).Count -gt 0) { $alignedPercent++ }
+                if ((Format-JbPercents $answers[$i]) -cne $portAnswers[$i]) { $alignedTail++ }
+            }
+        }
+        $n = $indexes.Count
+        Test-Share 'W' 'jb: Completed' $completed $n 0.40
+        Test-Share 'W' 'jb: Failed' $failedJob $n 0.10
+        Test-Share 'W' 'jb: a case with ItemSkipped' $skipped $n 0.15
+        Test-Share 'W' 'jb: a case with ItemFailed' $failedItem $n 0.20
+        Test-Share 'W' 'jb: a retry happened' $retried $n 0.10
+        Test-Share 'W' 'jb: given up after two retries' $gaveUp $n 0.03
+        Test-Share 'W' 'jb: ItemDone with lyrics DESCRIPTION' $outcomes['DESCRIPTION'] $n 0.05
+        Test-Share 'W' 'jb: ItemDone with lyrics ONLINE' $outcomes['ONLINE'] $n 0.05
+        Test-Share 'W' 'jb: ItemDone with lyrics NOT_FOUND' $outcomes['NOT_FOUND'] $n 0.05
+        Test-Share 'W' 'jb: ItemDone with lyrics SEARCH_OFF' $outcomes['SEARCH_OFF'] $n 0.05
+        Test-Share 'W' 'jb: a lowConfidence item parsed again' $reparsed $n 0.10
+        Test-Share 'W' 'jb: the same file name twice or more in one job' $sameName $n 0.05
+        Test-Share 'W' 'jb: a put that answered AlreadyExists' $alreadyExists $n 0.03
+        Test-Share 'W' 'jb: a put denied access' $denied $n 0.03
+        Test-Share 'W' 'jb: a put found the disk full' $diskFull $n 0.03
+        Test-Share 'W' 'jb: three or more Progress events' $progress3 $n 0.20
+        Test-Share 'W' 'jb: a percent that is not finite' $notFinite $n 0.02
+        Test-Share 'W' 'jb: an album override (tags written)' $override $n 0.10
+        Test-Share 'W' 'jb: an info file read that was broken or missing' $badInfo $n 0.10
+        Write-Host "  W: jb: shown only: cases equal only after the alignment: $alignedPercent with a percent that is not finite (Kotlin N), $alignedTail with an AlreadyExists tail that the alignment drops"
+    }
 }
 # Helpers of the W lf statistics (for counting only; the answers are compared exactly). The URL of a /search request as hex;
 # on a field's hex, a unit outside ASCII and one of `& = # + %` or a space; on a decoded body, a record field of the wrong
@@ -561,9 +676,79 @@ public static class LfScan {
     }
 }
 '@
+function ConvertTo-HexText([string]$text) { -join ($text.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ }) }
+# Helpers of W jb. Get-JbSections: the sections of an answer (E events, M ffmetadata texts, Q queries, Y yt-dlp run ranks,
+# G tag run ranks, P puts, R the entries left), each a list of its tokens. The messages of ItemFailed after a fatal put, as
+# hex. Test-JbTransient: whether the stderr field of a yt-dlp script entry would be TRANSIENT for ErrorClassifier (its phrase
+# lists, in its order; for counting only, never for an answer). Test-JbInfoReadable: whether an info field holds strict
+# UTF-8 JSON with an object root (System.Text.Json; for counting only).
+function Get-JbSections([string]$answer) {
+    $sections = @{}
+    foreach ($name in 'E', 'M', 'Q', 'Y', 'G', 'P', 'R') { $sections[$name] = [System.Collections.Generic.List[string]]::new() }
+    if ($null -eq $answer) { return $sections }
+    $current = $null
+    foreach ($token in $answer.Split(' ')) {
+        if ($token -cmatch '^[EMQYGPR]$') { $current = $token; continue }
+        if ($null -ne $current) { $sections[$current].Add($token) }
+    }
+    return $sections
+}
+$JbNoPermissionHex = ConvertTo-HexText '출력 폴더에 쓸 권한이 없습니다.'
+$JbDiskFullHex = ConvertTo-HexText '디스크 공간이 부족합니다.'
+$JbFileErrorHex = ConvertTo-HexText '파일 처리 중 오류: '
+$JbFatalPhrases = @('no space left on device', 'not enough space on the disk', 'disk quota exceeded', 'permission denied')
+$JbRatePhrases = @('try again later', 'rate-limited', 'rate limited')
+$JbUnavailablePhrases = @('private video', 'sign in to confirm your age', 'age-restricted', 'available in your country',
+                          'blocked it in your country', 'who has blocked it', 'members-only', 'join this channel', 'copyright',
+                          'has been removed', 'account associated with this video has been terminated', 'video unavailable',
+                          'this video is not available')
+$JbTransientPhrases = @('http error 429', 'http error 403', 'http error 500', 'http error 502', 'http error 503', 'http error 504',
+                        'timed out', 'connection reset', 'connection aborted', 'remote end closed', 'incompleteread',
+                        'temporary failure in name resolution', 'getaddrinfo failed', 'network is unreachable', 'unable to download')
+function Test-JbTransient([string]$field) {
+    if ($field -ceq '~') { return $false }
+    $text = (@($field.Split('+') | ForEach-Object { ConvertFrom-HexText $_ }) -join "`n").ToLowerInvariant()
+    foreach ($phrase in $JbFatalPhrases) { if ($text.Contains($phrase)) { return $false } }
+    foreach ($phrase in $JbRatePhrases) { if ($text.Contains($phrase)) { return $true } }
+    foreach ($phrase in $JbUnavailablePhrases) { if ($text.Contains($phrase)) { return $false } }
+    foreach ($phrase in $JbTransientPhrases) { if ($text.Contains($phrase)) { return $true } }
+    return $false
+}
+function Test-JbInfoReadable([string]$field) {
+    if ($field -ceq '-' -or $field -ceq '.') { return $false }
+    try {
+        $document = [System.Text.Json.JsonDocument]::Parse($LfStrictUtf8.GetString([Convert]::FromHexString($field)))
+        $object = $document.RootElement.ValueKind -eq [System.Text.Json.JsonValueKind]::Object
+        $document.Dispose()
+        return $object
+    } catch { return $false }
+}
+# The two known differences of W jb, aligned before the comparison (the plan's `W jb` table): a percent that is not finite is
+# unknown (author decision 8: the Kotlin answer writes N for it, the port sends unknown), and the text after `파일 처리 중 오류: `
+# of the ItemFailed that follows a put answering AlreadyExists (decision 5: Kotlin's message is the exception's, the port's
+# the result's text or the file name). The put that took an `A` entry of the put script is found from the answer's P section
+# (the n-th put took the n-th entry, then the last again); its rank's ItemFailed, if it has the prefix, keeps only the prefix.
+# Nothing else is touched.
+function Format-JbPercents([string]$answer) {
+    $tokens = $answer.Split(' ')
+    for ($t = 0; $t -lt $tokens.Count; $t++) { if ($tokens[$t] -cmatch '^P,-?\d+,[DF],N$') { $tokens[$t] = $tokens[$t].Substring(0, $tokens[$t].Length - 1) + '-' } }
+    return $tokens -join ' '
+}
+function Format-JbFolded($fields, [string]$answer, [string]$side) {
+    if ($side -ceq 'kotlin') { $answer = Format-JbPercents $answer }
+    $tokens = $answer.Split(' ')
+    $s = Get-JbSections $answer
+    $n = [int]$fields[7]
+    $putScript = $fields[8 + 7 * $n + 4].Split(',')
+    for ($p = 0; $p -lt $s['P'].Count; $p++) {
+        if (-not $putScript[[Math]::Min($p, $putScript.Count - 1)].StartsWith('A')) { continue }
+        $head = 'F,' + $s['P'][$p].Split('/')[0] + ',' + $JbFileErrorHex
+        for ($t = 0; $t -lt $tokens.Count; $t++) { if ($tokens[$t].StartsWith($head, [StringComparison]::Ordinal)) { $tokens[$t] = $head } }
+    }
+    return $tokens -join ' '
+}
 # Kind P: one check per op, each on the indexes of that op's cases (thresholds of the Q2b plan, per op). An op of P without an
 # entry here fails the run.
-function ConvertTo-HexText([string]$text) { -join ($text.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ }) }
 $PFlatPlaylist = ConvertTo-HexText '--flat-playlist'
 $PNoPlaylist = ConvertTo-HexText '--no-playlist'
 $PUnknownItem = ConvertTo-HexText '알 수 없는 항목'
@@ -739,7 +924,7 @@ $Statistics = [ordered]@{
     W = @{
         # fields: op and the op's fields; the thresholds are per op ($WOpChecks). Each op's share is shown, not checked.
         Check = {
-            param($cases, $answers)
+            param($cases, $answers, $portAnswers)
             $byOp = @{}
             for ($i = 0; $i -lt $cases.Count; $i++) {
                 $op = $cases[$i][0]
@@ -751,7 +936,7 @@ $Statistics = [ordered]@{
                 $indexes = if ($byOp.ContainsKey($op)) { $byOp[$op].ToArray() } else { [int[]]@() }
                 Test-Share 'W' "op $op (shown only)" $indexes.Count $cases.Count 0
                 if ($indexes.Count -eq 0) { "W: no cases of op $op"; continue }
-                & $WOpChecks[$op] $cases $answers $indexes
+                & $WOpChecks[$op] $cases $answers $indexes $portAnswers
             }
         }
     }
@@ -1371,7 +1556,11 @@ function Format-FoldedSigma([string]$answer) {
 $Folding = @{
     S = @{
         Note = 'S: op lower on an input with U+03A3 is compared modulo the final-sigma form (U+03C2 folded to U+03C3 in both answers); all else exactly'
-        Fold = { param($fields, $answer) if ($fields[0] -ceq 'lower' -and (Test-HasCapitalSigma $fields[1])) { Format-FoldedSigma $answer } else { $answer } }
+        Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'lower' -and (Test-HasCapitalSigma $fields[1])) { Format-FoldedSigma $answer } else { $answer } }
+    }
+    W = @{
+        Note = 'W: op jb is compared with its two known differences aligned (Format-JbFolded: a percent that is not finite in the Kotlin answer is unknown; the tail of an ItemFailed after a put that answered AlreadyExists is dropped in both answers); every other op and all else exactly'
+        Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'jb' -and $null -ne $answer) { Format-JbFolded $fields $answer $side } else { $answer } }
     }
 }
 
@@ -1547,8 +1736,8 @@ function Invoke-CaseKind([string]$letter) {
         if (($null -ne $k -and $k.StartsWith('?')) -or ($null -ne $p -and $p.StartsWith('?'))) { $unknown++ }
         $kc = $k; $pc = $p
         if ($folding) {
-            $kc = & $folding.Fold $rest $k
-            $pc = & $folding.Fold $rest $p
+            $kc = & $folding.Fold $rest $k 'kotlin'
+            $pc = & $folding.Fold $rest $p 'port'
         }
         if ($kc -cne $pc) {
             $mismatches++

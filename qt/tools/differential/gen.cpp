@@ -3574,12 +3574,389 @@ QString generateLf(Rng& rng) {
     return line;
 }
 
+// ---- kind W op jb: the whole download job (DefaultDownloadService and ItemDownloader) on scripted collaborators ----
+// jb overwrite includeRank album albumOverride searchLyrics existing n item... meta ytdlp ffmpeg lyrics put (gen.h and
+// qt/README.md have the notation; Oracle.java answerJob and main.cpp answerJb play it). Concurrency 1, no cancellation, no
+// retry wait. The mix aims at the thresholds of the plan's `W jb` table:
+//  - 1..6 items with distinct ranks (1..n mostly, else random in 1..999); without the rank in the file name two items now
+//    and then get the same artist and track (the same file name); lowConfidence a third of the time; video IDs of
+//    [A-Za-z0-9_-] only (a `%` in an ID is tested apart, author decision 9); titles of kind T, artists and tracks clean
+//    words or text() (control characters, emoji, unpaired surrogates: the last make the tag file unwritable, as in Kotlin);
+//  - the request: overwrite a quarter of the time, the rank in the name 60%, a playlist title (album) about half the time,
+//    an album override (blank too) and the lyrics lookup;
+//  - names the sink already has: now and then the name an item will get, or another one;
+//  - the metadata answers: none, a title only, artist and track, all four fields;
+//  - the yt-dlp script, built as one "story" per item: success at once; one or two transient failures, then success;
+//    three transient failures (give up); unavailable; another failure; success without the m4a; a fatal stderr (disk full,
+//    no permission); stderr lines of kind E with a random exit code. A success writes the m4a, mostly the cover, and an info
+//    file (missing or broken a tenth of the time each; else album, description and duration in many shapes: lyrics with
+//    three or more lines, fewer than three, none, kind L's descriptions, kind V's values), and progress lines (rising
+//    percents with repeats of the same whole percent, an unknown total, NaN, over 100, `finished`, lines that are not
+//    progress, kind Q's lines);
+//  - the ffmpeg script: success, a failure with stderr, exit 0 without the output, blank stderr;
+//  - the provider's answers: lyrics, blank, none, a throw;
+//  - the sink's put results: stored, already exists (with or without a text of its own), access denied, disk full (a
+//    Windows code or a text marker), another failure (a text marker in odd case now and then: a full disk on both sides).
+constexpr QStringView kJbAlbums[] = {u"Palette", u"Love poem", u"사랑의 시", u"Greatest Hits", u" Album ", u"NA", u"2024",
+                                     u"Vol. 1 (Deluxe)"};
+constexpr QStringView kJbTransientLines[] = {
+    u"ERROR: [youtube] %1: Unable to download webpage: HTTP Error 503: Service Unavailable",
+    u"ERROR: [download] Got error: The read operation timed out", u"ERROR: unable to download video data: HTTP Error 403: Forbidden",
+    u"ERROR: [youtube] %1: Sign in to confirm you're not a bot. Try again later.", u"ERROR: Connection reset by peer",
+    u"ERROR: [youtube] %1: HTTP Error 429: Too Many Requests", u"ERROR: getaddrinfo failed",
+    u"ERROR: [youtube] %1: This content isn't available, try again later. Video unavailable"};
+constexpr QStringView kJbUnavailableLines[] = {
+    u"ERROR: [youtube] %1: Private video. Sign in if you've been granted access to this video",
+    u"ERROR: [youtube] %1: Video unavailable", u"ERROR: [youtube] %1: Sign in to confirm your age",
+    u"ERROR: [youtube] %1: The uploader has not made this video available in your country",
+    u"ERROR: [youtube] %1: Join this channel to get access to members-only content",
+    u"ERROR: [youtube] %1: Video unavailable. This video has been removed by the uploader",
+    u"ERROR: [youtube] %1: Video unavailable. This video is no longer available due to a copyright claim"};
+constexpr QStringView kJbFatalLines[] = {u"ERROR: unable to write data: [Errno 28] No space left on device",
+                                         u"ERROR: Unable to open file: Permission denied",
+                                         u"ERROR: [Errno 122] Disk quota exceeded", u"OSError: Not enough space on the disk"};
+constexpr QStringView kJbOtherLines[] = {u"ERROR: [youtube] %1: Requested format is not available. Use --list-formats",
+                                         u"ERROR: Postprocessing: Conversion failed!", u"ERROR: something odd happened",
+                                         u"ERROR: [youtube] %1: Unable to extract uploader id", u"Traceback (most recent call last):"};
+constexpr QStringView kJbWarnings[] = {u"WARNING: [youtube] Falling back to generic n function search",
+                                       u"WARNING: [youtube] %1: nsig extraction failed", u"[download] Destination: x.m4a",
+                                       u"[info] Writing video metadata as JSON"};
+constexpr QStringView kJbFfmpegErrors[] = {u"Error opening output file x.tagged.m4a.", u"Invalid data found when processing input",
+                                           u"  Conversion failed!  ", u"[mov,mp4,m4a @ 0000] moov atom not found"};
+constexpr QStringView kJbExistsTexts[] = {u"Cannot create a file when that file already exists.",
+                                          u"파일이 이미 있으므로 만들 수 없습니다."};
+// (code, text): the other failures of a put; the last two carry a disk-full marker in odd case and are a full disk on both sides
+constexpr std::pair<int, QStringView> kJbPutFailures[] = {
+    {32, u"The process cannot access the file because it is being used by another process."},
+    {2, u"The system cannot find the file specified."}, {0, u"The device is not ready."}, {1392, u"The file is corrupted."},
+    {0, u"Write failed: DISK FULL"}, {0, u"쓰기 실패: 디스크 공간이 부족해요"}};
+// (code, text): a full disk; codes 112 and 39 always come with a marker in the text (Kotlin reads a full disk from the text
+// alone, decision 5 of the plan, so the Kotlin form of such a failure carries one)
+constexpr std::pair<int, QStringView> kJbDiskFull[] = {{112, u"There is not enough space on the disk."},
+                                                       {39, u"Reached the end: not enough space on the disk."},
+                                                       {0, u"No space left on device"}};
+
+QString jbLines(const QStringList& lines) {
+    if (lines.isEmpty()) return u"~"_s;
+    QStringList out;
+    for (const QString& line : lines) out.append(hex(line));
+    return out.join(u'+');
+}
+
+QString jbWord(Rng& rng) {
+    QString word;
+    const int length = rng.between(1, 6);
+    for (int i = 0; i < length; ++i) word += charOf(rng, kCleanUnits);
+    return word;
+}
+
+QString jbCleanLine(Rng& rng) {
+    QStringList words;
+    const int count = rng.between(1, 5);
+    for (int i = 0; i < count; ++i) words.append(jbWord(rng));
+    return words.join(u' ');
+}
+
+// an artist or a track: clean words mostly, else text() (kind F's material)
+QString jbName(Rng& rng) {
+    return rng.chance(0.65) ? jbCleanLine(rng) : text(rng, 6);
+}
+
+// A JSON string: `"` and `\` escaped, control characters and unpaired surrogates as \u escapes, the rest raw.
+QString jbJsonString(const QString& value) {
+    QString out = u"\""_s;
+    for (qsizetype i = 0; i < value.size(); ++i) {
+        const char16_t unit = value.at(i).unicode();
+        if (unit == u'"' || unit == u'\\') {
+            out += u'\\';
+            out += QChar(unit);
+        } else if (unit < 0x20) {
+            out += jsonEscapeOf(unit);
+        } else if (QChar::isHighSurrogate(unit) && i + 1 < value.size() && value.at(i + 1).isLowSurrogate()) {
+            out += QChar(unit);
+            out += value.at(++i);
+        } else if (QChar::isSurrogate(unit)) {
+            out += jsonEscapeOf(unit);
+        } else {
+            out += QChar(unit);
+        }
+    }
+    return out + u"\"";
+}
+
+// The description of an info file: lyrics after a heading with three or more lines, with fewer, kind L's descriptions,
+// text without a heading; nothing (no key) otherwise.
+std::optional<QString> jbDescription(Rng& rng) {
+    const double roll = rng.next();
+    QStringList lines;
+    if (roll < 0.46) {
+        const int head = rng.between(0, 2);
+        for (int i = 0; i < head; ++i) lines.append(rng.chance(0.5) ? pick(rng, kHeadLines).toString() : jbCleanLine(rng));
+        lines.append(headingLine(rng));
+        if (rng.chance(0.4)) lines.append(separatorLine(rng, 3));
+        const int body = roll < 0.34 ? rng.between(3, 8) : rng.between(0, 2);
+        for (int i = 0; i < body; ++i) lines.append(rng.chance(0.9) ? jbCleanLine(rng) : text(rng, 6));
+        if (rng.chance(0.3)) lines.append(pick(rng, kCopyrightLines).toString());
+        if (rng.chance(0.3)) lines.append(pick(rng, kHashtagLines).toString());
+        return lines.join(rng.chance(0.8) ? u"\n"_s : u"\r\n"_s);
+    }
+    if (roll < 0.56) return unhex(generateL(rng)).value_or(QString());
+    if (roll < 0.82) {
+        const int count = rng.between(1, 4);
+        for (int i = 0; i < count; ++i) lines.append(rng.chance(0.5) ? pick(rng, kLinkLines).toString() : jbCleanLine(rng));
+        return lines.join(u'\n');
+    }
+    return std::nullopt;
+}
+
+// The info file field: - (none written), . (an empty file) or the bytes as hex.
+QString jbInfo(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.10) return u"-"_s;
+    if (roll < 0.20) {
+        const double broken = rng.next();
+        if (broken < 0.15) return u"."_s;
+        if (broken < 0.35) return generateV(rng);
+        QByteArray bytes = utf8Of(u"{\"album\":"_s + jbJsonString(pick(rng, kJbAlbums).toString()) + u",\"description\":\"x\"}", false);
+        if (broken < 0.65) bytes.truncate(rng.between(1, int(bytes.size()) - 1));   // cut short
+        else if (broken < 0.85) bytes.insert(insertionPoint(rng, bytes), notUtf8(rng));
+        else bytes = "[" + bytes + "]";   // a root that is not an object
+        return bytesField(bytes);
+    }
+    QStringList members;
+    if (rng.chance(0.55)) {
+        members.append(u"\"album\":"_s + (rng.chance(0.75) ? jbJsonString(rng.chance(0.7) ? pick(rng, kJbAlbums).toString() : text(rng, 4))
+                                                           : albumValue(rng)));
+    }
+    if (const std::optional<QString> description = jbDescription(rng)) {
+        members.append(u"\"description\":"_s + (rng.chance(0.9) ? jbJsonString(*description) : descriptionValue(rng)));
+    }
+    if (rng.chance(0.8)) {
+        static constexpr QStringView fractions[] = {u"", u"", u"", u".0", u".4", u".5", u".6"};
+        members.append(u"\"duration\":"_s + (rng.chance(0.75) ? QString::number(rng.between(1, 900)) + pick(rng, fractions).toString()
+                                                              : durationValue(rng)));
+    }
+    if (rng.chance(0.3)) members.append(u"\"title\":"_s + jbJsonString(jbCleanLine(rng)));
+    for (qsizetype i = members.size() - 1; i > 0; --i) members.swapItemsAt(i, rng.between(0, int(i)));
+    return bytesField(utf8Of(u"{"_s + members.join(u",") + u"}", false));
+}
+
+// The progress lines of a successful run.
+QStringList jbProgress(Rng& rng) {
+    QStringList lines;
+    static constexpr qint64 totals[] = {100, 1000, 4096, 7, 29, 1048576};
+    const qint64 total = pick(rng, totals);
+    const int known = rng.between(0, 9);   // 0: no total (unknown), 1: the estimate only, else the total
+    qint64 downloaded = 0;
+    const int count = rng.between(0, 8);
+    for (int i = 0; i < count; ++i) {
+        const double roll = rng.next();
+        if (roll < 0.55) {
+            if (!rng.chance(0.25)) downloaded = std::min<qint64>(total, downloaded + rng.between(0, int(std::max<qint64>(1, total / 3))));
+            const QString number = QString::number(downloaded);
+            const QString t = QString::number(total);
+            lines.append(known == 0   ? u"XGSP|downloading|"_s + number + u"|NA|NA"
+                         : known == 1 ? u"XGSP|downloading|"_s + number + u"|NA|" + t
+                                      : u"XGSP|downloading|"_s + number + u"|" + t + u"|NA");
+        } else if (roll < 0.63) {
+            lines.append(rng.chance(0.7) ? u"XGSP|downloading|NaN|"_s + QString::number(total) + u"|NA"
+                                         : u"XGSP|downloading|Infinity|Infinity|NA"_s);
+        } else if (roll < 0.68) {
+            lines.append(u"XGSP|downloading|"_s + QString::number(total + rng.between(1, 500)) + u"|" + QString::number(total) + u"|NA");
+        } else if (roll < 0.74) {
+            lines.append(u"XGSP|finished|"_s + QString::number(total) + u"|" + QString::number(total) + u"|NA");
+        } else if (roll < 0.86) {
+            lines.append(rng.chance(0.5) ? u"[download] Destination: x.m4a"_s : jbCleanLine(rng));
+        } else {
+            lines.append(unhex(generateQ(rng)).value_or(QString()));
+        }
+    }
+    return lines;
+}
+
+QString jbLine(QStringView pattern, const QString& videoId) {
+    return pattern.toString().replace(u"%1"_s, videoId);
+}
+
+QString jbFailureExit(Rng& rng) {
+    static constexpr int codes[] = {1, 1, 1, 2, -1, 101};
+    return QString::number(pick(rng, codes));
+}
+
+// One yt-dlp call: exit/m4a/cover/info/stdout/stderr
+QString jbRun(const QString& exit, bool m4a, bool cover, const QString& info, const QStringList& out, const QStringList& err) {
+    return exit + u'/' + (m4a ? u"1"_s : u"0"_s) + u'/' + (cover ? u"1"_s : u"0"_s) + u'/' + info + u'/' + jbLines(out) + u'/' + jbLines(err);
+}
+
+QStringList jbNoise(Rng& rng, const QString& videoId) {
+    QStringList lines;
+    const int count = rng.chance(0.7) ? 0 : rng.between(1, 2);
+    for (int i = 0; i < count; ++i) lines.append(jbLine(pick(rng, kJbWarnings), videoId));
+    return lines;
+}
+
+QString jbSuccess(Rng& rng, const QString& videoId, bool m4a = true) {
+    return jbRun(u"0"_s, m4a, rng.chance(0.7), jbInfo(rng), jbProgress(rng), jbNoise(rng, videoId));
+}
+
+QString jbFailure(Rng& rng, const QString& videoId, QStringView line) {
+    QStringList err = jbNoise(rng, videoId);
+    err.append(jbLine(line, videoId));
+    return jbRun(jbFailureExit(rng), rng.chance(0.15), false, rng.chance(0.5) ? u"-"_s : jbInfo(rng), jbProgress(rng), err);
+}
+
+// The yt-dlp calls planned for one item (see the comment at the top of jb)
+QStringList jbStory(Rng& rng, const QString& videoId) {
+    const auto transient = [&] { return jbFailure(rng, videoId, pick(rng, kJbTransientLines)); };
+    const double roll = rng.next();
+    if (roll < 0.47) return {jbSuccess(rng, videoId)};
+    if (roll < 0.57) return {transient(), jbSuccess(rng, videoId)};
+    if (roll < 0.62) return {transient(), transient(), jbSuccess(rng, videoId)};
+    if (roll < 0.69) return {transient(), transient(), transient()};
+    if (roll < 0.76) return {jbFailure(rng, videoId, pick(rng, kJbUnavailableLines))};
+    if (roll < 0.83) return {jbFailure(rng, videoId, pick(rng, kJbOtherLines))};
+    if (roll < 0.86) return {jbSuccess(rng, videoId, false)};
+    if (roll < 0.89) return {jbFailure(rng, videoId, pick(rng, kJbFatalLines))};
+    QStringList err;
+    const int count = rng.between(0, 4);
+    for (int i = 0; i < count; ++i) err.append(lineOfE(rng));
+    const bool zero = rng.chance(0.3);
+    return {jbRun(zero ? u"0"_s : jbFailureExit(rng), rng.chance(0.5), rng.chance(0.5), jbInfo(rng), jbProgress(rng), err)};
+}
+
+QString jbMeta(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.3) return u"-"_s;
+    if (roll < 0.55) return hex(youtubeTitle(rng)) + u"/-/-/-";
+    if (roll < 0.85) return u"-/-/"_s + hex(jbName(rng)) + u'/' + hex(jbName(rng));
+    return hex(youtubeTitle(rng)) + u'/' + hex(channelOf(rng)) + u'/' + hex(nullable(rng)) + u'/' + hex(nullable(rng));
+}
+
+QString jbFfmpeg(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.85) return u"0/1/~"_s;
+    if (roll < 0.93) return jbFailureExit(rng) + u"/0/" + jbLines({pick(rng, kJbFfmpegErrors).toString(), rng.chance(0.5) ? u" "_s : QString()});
+    if (roll < 0.97) return u"0/0/~"_s;
+    return jbFailureExit(rng) + u"/0/" + jbLines({u"  "_s});
+}
+
+QString jbLyrics(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.45) {
+        QStringList lines;
+        const int count = rng.between(1, 4);
+        for (int i = 0; i < count; ++i) lines.append(rng.chance(0.92) ? jbCleanLine(rng) : text(rng, 6));
+        return hex(lines.join(u'\n'));
+    }
+    if (roll < 0.57) return rng.chance(0.5) ? u"."_s : hex(u" \n\t "_s);
+    if (roll < 0.87) return u"-"_s;
+    return u"X"_s;
+}
+
+QString jbPutFailure(int code, QStringView text) {
+    return u"F"_s + QString::number(code) + u'/' + hex(text.toString());
+}
+
+QString jbPut(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.63) return u"S"_s;
+    if (roll < 0.74) return u"A"_s + (rng.chance(0.5) ? u"."_s : hex(pick(rng, kJbExistsTexts).toString()));
+    if (roll < 0.83) return jbPutFailure(5, u"Access is denied.");
+    if (roll < 0.89) {
+        const auto& [code, message] = pick(rng, kJbDiskFull);
+        return jbPutFailure(code, message);
+    }
+    const auto& [code, message] = pick(rng, kJbPutFailures);
+    return jbPutFailure(code, message);
+}
+
+// count entries of make, the last one replaced by `last` now and then
+QString jbScript(Rng& rng, int low, int high, QString (*make)(Rng&), double lastIsDefault, const QString& defaultEntry) {
+    QStringList entries;
+    const int count = rng.between(low, high);
+    for (int i = 0; i < count; ++i) entries.append(make(rng));
+    if (rng.chance(lastIsDefault)) entries.last() = defaultEntry;
+    return entries.join(u',');
+}
+
+QString generateJb(Rng& rng) {
+    const bool overwrite = rng.chance(0.25);
+    const bool includeRank = rng.chance(0.6);
+    std::optional<QString> album;
+    if (const double roll = rng.next(); roll < 0.4) album = rng.chance(0.75) ? pick(rng, kJbAlbums).toString() : text(rng, 5);
+    else if (roll < 0.5) album = rng.chance(0.5) ? QString() : u"  "_s;
+    std::optional<QString> albumOverride;
+    if (const double roll = rng.next(); roll < 0.3) albumOverride = rng.chance(0.75) ? pick(rng, kJbAlbums).toString() : text(rng, 5);
+    else if (roll < 0.42) albumOverride = rng.chance(0.5) ? QString() : u" \t"_s;
+    const bool searchLyrics = rng.chance(0.6);
+
+    int n = rng.between(1, 6);
+    if (rng.chance(0.3)) n = rng.between(2, 4);
+    QList<int> ranks;
+    if (rng.chance(0.75)) {
+        for (int r = 1; r <= n; ++r) ranks.append(r);
+    } else {
+        while (ranks.size() < n) {
+            const int r = rng.between(1, 999);
+            if (!ranks.contains(r)) ranks.append(r);
+        }
+        if (rng.chance(0.5)) std::sort(ranks.begin(), ranks.end());
+    }
+    struct Item {
+        int rank;
+        QString videoId, title;
+        std::optional<QString> channel;
+        QString artist, track;
+        bool low;
+    };
+    QList<Item> items;
+    for (int i = 0; i < n; ++i) {
+        Item item{ranks.at(i), rng.chance(0.9) ? idOf(rng, 11) : idOf(rng, rng.between(1, 20)), youtubeTitle(rng), channelOf(rng),
+                  jbName(rng), jbName(rng), rng.chance(0.33)};
+        if (i > 0 && rng.chance(0.08)) item.videoId = items.at(rng.between(0, i - 1)).videoId;   // the same video twice
+        if (i > 0 && !includeRank && rng.chance(0.4)) {
+            // the same artist and track as an earlier item: the same file name without the rank
+            Item& other = items[rng.between(0, i - 1)];
+            item.artist = other.artist;
+            item.track = other.track;
+            item.low = false;
+            other.low = false;
+        }
+        items.append(item);
+    }
+
+    QStringList existing;
+    if (rng.chance(0.2)) {
+        const Item& item = items.at(rng.between(0, n - 1));
+        existing.append(hex(filename::format(item.rank, item.artist, item.track, includeRank)));
+    }
+    if (rng.chance(0.1)) existing.append(hex(jbCleanLine(rng) + u".m4a"));
+
+    QStringList ytDlp;
+    const int stories = n + (rng.chance(0.3) ? 1 : 0);
+    for (int i = 0; i < stories; ++i) ytDlp.append(jbStory(rng, items.at(std::min(i, n - 1)).videoId));
+
+    QString line = (overwrite ? u"1"_s : u"0"_s) + u'\t' + (includeRank ? u"1"_s : u"0"_s) + u'\t' + hex(album) + u'\t' + hex(albumOverride) +
+                   u'\t' + (searchLyrics ? u"1"_s : u"0"_s) + u'\t' + (existing.isEmpty() ? u"~"_s : existing.join(u',')) + u'\t' +
+                   QString::number(n);
+    for (const Item& item : items) {
+        line += u'\t' + QString::number(item.rank) + u'\t' + hex(item.videoId) + u'\t' + hex(item.title) + u'\t' + hex(item.channel) +
+                u'\t' + hex(item.artist) + u'\t' + hex(item.track) + u'\t' + (item.low ? u"1"_s : u"0"_s);
+    }
+    line += u'\t' + jbScript(rng, 1, 3, jbMeta, 0.0, QString());
+    line += u'\t' + ytDlp.join(u',');
+    line += u'\t' + jbScript(rng, 1, 3, jbFfmpeg, 0.8, u"0/1/~"_s);
+    line += u'\t' + jbScript(rng, 1, 3, jbLyrics, 0.0, QString());
+    line += u'\t' + jbScript(rng, 1, 3, jbPut, 0.7, u"S"_s);
+    return line;
+}
+
 struct WOp {
     QStringView name;
     Generator fields;   // the fields after the op
 };
 constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn},
-                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}, {u"lf", generateLf}};
+                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}, {u"lf", generateLf}, {u"jb", generateJb}};
 
 QString generateW(Rng& rng) {
     const WOp& op = pick(rng, kWOps);
