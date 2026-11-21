@@ -21,6 +21,8 @@
 | 4 | 작업 전체를 Kotlin과 대조(대조 op `W jb`) | `74dee77`, 리뷰 반영 `7a75710` |
 | 5 | 진짜 실행기·진짜 출력 폴더로 작업 잇기(`tst_job_with_real_processes`)와 미룬 통합 시험(`tst_real_download`) | `b4d8adc` |
 | 6 | 작업 5 리뷰의 작은 지적(관문 앞 정리), 관문, 이 보고서 | `2c7e1be`, 이 보고서 |
+| - | 작업 6 리뷰 반영(관문 뒤) | `a2fd05c` |
+| - | 최종 리뷰 반영(아래 "최종 리뷰") | `e921ea1`, 보고서 |
 
 "Kotlin"은 저장소의 `engine/src/main/kotlin/com/xgetsongs/engine/job/ItemDownloader.kt`·`DefaultDownloadService.kt`와 `Services.kt`, 그 시험 `DefaultDownloadServiceTest.kt`다. "작업"은 내려받기 작업 하나(곡 목록 하나를 받는 일), "일꾼"은 곡을 하나씩 가져가 받는 스레드, "조정 스레드"는 작업마다 하나 있는, 일꾼을 띄우고 거두고 끝 이벤트를 내는 스레드다.
 
@@ -215,6 +217,41 @@ Task 2의 첫 변이 실행에서 두 시험이 단단해졌다: 5,000곡 시험
 
 확인(`step0\`): 두 빌드에서 바뀐 시험 둘을 경고 없이 빌드했고, `tst_job_with_real_processes`를 두 빌드에서 20번씩 돌려 모두 통과(`Totals: 7 passed, 0 failed`, 한 번 약 2초), `tst_real_download`는 변수 없이 두 빌드 모두 `Totals: 2 passed, 0 failed, 2 skipped`(두 시험 모두 `set XGS_INTEGRATION=1 and XGS_INTEGRATION_AUDIO=1` 문구로 건너뜀).
 
+## 최종 리뷰
+
+범위 `8ffafae..a2fd05c` 전체를 본 최종 리뷰의 판정은 "고치면 준비됨"이었다. 심각(Critical)은 없고, 작업 코드는 Kotlin 원본과 맞는다고 보았다. 지적은 중요 1개와 작은 것 9개이고 모두 한 커밋(`e921ea1`)으로 고쳤다. 아래 "다시 돌린 것"의 수는 모두 그 커밋의 코드로 잰 것이다. 위 "관문 표"는 관문 때(`2c7e1be`)의 기록이라 그대로 두었다.
+
+**중요 1: yt-dlp에 넘기는 URL을 아무 시험도 보지 않았다.** 가짜들은 영상 ID를 `-o` 틀에서만 읽고 URL 인자는 보지 않았다. 그래서 `item_downloader.cpp:119`가 다른 곡의 URL이나 맨 영상 ID를 넘겨도 모든 시험과 대조 `W jb`가 통과하고, 사용자는 맞는 파일 이름에 다른 노래를 받았을 것이다(지금 코드는 맞다). controller 결정대로 단위 시험만 더했다(`W jb`의 답 꼴은 그대로). `tst_item_downloader`의 `aPercentSignInTheWorkFolderIsEscapedInTheCommand`가 이제 기록된 명령 전체를 `downloadCommand(testTools(), watchUrl(id), escapeOutputTemplateDirectory(workDir), id)`와 비교하고, `tst_default_download_service`에 곡 셋을 동시 수 2로 받아 곡마다의 명령이 그 곡의 URL로 끝나고 명령 전체가 그 곡의 `downloadCommand`와 같은지 보는 `everyItemsYtDlpCommandCarriesThatItemsOwnWatchUrl`을 더했다. 변이로 확인했다(릴리스, 바꾼 줄은 둘 다 되돌림):
+
+| 119줄 변이 | 잡은 곳 | 잡지 못한 곳 |
+|---|---|---|
+| URL 대신 맨 영상 ID | `aPercentSignInTheWorkFolderIsEscapedInTheCommand`(목록이 24번째에서 다름), `everyItemsYtDlpCommandCarriesThatItemsOwnWatchUrl` | `tst_job_with_real_processes`(7 통과) |
+| 처음 받은 곡의 URL을 모든 곡에(함수 안 `static`) | `everyItemsYtDlpCommandCarriesThatItemsOwnWatchUrl`, 그리고 `otherFailuresDoNotStopTheRemainingItems`(그 가짜는 명령을 이어 붙인 글에서 첫 곡의 ID를 찾는다) | `tst_item_downloader`(곡 하나뿐이라 볼 수 없다), `tst_job_with_real_processes` |
+
+**작은 지적과 한 일.**
+
+1. `aStopBeforeThePutDeliversNothing`의 주석과 이 보고서가 "흔들리지 않고 덜 증명할 뿐"이라고 과장했다. 그 말은 태거가 느릴 때만 맞다. 파일을 쥔 도우미 스레드가 `fs::moveFile`의 1.52초보다 늦게 깨어나면 태그 쓰기가 멈춤 전에 실패하고 `Cancelled` 단언이 실패한다. 주석과 "확인하지 못한 것"의 시간 문단을 바로잡았다. 시험은 그대로다.
+2. `cancellingDuringTheRetryDelayReturnsPromptly`의 2초 안에 작업 폴더 지우기(최대 1.52초 다시 해 보기)도 들어간다. `JobDone`은 지우기 뒤에 큐에 들어가므로 "`JobDone`까지"로 재도 같은 시간이라, 한도를 이웃 시험처럼 5초로 올렸다.
+3. 곡의 작업 폴더를 못 만들었는데 오류 코드가 0이면 문구가 `파일 처리 중 오류: ` + 0번 오류의 문구(성공했다는 말)였다. 이제 `파일 처리 중 오류: 작업 폴더를 만들 수 없습니다.`다("Kotlin과 다르게 한 것" 22번). 지금 있는 가짜들로는 이 길에 닿을 수 없어서 시험이 없다.
+4. 일꾼 스레드 하나를 띄우지 못하면 예전 `catch`가 요약을 건너뛰어, 이미 뜬 일꾼이 `ItemDone`·`ItemFailed`를 냈어도 0/0/0이었다. 이제 `runWorkers`의 실패를 그 자리에서 받고 요약은 늘 센 값으로 낸다(끝 상태는 전처럼 `Failed`). 스레드 만들기를 실패하게 할 길이 없어 시험은 없다.
+5. `start`가 던질 수 있는 것이 적혀 있지 않았고, 빈 `request.sink`는 일꾼 스레드에서 따라가졌다. controller 결정대로 `start`는 빈 `sink`에 아무것도 만들기 전에 `std::invalid_argument`를 던지고(`aRequestWithoutASinkIsRefusedBeforeAnythingIsCreated`: 던지고, 작업 폴더가 생기지 않고, 명령 0개), `download_service.h`에 그것과 `std::system_error`(작업 스레드를 못 띄움), `std::bad_alloc`을 적었다.
+6. `fs::makeDirectories(path, errorCode)`에 자기 시험이 없었다. `tst_file_ops`에 `makeDirectoriesReportsTheWindowsErrorOfTheLastFolder`를 더했다(길에 파일이 있으면 거짓과 183, 새로 만들거나 이미 있으면 참과 0).
+7. 관문 뒤의 시험 변경(커밋 `a2fd05c`: `tst_job_with_real_processes.cpp`의 만남 단언, `own_processes.h`의 다시 스캔)을 돌렸다는 말이 없었다. 그 커밋 뒤에 그 두 파일을 돌린 기록은 이 보고서에 없다. 최종 머리(`e921ea1`)에서 두 빌드의 `ctest`와 `tst_job_with_real_processes` 20번 되풀이로 돌렸다(아래). `own_processes.h`를 쓰는 다른 시험 `tst_real_download`는 오디오 허락이 없어 건너뜀으로만 돌았다.
+8. 미리 멈춘 소스 없이 시작하자마자 취소하는 시험이 없었다. `startingAndCancellingAtOnceEndsWithOneJobDoneCancelled`를 더했다: 서비스 하나로 300번 `start`, 0~2.95ms 바쁜 기다림, `cancel`, 모두 읽기. 매번 `JobDone`이 정확히 하나이고 마지막이며 `Cancelled`이고, `ItemDone`·`ItemSkipped`·`ItemFailed`가 없고, 임시 폴더가 비었는지(아직 안 만들어졌으면 없는지) 본다. 가짜 yt-dlp는 멈출 때까지 기다리므로 마지막 곡이 끝난 뒤의 취소는 생길 수 없고(결정 3이 `Completed`를 허락하는 유일한 경우), 끝 상태는 늘 `Cancelled`여야 한다. 기다림이 없던 첫 판은 300번 모두 작업 스레드가 멈춤을 보기 전에 취소가 닿아(진단 출력으로 셈: `ItemStarted`가 있는 번 0, yt-dlp 실행 0) 미리 멈춘 소스와 다를 바 없었다. 그래서 기다림을 넣었고, 세 번 잰 결과 300번 중 228~234번이 `ItemStarted`까지 갔고 yt-dlp가 179~198번 돌았다(진단은 지웠다).
+9. Q4 인계에 "타이머로 `tryNextEvent`를 부르면 `finished()`가 참이 된 뒤에도 이벤트가 남아 있을 수 있으니 한 번 더 비운다"를 더했다("Q3·Q4에 넘길 것"의 첫 줄).
+
+**미룬 작은 것들의 분류(최종 리뷰).** Task 1 M5는 문제 아님. Task 1 M2는 밖에서 차이가 보이지 않는 변이라 적어 둔 채로 둔다. Task 2 m5(`noexcept` 안의 `bad_alloc`)는 적어 둔 채로 둔다. Task 3의 작은 것 5~6은 문제 아님. `run.ps1`의 `Format-JbFolded`가 줄의 앞부분으로 맞추는 것은 사례마다 순위가 서로 달라 실제로는 문제 아님. 2% 문턱은 사용자가 정할 것으로 둔다("사용자가 정할 것" 3). 리뷰가 본 Kotlin과의 세 차이는 타당하고 이 보고서에 적혀 있다. `tst_tool_locator -functions`가 `%TEMP%\qt_temp-*`를 남기는 것은 다음 단계 처음에 고친다.
+
+**다시 돌린 것(최종 머리 `e921ea1`의 코드, 원본은 scratchpad의 `fixwave\`와 `clean-build-*.txt`).**
+
+- 깨끗한 빌드(`--target clean`, 구성, 빌드): 릴리스·디버그 모두 `Cleaning... 169 files.`, `[1/212]`~`[212/212]`, 컴파일러 경고 0(`warning`이 든 줄은 Qt CMake 매크로의 `CMake Warning` 하나뿐), 155초·132초.
+- `ctest`: 릴리스 `100% tests passed, 0 tests failed out of 39`(94.32초), 디버그 같음(115.42초). 실행 파일마다 합해 릴리스 1340 통과·0 실패·22 건너뜀, 디버그 1339·0·23. 관문보다 4 많다: `tst_default_download_service` 126→129(시험 함수 124→127), `tst_file_ops` 12→13(함수 10→11). 시험 함수는 784→788.
+- 되풀이 20번(`ctest --repeat until-fail:20`): `tst_default_download_service`, `tst_item_downloader`, `tst_job_with_real_processes`를 두 빌드에서 20번씩, **120번 모두 통과**. 한 번에 걸린 시간: 릴리스 6.32~6.83초, 0.13~0.15초, 1.94~2.01초; 디버그 7.57~8.01초, 0.15~0.18초, 2.03~2.09초(새 300번 슬롯으로 `tst_default_download_service`가 관문보다 1초쯤 길다).
+- 이름 대조: 종료 코드 0, `DefaultDownloadServiceTest: Kotlin 103, Qt 127, missing 0, added 24`, `PASSED: every Kotlin test name is a Qt test name in 26 classes; only the 71 intended names were added`(관문의 68 + 3).
+- 금지 호출: 종료 코드 0, `PASSED: 0 hits`(같은 파일 수 72·75·150).
+- 대조(`qt/core`가 바뀌어서 한 번): `pwsh qt/tools/differential/run.ps1 -PerKind 10000 -Seed 20261115`, 종료 코드 0, 220초, 26개 종류 모두 `0 mismatches`, 마지막 줄 `PASSED (kinds UXMSCFDGTLYRNBZHOJEQVKAIWP, 10000 cases per case kind, seed 20261115)`. `(needs …)` 줄 282개 가운데 문턱이 0보다 큰 260개가 모두 문턱 이상(`below=0`). `W jb`의 수는 관문의 같은 seed와 같다(예: `Completed` 756/994 = 76.1%, `Failed` 238/994 = 23.9%). 10만 건 실행은 하지 않았다.
+- 이름 대조가 부른 `tst_tool_locator -functions`가 남긴 빈 `qt_temp-*` 하나는 지웠다(전부터 있던 31개는 두었다).
+
 ## Kotlin과 다르게 한 것
 
 1~15는 계획 작성자가 정했고(사용자가 바꿀 수 있다), 16부터는 실행 중에 Task 구현자나 controller가 정했다. **실행 중에 정한 것은 사용자가 아직 보지 않았다.**
@@ -241,11 +278,11 @@ Task 2의 첫 변이 실행에서 두 시험이 단단해졌다: 5,000곡 시험
 
 16. **멈춘 뒤 `put` 전에 끝난 곡은 예외로 끝나도 취소된 곡이다**(Task 2). 멈춤이 요청된 뒤, `put` 전에 곡이 예외나 `Downloaded`가 아닌 결과로 끝나면 이벤트를 내지 않는다. Kotlin이라면 취소 중에 던져진 `CancellationException`이 아닌 예외는 실패로 보고될 수 있다. C++의 부품이 멈춤에 던지는 것은 Kotlin의 `CancellationException` 자리라고 보고 결정 2와 맞췄다(헤더에 적음). 예: 내려받는 중 취소했는데 실행기가 그 순간 던지면, Kotlin은 그 곡의 `ItemFailed`를 낼 수 있고 C++은 아무것도 내지 않는다.
 17. **첫 치명적 실패가 멈춤을 요청한 뒤의 두 번째 치명적 실패도 취소된 곡이다**(Task 2). 이벤트도 없고 세지도 않는다(`put`이 이미 시작된 곡만 예외). Kotlin에서는 경합이다. 두 곡이 정확히 동시에 치명적으로 실패하면 둘 다 `ItemFailed`이고 둘 다 센다(Kotlin과 같다).
-18. **`fs::makeDirectories(path, errorCode)` 겹쳐 쓰기**(Task 2). 곡의 작업 폴더를 만들지 못했을 때 결정 5가 Win32 코드를 요구하는데, 기존 `makeDirectories`는 마지막에 `isDirectory`로 확인하면서 마지막 오류를 덮어썼다. 그래서 마지막 `CreateDirectoryW`의 `GetLastError`를 돌려주는 겹쳐 쓰기를 더했다(`anItemFolderThatCannotBeMadeIsReadLikeASinkFailure`로만 시험되고 `tst_file_ops`의 시험은 없다).
+18. **`fs::makeDirectories(path, errorCode)` 겹쳐 쓰기**(Task 2). 곡의 작업 폴더를 만들지 못했을 때 결정 5가 Win32 코드를 요구하는데, 기존 `makeDirectories`는 마지막에 `isDirectory`로 확인하면서 마지막 오류를 덮어썼다. 그래서 마지막 `CreateDirectoryW`의 `GetLastError`를 돌려주는 겹쳐 쓰기를 더했다(`anItemFolderThatCannotBeMadeIsReadLikeASinkFailure`, 최종 리뷰 뒤로는 `tst_file_ops`의 `makeDirectoriesReportsTheWindowsErrorOfTheLastFolder`도: 길에 파일이 있으면 거짓과 183, 성공이면 참과 0).
 19. **이미 멈춘 토큰이면 `download`는 첫 일로 `DownloadCancelled`**(controller 결정, Task 1 전). 도구 찾기보다 앞이다. Kotlin이라면 첫 중단점에서 던질 자리다(`aStopBeforeTheRunRunsNothing`).
 20. **`JobHandle::join`은 한 스레드에서만**(Task 2). `cancel`은 어느 스레드에서나 안전하다. `nextEvent`는 `JobDone`을 가져간 뒤 큐가 닫히기를 기다리지 않고 곧 "없음"을 준다(Task 3).
 21. **`AlreadyExists`의 꼬리 문구.** C++의 `PutResult`가 주는 문구는 Kotlin `FileAlreadyExistsException`의 메시지와 다를 수 있어서, 그 곡이 실패할 때의 `파일 처리 중 오류: …` 꼬리는 Kotlin과 다를 수 있다(결정 5). 대조는 꼬리가 빈 문구가 아닐 때만 꼬리를 빼고 비교한다(seed 424242에서 418개). 빈 문구일 때는 C++이 파일 이름을 쓰고 Kotlin 메시지도 파일 이름이라 그대로 비교한다.
-
+22. **곡의 작업 폴더를 만들지 못했는데 Windows 오류 코드가 없을 때**(최종 리뷰, controller 결정). 경로를 만들 수 없거나 만든 폴더가 곧 사라지면 코드가 0이고, 전에는 0번 오류의 문구("작업을 완료했습니다" 꼴)가 붙어 `파일 처리 중 오류: ` 뒤에 성공했다는 말이 나왔다. 이제 그때의 문구는 `파일 처리 중 오류: 작업 폴더를 만들 수 없습니다.`다. Kotlin이라면 `Files.createDirectories`가 던진 예외의 문구가 붙는다. 지금 있는 가짜들로는 이 길에 닿을 수 없어 시험이 없다(경로는 늘 만들어지고, 폴더가 만든 직후 사라지는 순간을 가짜가 끼어들 자리가 없다).
 ## 고치지 않은 Kotlin 쪽 동작
 
 C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
@@ -284,7 +321,7 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
 - **Q2b의 `tst_system_process_runner` 실패 한 번(190초, 출력 없음).** 이번 관문에서 두 빌드 각 20번 되풀이하고 `ctest`에서 한 번씩 더 돌려 모두 통과했다(한 번 26.67~32.61초; Q2c 관문에 이어 두 번째로 재현되지 않음). 원인은 여전히 모른다.
 - **정상 종료 뒤 stdout을 쥔 실제 자손**(Q2b 인계). 진짜 yt-dlp·ffmpeg로 돌리지 않았으므로 그런 일이 있는지 모른다.
 - **다른 드라이브로 옮기기**(Q2b 인계). 작업 폴더와 출력 폴더가 다른 드라이브면 `put`은 복사 뒤 지우기가 된다. 시험은 모두 같은 `QTemporaryDir` 안이다.
-- **시간에 기대는 시험.** `cancellingDuringTheRetryDelayReturnsPromptly`와 `cancellingWithItemsInEveryStageEndsPromptly`는 일꾼이 재시도 대기에 들어간 것을 알릴 길이 없어 취소 전에 200ms 잔다(느린 PC에서도 통과하고 덜 증명할 뿐). `aStopBeforeThePutDeliversNothing`은 100ms 뒤 파일을 놓는 도우미 스레드에 기대고(느리면 태거가 스스로 취소를 알려 같은 기대값), 5,000곡 시험의 1ms 잠은 스레드 수 변이를 잡으려는 것이다. Kotlin에서 옮긴 `awaitStarted`는 Kotlin처럼 200ms 동안 더 들어오는 곡이 없는지 본다. 관문의 20번 되풀이에서는 모두 통과했다.
+- **시간에 기대는 시험.** `cancellingDuringTheRetryDelayReturnsPromptly`와 `cancellingWithItemsInEveryStageEndsPromptly`는 일꾼이 재시도 대기에 들어간 것을 알릴 길이 없어 취소 전에 200ms 잔다(느린 PC에서도 통과하고 덜 증명할 뿐). `aStopBeforeThePutDeliversNothing`은 100ms 뒤 파일을 놓는 도우미 스레드에 기댄다. 태거가 느린 쪽이면 태거가 스스로 취소를 알려 같은 기대값이고 덜 증명할 뿐이다. 그러나 파일을 쥔 도우미 스레드가 `fs::moveFile`이 다시 해 보는 1.52초보다 늦게 깨어나면 바꿔 넣기가 먼저 포기하고, 태그 쓰기가 멈춤 전에 실패해 `Cancelled` 단언이 실패한다. 그러니 "흔들리지 않는다"가 아니라 "그 스레드가 1.5초 안에 깨어나는 한 통과한다"이다(최종 리뷰가 바로잡음). 재시도 대기 시험의 한도는 최종 리뷰 뒤 2초에서 5초다(그 시간에 작업 폴더 지우기의 다시 해 보기 1.52초도 들어간다). 최종 리뷰 뒤에 더한 `startingAndCancellingAtOnceEndsWithOneJobDoneCancelled`는 시작과 취소 사이를 0~2.95ms 바쁜 기다림으로 흩뜨린다. 시간은 멈춤이 작업의 어느 때에 닿는지만 바꾸고 단언은 시간과 상관없다(가짜 yt-dlp가 멈출 때까지 기다리므로 끝 상태는 늘 `Cancelled`). 5,000곡 시험의 1ms 잠은 스레드 수 변이를 잡으려는 것이다. Kotlin에서 옮긴 `awaitStarted`는 Kotlin처럼 200ms 동안 더 들어오는 곡이 없는지 본다. 관문의 20번 되풀이에서는 모두 통과했다.
 - **단언의 같음.** `test-names.ps1`은 이름만 본다. 단언이 Kotlin과 같은지는 각 Task의 구현자와 리뷰어가 보았고 Task 6은 다시 보지 않았다.
 - **대조가 다루지 않는 것.** 대조 `W jb`는 동시 수 1, 취소 없음, 재시도 대기 0이다. 동시성과 취소는 C++ 시험으로만 본다(Kotlin 쪽 동작과 비교하지 않음). 영상 ID는 `[A-Za-z0-9_-]`로만 만들어 결정 9의 `%`는 대조에 없다.
 - **이 관문에서 돌리지 않은 다른 실제 서비스 시험.**
@@ -343,7 +380,7 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
 
 ## Q3·Q4에 넘길 것
 
-- **이벤트를 화면 스레드로 넘기는 다리**(Q4). 작업은 블로킹 `nextEvent`와 안 막는 `tryNextEvent`만 준다. 화면은 읽는 스레드 하나(또는 타이머의 `tryNextEvent`)로 이벤트를 받아 Qt 시그널로 넘긴다. 읽는 쪽은 하나로 정한다(`JobDone`이 아니면 `notify_one`). 아무도 읽지 않아도 작업은 끝나지만(`aJobNobodyReadsStillFinishes`) 큐는 이벤트를 다 들고 있다.
+- **이벤트를 화면 스레드로 넘기는 다리**(Q4). 작업은 블로킹 `nextEvent`와 안 막는 `tryNextEvent`만 준다. 화면은 읽는 스레드 하나(또는 타이머의 `tryNextEvent`)로 이벤트를 받아 Qt 시그널로 넘긴다. 읽는 쪽은 하나로 정한다(`JobDone`이 아니면 `notify_one`). 아무도 읽지 않아도 작업은 끝나지만(`aJobNobodyReadsStillFinishes`) 큐는 이벤트를 다 들고 있다. 타이머로 `tryNextEvent`를 부르는 쪽은 주의할 것: `finished()`는 `JobDone`이 큐에 들어갔다는 뜻이지 다 읽었다는 뜻이 아니라서, `finished()`가 참이 된 뒤에도 이벤트가 남아 있을 수 있다. 참을 본 뒤 `tryNextEvent`가 없음을 줄 때까지 한 번 더 비운다(`JobDone`을 받을 때까지).
 - **설치·업데이트와 내려받기를 겹치지 않게 막기**(Q4). yt-dlp가 도는 동안 `installYtDlp`는 마지막 옮기기에서 실패하고, 설치 둘이 겹치면 서로의 임시 파일을 지울 수 있다(Q2b). 화면이 내려받는 동안 설치·업데이트 단추를 막고, 설치끼리도 한 줄로 세운다.
 - **임시 폴더의 위치**(Q4). `DefaultDownloadService`의 `tempRoot`를 출력 폴더와 같은 드라이브에 두면 `put`이 옮기기로 끝난다. 다른 드라이브면 복사 뒤 지우기가 되고 이것은 시험하지 않았다. 실패한 `put`이나 지우지 못한 작업 폴더가 남을 수 있으므로 앱이 시작할 때 오래된 작업 폴더를 치울지도 정한다.
 - **앱이 끝날 때 없애는 순서**(Q4). 작업 핸들 → 서비스 → 다운로더 → 공급자·실행기 → `QtHttpClient` → `QCoreApplication`. 핸들의 소멸자는 취소하고 작업의 스레드를 모두 거둔다(`destroyingTheHandleOfARunningJobCancelsAndJoins`). 작업 폴더 지우기를 다시 해 보느라 최악에는 약 1.5초 기다릴 수 있다(결정 12). 서비스와 다운로더는 참조만 쥐므로 핸들보다 먼저 없어지면 안 된다(Task 2의 첫 실패가 그것이었다).
@@ -354,7 +391,7 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
 - **TLS 플러그인 확인과 HTTP 클라이언트 하나 나눠 쓰기, 4xx 본문의 순서 가정**(Q4, Q2c 인계 그대로).
 - **다른 곳에서 프로세스를 띄우지 않기**(Q4, Q2b 인계 그대로). 앱의 다른 곳에서 핸들을 모두 물려주는 `CreateProcess`나 `QProcess`를 쓰면 우리 파이프 끝을 물려받아 정상 종료한 실행을 붙잡을 수 있다.
 - **`server`의 `JobRegistry`·`ResolveCache`·`JobLog`**(Q4·Q5, 결정 14).
-- **`tst_tool_locator.exe -functions`가 빈 `%TEMP%\qt_temp-*` 폴더를 남긴다**(Q2b의 시험, 관문에서 봄; 위 "관문 뒤 정리"). 이름 대조를 돌릴 때마다 하나씩 쌓인다. 시험 쪽의 작은 일이다.
+- **`tst_tool_locator.exe -functions`가 빈 `%TEMP%\qt_temp-*` 폴더를 남긴다**(Q2b의 시험, 관문에서 봄; 위 "관문 뒤 정리"). 이름 대조를 돌릴 때마다 하나씩 쌓인다. 시험 쪽의 작은 일이고, 최종 리뷰의 분류대로 다음 단계 처음에 고친다.
 - **`tst_real_download`를 돌릴 기회**(사용자 허락 뒤). 돌릴 때 취소 시험이 "취소 전에 끝났다"로 실패하면 더 긴 원본이 필요하다.
 
 ## 사용자가 정할 것
@@ -374,9 +411,9 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
    - 결정 13: 일꾼의 예외를 그 곡의 실패 대신 작업 중단으로. 지금: 그 곡만 실패.
    - 결정 14: 도구 실행의 시간 한도를 둘지(Q2b 결정 13과 같은 질문). 지금: 없음.
    - 결정 2·4·6·15는 Kotlin을 C++ 꼴로 옮기는 방식이라 고를 여지가 작다.
-2. **오디오 시험을 돌릴지.** `XGS_INTEGRATION=1`과 `XGS_INTEGRATION_AUDIO=1`로 `tst_real_download`를 한 번(19초 영상의 오디오 약 300KB를 두 번 받고, 첫 시험은 LRCLIB에 요청 몇 개). Q2b의 `writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum`도 같은 변수로 돈다. 지금: 돌리지 않음.
+2. **오디오 시험을 돌릴지.** `XGS_INTEGRATION=1`과 `XGS_INTEGRATION_AUDIO=1`로 `tst_real_download`를 한 번(19초 영상의 오디오 약 300KB를 두 번 받고, 첫 시험은 LRCLIB에 요청 몇 개). Q2b의 `writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum`도 같은 변수로 돈다. 지금: 돌리지 않음. **권고(최종 리뷰): 허락되면 `tst_real_download`를 가장 먼저 돌린다.** 진짜 yt-dlp·ffmpeg로 받는 작업 전체와 그 취소를 보는 유일한 시험이다.
 3. **대조 통계의 2% 문턱**("`put`이 `AlreadyExists`를 받고 곡은 건너뜀"). 계획에 없던 통계이고 문턱은 구현자가 골랐다. 지금: 2%.
-4. **실행 중에 정해진 차이들**(16~21번: 멈춘 뒤의 예외를 취소로, 두 번째 치명적 실패를 취소로, `makeDirectories` 겹쳐 쓰기, 이미 멈춘 토큰의 순서, `join`은 한 스레드, `AlreadyExists` 꼬리 문구)을 받아들일지.
+4. **실행 중에 정해진 차이들**(16~22번: 멈춘 뒤의 예외를 취소로, 두 번째 치명적 실패를 취소로, `makeDirectories` 겹쳐 쓰기, 이미 멈춘 토큰의 순서, `join`은 한 스레드, `AlreadyExists` 꼬리 문구, 오류 코드 없는 작업 폴더 실패의 문구)을 받아들일지.
 5. Q2c·Q2b·Q2a 보고서의 "사용자가 정할 것"과 Q1에서 남은 결정은 그대로 기다린다.
 
 ## 라이선스 메모
