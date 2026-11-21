@@ -20,7 +20,7 @@ public:
     /// Closes the queue: later pushes are dropped and a blocked next returns once the queue is empty.
     void close();
 
-    /// The next event, waiting for one; nothing once the queue is closed and empty.
+    /// The next event, waiting for one; nothing once the queue is empty and either closed or past its JobDone.
     std::optional<JobEvent> next();
 
     /// The next event if one is waiting, else nothing. Never blocks.

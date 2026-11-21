@@ -27,7 +27,9 @@ void JobEvents::close() {
 
 std::optional<JobEvent> JobEvents::next() {
     std::unique_lock lock(m_mutex);
-    m_changed.wait(lock, [this] { return !m_events.empty() || m_closed; });
+    // Nothing follows a JobDone: once it has been queued and taken (queued and the queue empty) the reader gets nothing at
+    // once, even before the job has closed the queue.
+    m_changed.wait(lock, [this] { return !m_events.empty() || m_closed || m_doneQueued; });
     if (m_events.empty()) return std::nullopt;
     JobEvent event = std::move(m_events.front());
     m_events.pop_front();

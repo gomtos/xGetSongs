@@ -135,5 +135,32 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealLrclibIntegrationTest.kt",
     "exe": "tst_real_lrclib",
     "added": ["theRealServiceIsReachedOverSchannelTls", "downloadsTheRealYtDlpExecutable"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/job/DefaultDownloadServiceTest.kt",
+    "exe": "tst_default_download_service",
+    "added": [
+      "theDefaultRetryDelaysAreTwoAndFourSeconds",
+      "cancellingDuringTheRetryDelayReturnsPromptly",
+      "cancellingWithItemsInEveryStageEndsPromptly",
+      "destroyingTheHandleOfARunningJobCancelsAndJoins",
+      "aJobNobodyReadsStillFinishes",
+      "nextEventGivesNothingAfterJobDone",
+      "fiveThousandItemsUseNoMoreThreadsThanTheConcurrency",
+      "aConcurrencyLargerThanTheItemCountIsFine",
+      "itemsStartInListOrder",
+      "aFatalFailureStopsTheOtherRunningItemsWithoutFailingThem",
+      "aUserCancelAfterAFatalFailureIsStillFailed",
+      "anExceptionOnAWorkerThreadFailsOnlyThatItem",
+      "aProgramThatCannotBeStartedFailsTheItem",
+      "aStartFailureThatSaysTheDiskIsFullAbortsTheJob",
+      "aDiskFullCodeFromTheSinkAbortsTheJob",
+      "aSharingViolationFromTheSinkFailsOnlyThatItem",
+      "anItemFolderThatCannotBeMadeIsReadLikeASinkFailure",
+      "anAlreadyExistsThatCannotBeASkipFailsWithTheFileName",
+      "aStopBeforeThePutDeliversNothing",
+      "theWorkFolderIsRemovedEvenWhenAFileInItIsHeldForAMoment",
+      "aPercentThatIsNotFiniteReachesTheReaderAsUnknown"
+    ]
   }
 ]

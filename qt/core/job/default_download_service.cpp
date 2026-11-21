@@ -238,8 +238,10 @@ private:
         ++m_job.failed;
     }
 
-    // Kotlin's FatalJobException: the item fails, then the job stops every other worker. Only the first one is recorded; the
-    // stop of the first makes any later one a cancelled item, except one whose put had already started.
+    // Kotlin's FatalJobException: the item fails, then the job stops every other worker. Once that stop is requested a later
+    // fatal failure is a cancelled item and emits nothing (except one whose put had already started). Two items that fail
+    // fatally at the same moment, before either has requested the stop, both emit ItemFailed and are both counted, as in
+    // Kotlin.
     void failFatally(const QString& message) {
         fail(message);
         m_job.fatal = true;
