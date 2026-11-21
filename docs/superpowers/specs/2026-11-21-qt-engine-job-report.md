@@ -32,10 +32,21 @@
 - 옮긴 것: 곡 하나 내려받기(`ItemDownloader`), 작업 서비스(`DefaultDownloadService`, `DownloadRequest`, `JobHandle`, 이벤트 큐). Q2a~Q2c의 부품(실행기, 명령 조립, 진행률, 오류 분류, 정보 파일, 태그, 출력 폴더, 가사 공급자)이 한 작업으로 이어졌다. Kotlin `DefaultDownloadServiceTest`의 103개가 같은 이름으로 통과하고, 스레드·취소·큰 재생목록·부품의 예외를 보는 시험 21개, 다운로더 시험 15개, 진짜 실행기와 진짜 출력 폴더로 도는 시험 5개를 더했다. 이것으로 Q2(`engine`)의 이식이 끝났다.
 - 코루틴 자리는 스레드다: 작업마다 조정 스레드 하나와 일꾼 `min(동시 수, 곡 수)`개, 취소는 `std::stop_source` 하나. 계획 작성자의 결정 15개를 그대로 따랐다(아래 "Kotlin과 다르게 한 것").
 - **대조와 시험은 C++ 버그를 찾지 못했다.** 대조 `W jb`(동시 수 1의 작업 전체를 Kotlin과 무작위 비교)는 처음부터 불일치 0이었고, `qt/core/job`의 변이 여섯은 37~943건의 불일치로 잡혔다.
-- **확인하지 못한 가장 큰 것**: 실제 유튜브 영상을 받는 `tst_real_download`의 두 시험은 사용자가 오디오 시험을 허락하지 않아 한 번도 돌지 않았다. 진짜 yt-dlp·ffmpeg로 받는 작업 전체와, 취소했을 때 진짜 도구의 프로세스 트리가 모두 죽는지는 모른다(가짜 도구와 진짜 실행기로는 확인했다).
+- **확인하지 못한 가장 큰 것**: 실제 유튜브 영상을 받는 `tst_real_download`의 두 시험은 사용자가 오디오 시험을 허락하지 않아 한 번도 돌지 않았다. 진짜 yt-dlp·ffmpeg로 받는 작업 전체와, 취소했을 때 진짜 도구의 프로세스 트리가 모두 죽는지는 모른다(가짜 도구와 진짜 실행기로는 확인했다). **(고침, 2026-11-21: 그 뒤 사용자가 허락해 돌렸고 통과했다. 아래 "관문 뒤 오디오 시험" 절.)**
 - Q2b에서 원인 모르게 한 번 실패했던 `tst_system_process_runner`는 이번에 두 빌드 각 21번(되풀이 20 + `ctest` 1) 통과했다. Q2c에 이어 두 번째로 재현되지 않았고 원인은 여전히 모른다.
 - 관문 전에 작업 5 리뷰의 작은 지적 넷을 한 커밋(`2c7e1be`)으로 고쳤다: 실제 내려받기 시험의 실패 문구와 이벤트 출력(곡 이름이 실릴 수 있던 글을 글자 수로), 같은 이름·같은 영상 시험에 "정말 겹쳤다"는 단언(시간이 아니라 사건으로), 프로세스 도우미가 재사용된 PID를 기다리지 않게.
 - `lrclib.net`에는 이 단계에서 요청을 보내지 않았다.
+
+## 관문 뒤 오디오 시험 (2026-11-21)
+
+관문과 최종 리뷰가 끝나고 push한 뒤(`c47b7a2`), 사용자가 오디오를 받는 통합 시험을 허락했다. 릴리스 빌드(`build/qt`)로 `XGS_INTEGRATION=1`과 `XGS_INTEGRATION_AUDIO=1`을 주고 한 번씩 돌렸다. 디버그 빌드로는 돌리지 않았다.
+
+| 실행 | 결과 | 본 것 |
+|---|---|---|
+| `tst_real_download` 전체 | `Totals: 4 passed, 0 failed, 0 skipped`, 35320 ms, 종료 코드 0 | `downloadsAShortVideoAsM4aWithoutReencoding`: 파일 하나(341135바이트), 알린 단계는 DOWNLOADING·FINISHING, 스트림은 aac 오디오와 360×360 mjpeg 표지, 가사 태그 0개. `cancellingARealDownloadLeavesNoToolProcessBehind`: 취소 때 작업의 프로세스 2개, 취소 뒤 0개 |
+| `tst_real_ytdlp`의 `writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum` 하나 | `Totals: 3 passed, 0 failed, 0 skipped`, 7673 ms, 종료 코드 0 | 작업 폴더에 정보 파일·썸네일·m4a(309288바이트), album·artist·track은 null, 샌드박스의 캐시와 임시 폴더는 비어 있음 |
+
+실행 뒤 `yt-dlp`·`ffmpeg`·`xgs-test-child` 프로세스는 남지 않았다. 이로써 진짜 yt-dlp·ffmpeg로 받는 작업 전체, 진짜 한 파일짜리 `yt-dlp.exe`의 프로세스 트리 종료, 새 실행 파일에서의 실제 LRCLIB 요청(HTTPS)이 릴리스 빌드에서 한 번 확인됐다. 여전히 돌리지 않은 것: `tst_real_lrclib`, `XGS_INTEGRATION_DOWNLOAD`, `yt-dlp -U`, 그리고 이 두 시험의 디버그 빌드 실행.
 
 ## 관문 표
 
@@ -316,7 +327,7 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
 
 ## 확인하지 못한 것
 
-- **`tst_real_download`의 두 시험은 한 번도 돌지 않았다.** 사용자가 오디오 시험을 허락하지 않았다(결정 15). 그래서 다음이 확인되지 않았다.
+- **`tst_real_download`의 두 시험은 한 번도 돌지 않았다.** 사용자가 오디오 시험을 허락하지 않았다(결정 15). 그래서 다음이 확인되지 않았다. **(고침, 2026-11-21: 그 뒤 사용자가 허락해 돌렸고 통과했다. 위 "관문 뒤 오디오 시험" 절.)**
   - `downloadsAShortVideoAsM4aWithoutReencoding`: 작업 전체(진짜 yt-dlp, 진짜 ffmpeg, 진짜 LRCLIB 공급자, 진짜 `LocalFolderSink`)가 실제 유튜브 영상 하나를 받아 Kotlin과 같은 파일(`001 <가수> - <제목>.m4a`, 5만 바이트 초과, AAC를 다시 인코딩하지 않음, 정사각 표지, 태그들)을 만드는지, 단계가 `DOWNLOADING`을 지나 `FINISHING` 한 번으로 끝나는지. Kotlin의 단언은 모두 옮겼지만 오늘의 유튜브와 LRCLIB에서 통과하는지 모른다. 이 실행 파일은 `QtHttpClient`를 쓰는 새 실행 파일인데 정적 TLS 플러그인이 들어갔는지(`QSslSocket::supportsSsl()`)도 이 실행 파일에서는 보지 않았다(Q2c 인계, 아래).
   - `cancellingARealDownloadLeavesNoToolProcessBehind`: 진짜 yt-dlp, 한 파일짜리 `yt-dlp.exe`가 풀어 띄우는 자기 사본, 그것이 띄우는 ffmpeg가 명령줄에 작업 폴더 이름을 담는지(시험이 그것으로 찾는다), 취소하면 그 프로세스가 모두 죽는지, 작업 폴더가 지워지는지. 프로세스 트리가 죽는 것은 가짜 손자(`fakeytdlpspawn`)로만 보았다(`cancellingKillsTheProcessTreesAndTheJobEndsPromptly`). 약 300KB 원본이 이 PC와 연결에서 너무 빨리 받아져 취소가 먹기 전에 끝날 수도 있다. 그때 시험은 이제 그렇다고 밝히고 실패한다(관문 앞 정리 1).
 - **Q2b의 `tst_system_process_runner` 실패 한 번(190초, 출력 없음).** 이번 관문에서 두 빌드 각 20번 되풀이하고 `ctest`에서 한 번씩 더 돌려 모두 통과했다(한 번 26.67~32.61초; Q2c 관문에 이어 두 번째로 재현되지 않음). 원인은 여전히 모른다.
@@ -412,7 +423,7 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
    - 결정 13: 일꾼의 예외를 그 곡의 실패 대신 작업 중단으로. 지금: 그 곡만 실패.
    - 결정 14: 도구 실행의 시간 한도를 둘지(Q2b 결정 13과 같은 질문). 지금: 없음.
    - 결정 2·4·6·15는 Kotlin을 C++ 꼴로 옮기는 방식이라 고를 여지가 작다.
-2. **오디오 시험을 돌릴지.** `XGS_INTEGRATION=1`과 `XGS_INTEGRATION_AUDIO=1`로 `tst_real_download`를 한 번(19초 영상의 오디오 약 300KB를 두 번 받고, 첫 시험은 LRCLIB에 요청 몇 개). Q2b의 `writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum`도 같은 변수로 돈다. 지금: 돌리지 않음. **권고(최종 리뷰): 허락되면 `tst_real_download`를 가장 먼저 돌린다.** 진짜 yt-dlp·ffmpeg로 받는 작업 전체와 그 취소를 보는 유일한 시험이다.
+2. **오디오 시험을 돌릴지.** `XGS_INTEGRATION=1`과 `XGS_INTEGRATION_AUDIO=1`로 `tst_real_download`를 한 번(19초 영상의 오디오 약 300KB를 두 번 받고, 첫 시험은 LRCLIB에 요청 몇 개). Q2b의 `writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum`도 같은 변수로 돈다. 지금: 돌리지 않음. **권고(최종 리뷰): 허락되면 `tst_real_download`를 가장 먼저 돌린다.** 진짜 yt-dlp·ffmpeg로 받는 작업 전체와 그 취소를 보는 유일한 시험이다. **(고침, 2026-11-21: 그 뒤 사용자가 허락해 돌렸고 통과했다. 위 "관문 뒤 오디오 시험" 절.)**
 3. **대조 통계의 2% 문턱**("`put`이 `AlreadyExists`를 받고 곡은 건너뜀"). 계획에 없던 통계이고 문턱은 구현자가 골랐다. 지금: 2%.
 4. **실행 중에 정해진 차이들**(16~22번: 멈춘 뒤의 예외를 취소로, 두 번째 치명적 실패를 취소로, `makeDirectories` 겹쳐 쓰기, 이미 멈춘 토큰의 순서, `join`은 한 스레드, `AlreadyExists` 꼬리 문구, 오류 코드 없는 작업 폴더 실패의 문구)을 받아들일지.
 5. Q2c·Q2b·Q2a 보고서의 "사용자가 정할 것"과 Q1에서 남은 결정은 그대로 기다린다.
@@ -425,4 +436,4 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
 
 **Q2d의 관문은 충족됐다.** 이식 대상 Kotlin 시험 103개(`DefaultDownloadServiceTest`)와 `RealYtDlpIntegrationTest`의 남은 1개는 같은 이름으로 있고(이름 대조에서 빠진 것 0, 26개 클래스), 깨끗한 릴리스·디버그 빌드에서 두 `ctest` 39개가 모두 통과했으며(릴리스 1336 통과·0 실패), 금지 호출 0건, 대조는 다섯 번의 실행에서 26개 종류 모두 불일치 0과 통계 문턱 통과, 디버그 도구는 릴리스와 같았고, 되풀이 실행 200번이 모두 통과했고, 실제 도구 통합 시험은 ffmpeg 8개와 yt-dlp 5개가 통과했다. 관문 중에 C++을 고치지 않았다.
 
-다만 `RealYtDlpIntegrationTest`에서 옮긴 `downloadsAShortVideoAsM4aWithoutReencoding`은 "같은 이름으로 있다"까지이고 **통과는 확인하지 못했다**: 사용자가 오디오 시험을 허락하지 않아 건너뛰었다. 이 진술이 다루지 않는 것: 진짜 yt-dlp·ffmpeg로 받는 작업 전체와 그 취소(위 `tst_real_download` 둘), 다른 드라이브로의 `put`, 정상 종료 뒤 stdout을 쥔 실제 자손, Windows 10, 디버그 빌드의 통합 시험, 동시성과 취소를 Kotlin과 비교하는 일(대조는 동시 수 1), 재현되지 않은 Q2b의 실행기 실패 한 번의 원인. 사용자가 정할 것은 위에 모았다.
+다만 `RealYtDlpIntegrationTest`에서 옮긴 `downloadsAShortVideoAsM4aWithoutReencoding`은 "같은 이름으로 있다"까지이고 **통과는 확인하지 못했다**: 사용자가 오디오 시험을 허락하지 않아 건너뛰었다. 이 진술이 다루지 않는 것: 진짜 yt-dlp·ffmpeg로 받는 작업 전체와 그 취소(위 `tst_real_download` 둘), 다른 드라이브로의 `put`, 정상 종료 뒤 stdout을 쥔 실제 자손, Windows 10, 디버그 빌드의 통합 시험, 동시성과 취소를 Kotlin과 비교하는 일(대조는 동시 수 1), 재현되지 않은 Q2b의 실행기 실패 한 번의 원인. 사용자가 정할 것은 위에 모았다. **(고침, 2026-11-21: 그 뒤 사용자가 허락해 돌렸고 통과했다. 위 "관문 뒤 오디오 시험" 절.)**
