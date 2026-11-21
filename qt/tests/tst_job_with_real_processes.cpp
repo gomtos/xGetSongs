@@ -158,12 +158,12 @@ public:
         QStringList real{child()};
         if (!command.isEmpty() && command.first() == tools.ytDlp) {
             if (m_meetCount > 0) {
-                // The runs meet in well under a second; 30 s is a safety net only. When it passes, the run goes on alone
-                // and the test's overlap assertion fails (it does not hang).
+                // The runs meet in well under a second; 30 s is a safety net only. When it passes (or the stop comes
+                // first), the run goes on alone and met() stays false, which the tests assert (they do not hang).
                 std::unique_lock lock(m_mutex);
                 ++m_arrived;
                 m_met.notify_all();
-                m_met.wait_for(lock, stop, 30s, [this] { return m_arrived >= m_meetCount; });
+                if (m_met.wait_for(lock, stop, 30s, [this] { return m_arrived >= m_meetCount; })) m_meetHappened = true;
             }
             if (m_pidDir) {
                 const QString pidFile = childOf(*m_pidDir, u"run-%1.pid"_s.arg(m_runs.fetch_add(1) + 1));
@@ -185,6 +185,12 @@ public:
         return m_real.run(real, onStdout, onStderr, stop);
     }
 
+    /// True once meetCount yt-dlp runs have all been waiting at once (false without meetCount).
+    bool met() const {
+        const std::lock_guard lock(m_mutex);
+        return m_meetHappened;
+    }
+
     QStringList pidFiles() const {
         const std::lock_guard lock(m_mutex);
         return m_pidFiles;
@@ -199,6 +205,7 @@ private:
     mutable std::mutex m_mutex;
     std::condition_variable_any m_met;
     int m_arrived = 0;
+    bool m_meetHappened = false;
     QStringList m_pidFiles;
 };
 
@@ -481,6 +488,7 @@ private slots:
             const JobSummary expected = overwrite ? JobSummary{2, 0, 0} : JobSummary{1, 1, 0};
             QVERIFY2(done && done->status == JobStatus::Completed && done->summary == expected,
                      qPrintable(u"overwrite=%1: "_s.arg(overwrite) + eventsText(events)));
+            QVERIFY2(runner.met(), "the two yt-dlp runs never waited for each other");
             QVERIFY2(bothStartedBeforeEitherEnded(events), qPrintable(u"overwrite=%1: "_s.arg(overwrite) + eventsText(events)));
             const QString fileName = xgs::filename::format(1, u"Same"_s, u"Song"_s, false);
             QCOMPARE(namesIn(outDir), QStringList{fileName});
@@ -505,6 +513,7 @@ private slots:
         const std::optional<JobDone> done = lastDone(events);
         QVERIFY2(done && done->status == JobStatus::Completed && done->summary == (JobSummary{2, 0, 0}),
                  qPrintable(eventsText(events)));
+        QVERIFY2(runner.met(), "the two yt-dlp runs never waited for each other");
         QVERIFY2(bothStartedBeforeEitherEnded(events), qPrintable(eventsText(events)));
         QStringList expected{*items[0].expectedFileName, *items[1].expectedFileName};
         std::sort(expected.begin(), expected.end());

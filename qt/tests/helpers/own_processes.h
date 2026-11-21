@@ -110,8 +110,9 @@ inline QList<SeenProcess> waitForNoneMentioning(const QString& token, const FILE
         }
         for (const HANDLE process : handles) CloseHandle(process);
         if (left.isEmpty() || GetTickCount64() >= end) {
-            // The list is from before the waits: read it once more so what is returned is what is left now.
-            return left.isEmpty() ? left : processesMentioning(token, since);
+            // Read once more so what is returned is what is left now: the list above is from before the waits, and a
+            // match that could be opened for PROCESS_QUERY_LIMITED_INFORMATION but not SYNCHRONIZE is not in it at all.
+            return processesMentioning(token, since);
         }
     }
 }

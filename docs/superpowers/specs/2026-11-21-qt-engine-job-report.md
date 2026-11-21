@@ -7,7 +7,7 @@
 
 환경: Windows 11 Home 10.0.26200, Visual Studio 2022(vcvars64), Qt 6.11.3(정적), 정답 쪽 JVM은 `server/build/sidecar-image`의 OpenJDK 21.0.9와 그 안의 `engine.jar`·`shared-jvm.jar`. Gradle은 돌리지 않았다. 시험은 창을 띄우지 않았다. 실행 중인 xGetSongs 앱은 건드리지 않았고 `%APPDATA%\xGetSongs`에는 아무것도 쓰지 않았다(거기 있는 `ffmpeg`·`yt-dlp.exe`를 통합 시험 둘이 실행만 했다).
 
-**원본 출력.** 관문의 숫자는 모두 저장소 밖 작업 폴더 `C:\Users\gomto\AppData\Local\Temp\claude\46803f77e57fcdfd\004c41bb-2704-4ab0-875b-470a2bebd248\scratchpad\gate\`(아래 "관문 폴더")의 파일에서 옮겼고, 표마다 파일 이름을 적었다. 시각은 그 폴더의 `00-timeline.txt`에 있다. 관문 앞 정리(아래)의 실행은 같은 scratchpad의 `step0\`에 있다. 그 밖의 숫자(변이, Task별 대조 통계, Task별 시험 실행)는 각 Task가 자기 작업 중에 잰 것이고 그 자리마다 "Task N"이라고 적었다. 그 원본은 Task 보고서(`.superpowers/sdd/2026-11-21-qt-engine-job/task-N-report.md`)에 있다.
+**원본 출력.** 관문의 숫자는 모두 저장소 밖 작업 폴더 `C:\Users\gomto\AppData\Local\Temp\claude\46803f77e57fcdfd\004c41bb-2704-4ab0-875b-470a2bebd248\scratchpad\gate\`(아래 "관문 폴더")의 파일에서 옮겼고, 표마다 파일 이름을 적었다. 시각은 그 폴더의 `00-timeline.txt`에 있다. 그 폴더에는 Q2c 관문의 파일(날짜 2026-11-20, 예: `08-FAIL-debug-tst_local_folder_sink.txt`)도 남아 있고 번호가 이 관문의 파일과 겹친다. 이 관문의 파일은 날짜가 2026-11-21인 것이다(Q2c의 파일은 지우지 않았다). 관문 앞 정리(아래)의 실행은 같은 scratchpad의 `step0\`에 있다. 그 밖의 숫자(변이, Task별 대조 통계, Task별 시험 실행)는 각 Task가 자기 작업 중에 잰 것이고 그 자리마다 "Task N"이라고 적었다. 그 원본은 Task 보고서(`.superpowers/sdd/2026-11-21-qt-engine-job/task-N-report.md`)에 있다.
 
 네트워크: 이 단계에서 `lrclib.net`에는 아무 요청도 보내지 않았다(`tst_real_lrclib`를 돌리지 않았다). 유튜브에는 관문에서 `tst_real_ytdlp`를 한 번 돌려 yt-dlp가 메타데이터 요청을 보냈다(오디오 없음). 오디오 내려받기(`XGS_INTEGRATION_AUDIO`), yt-dlp.exe 내려받기(`XGS_INTEGRATION_DOWNLOAD`), `yt-dlp -U`는 어디서도 돌리지 않았다. 사용자는 계획을 승인할 때 오디오 시험을 허락하지 않았다. 그래서 `tst_real_download`의 두 시험은 한 번도 돌지 않았다(아래 "확인하지 못한 것"). 단위 시험과 `ctest`는 네트워크를 쓰지 않고 실제 yt-dlp·ffmpeg를 띄우지 않는다.
 
@@ -68,7 +68,7 @@
 | `tst_item_downloader` | 17 | 0 | 0 | 15 | Kotlin 짝 없음 |
 | `tst_job_with_real_processes` | 7 | 0 | 0 | 5 | Kotlin 짝 없음. 릴리스 `ctest` 2.49초 |
 | `tst_real_download` | 2 | 0 | 2 | 2 | `RealYtDlpIntegrationTest`의 1 + 더한 1(변수 없이 모두 건너뜀) |
-| `tst_real_ytdlp` | 2 | 0 | 6 | 6 | 자리표시 슬롯을 지워 7에서 6(위 "계획과 달라진 것") |
+| `tst_real_ytdlp` | 2 | 0 | 6 | 6 | 자리표시 슬롯을 지워 7에서 6(아래 "계획과 달라진 것") |
 | 그 밖의 34개 | 1182(디버그 1181) | 0 | 14(디버그 15) | 632 | Q2c 최종 리뷰 반영의 표와 같은 수(디버그의 차이는 디버그에서 건너뛰는 `tst_qt_http_client`의 407 시험 하나) |
 | **합계(39개)** | **1336**(디버그 **1335**) | **0** | **22**(디버그 **23**) | **784** | `14-totals-per-exe.txt`의 `TOTAL` 줄 |
 
@@ -90,7 +90,7 @@
 
 ### 이름 대조 (`pwsh qt/tools/test-names.ps1`, 종료 코드 0, 원본 `06-test-names.txt`)
 
-이번 단계에 생기거나 바뀐 줄과 마지막 줄(`DefaultDownloadServiceTest`의 괄호 안 21개 이름은 줄였다; 위 "Kotlin과 다르게 한 것"과 Task 3 보고서에 모두 있다):
+이번 단계에 생기거나 바뀐 줄과 마지막 줄(`DefaultDownloadServiceTest`의 괄호 안 21개 이름은 줄였다; 아래 "Kotlin과 다르게 한 것"과 Task 3 보고서에 모두 있다):
 
 ```
 RealYtDlpIntegrationTest: Kotlin 5, Qt 8, missing 0, added 3 (anOutputFolderWithSpacesKoreanAndAnAmpersandWorks, aPercentSignInTheOutputFolderIsReportedNotSilentlyMisplaced, cancellingARealDownloadLeavesNoToolProcessBehind)
@@ -151,7 +151,7 @@ PASSED: 0 hits
 
 ### 통합 시험 (`XGS_INTEGRATION=1`, 릴리스, 한 번)
 
-`XGS_INTEGRATION_AUDIO`와 `XGS_INTEGRATION_DOWNLOAD`는 켜지 않았다(실행 전에 그 변수를 지웠다). `tst_real_lrclib`는 돌리지 않았다(Q2c에서 승인분을 다 썼다). `tst_real_download`는 오디오 허락이 없어 돌리지 않았다(위 `ctest`에서 건너뜀으로만 돌았다). 두 실행 파일을 차례로 한 번씩 돌렸다(18:57:04~18:58:22, `19-integration-exits.txt`). 이 실행은 대조의 첫 실행과 약 80초 겹쳤다(대조의 결과는 시간과 상관없고, 두 통합 시험에는 짧은 시간에 기대는 단언이 없다).
+`XGS_INTEGRATION_AUDIO`와 `XGS_INTEGRATION_DOWNLOAD`는 켜지 않았다(실행 전에 그 변수를 지웠다). `tst_real_lrclib`는 돌리지 않았다(Q2c에서 승인분을 다 썼다). `tst_real_download`는 오디오 허락이 없어 돌리지 않았다(위 `ctest`에서 건너뜀으로만 돌았다). 두 실행 파일을 차례로 한 번씩 돌렸고 18:58:22에 끝났다(`19-integration-exits.txt`; 시작 시각은 남기지 않았다). 대조의 첫 실행은 237초 걸려 19:01:12에 끝났으므로 18:57:15쯤 시작했다(`00-timeline.txt`). 두 통합 시험은 그 뒤에 시작했으므로 실행 전체(Qt Test가 잰 시간으로 5505 ms + 35146 ms, 약 41초)가 대조의 첫 실행과 겹쳤다. 대조의 결과는 시간과 상관없고, 두 통합 시험에는 짧은 시간에 기대는 단언이 없다.
 
 | 실행 파일 | 결과 | 원본 | 내용 |
 |---|---|---|---|
@@ -210,8 +210,8 @@ Task 2의 첫 변이 실행에서 두 시험이 단단해졌다: 5,000곡 시험
 
 1. **`tst_real_download`의 취소 시험이 내는 실패 문구.** 원본이 짧아 취소가 먹기 전에 내려받기가 끝나면 작업은 `Completed`로 끝난다(작성자 결정 3이 허락한다). 그때 시험은 "진행률 이벤트가 없거나 도는 프로세스를 못 봄"이나 끝 상태 불일치로 실패해서 원인을 가렸다. 이제 `Completed`이면 "취소가 먹기 전에 내려받기가 끝났다, 더 긴 원본이 필요하다"고 밝혀 실패하고, 진행률 이벤트를 봤는지는 따로 단언한다.
 2. **`tst_real_download`의 이벤트 출력.** 실패 문구에 넣는 이벤트 요약이 `ItemSkipped`의 이유와 `ItemFailed`의 문구를 그대로 찍었다. 그 글에는 도구의 stderr나 곡 이름이 든 경로가 들어갈 수 있다. 이제 종류, 순위, 글자 수만 찍는다.
-3. **같은 이름·같은 영상 시험이 정말 겹쳤는지.** `tst_job_with_real_processes`의 `twoItemsWithTheSameNameAtTheSameTimeLeaveOneFile`과 `aSameVideoTwiceInOneJobDoesNotCollide`는 가짜 yt-dlp가 300ms 자는 것으로 두 곡이 겹치기를 바랐을 뿐, 겹쳤는지는 보지 않았다. 300ms에 기대는 단언을 더하면 느린 PC에서 흔들릴 수 있어서, 시험용 실행기 감싸개가 두 yt-dlp 실행이 서로를 기다린 뒤에 시작하게 했다(조건 변수, 30초는 안전망). 작업은 `ItemStarted`를 다운로더를 부르기 전에 넣으므로, 이렇게 하면 두 `ItemStarted`가 어느 곡이 끝나기 전에 큐에 들어간다. 시험은 이제 두 `ItemStarted`가 첫 `ItemDone`·`ItemSkipped`·`ItemFailed`보다 앞선다고 단언한다. 덮어쓰기를 끈 쪽에서는 두 곡 모두 `exists` 확인을 지난 뒤 받기 시작하므로, "이미 존재"로 건너뛰는 곡은 `put`이 `AlreadyExists`를 받은 곡이다.
-4. **`own_processes.h`의 `waitForNoneMentioning`.** 스캔에서 찾은 PID를 다시 열어 기다렸는데, 그 사이 그 PID를 다른 프로세스가 받았을 수 있다. 이제 스캔이 생성 시각과 명령줄을 검사한 바로 그 핸들(`SYNCHRONIZE` 포함)로 기다리고, PID로 다시 열지 않는다.
+3. **같은 이름·같은 영상 시험이 정말 겹쳤는지.** `tst_job_with_real_processes`의 `twoItemsWithTheSameNameAtTheSameTimeLeaveOneFile`과 `aSameVideoTwiceInOneJobDoesNotCollide`는 가짜 yt-dlp가 300ms 자는 것으로 두 곡이 겹치기를 바랐을 뿐, 겹쳤는지는 보지 않았다. 300ms에 기대는 단언을 더하면 느린 PC에서 흔들릴 수 있어서, 시험용 실행기 감싸개가 두 yt-dlp 실행이 서로를 기다린 뒤에 시작하게 했다(조건 변수, 30초는 안전망). 작업은 `ItemStarted`를 다운로더를 부르기 전에 넣으므로, 이렇게 하면 두 `ItemStarted`가 어느 곡이 끝나기 전에 큐에 들어간다. 시험은 이제 두 실행이 정말 만났는지(안전망이 먼저 지나가지 않았는지)와, 두 `ItemStarted`가 첫 `ItemDone`·`ItemSkipped`·`ItemFailed`보다 앞서는지를 단언한다(만남 단언은 Task 6 리뷰 반영에서 더했다). 덮어쓰기를 끈 쪽에서는 두 곡 모두 `exists` 확인을 지난 뒤 받기 시작하므로, "이미 존재"로 건너뛰는 곡은 `put`이 `AlreadyExists`를 받은 곡이다.
+4. **`own_processes.h`의 `waitForNoneMentioning`.** 스캔에서 찾은 PID를 다시 열어 기다렸는데, 그 사이 그 PID를 다른 프로세스가 받았을 수 있다. 이제 스캔이 생성 시각과 명령줄을 검사한 바로 그 핸들(`SYNCHRONIZE` 포함)로 기다리고, PID로 다시 열지 않는다. 돌려줄 때는 늘 한 번 더 스캔하므로, 조회 권한으로는 열리지만 `SYNCHRONIZE`로는 열리지 않는 프로세스도 빠뜨리지 않고 남은 것으로 돌려준다(Task 6 리뷰 반영).
 
 확인(`step0\`): 두 빌드에서 바뀐 시험 둘을 경고 없이 빌드했고, `tst_job_with_real_processes`를 두 빌드에서 20번씩 돌려 모두 통과(`Totals: 7 passed, 0 failed`, 한 번 약 2초), `tst_real_download`는 변수 없이 두 빌드 모두 `Totals: 2 passed, 0 failed, 2 skipped`(두 시험 모두 `set XGS_INTEGRATION=1 and XGS_INTEGRATION_AUDIO=1` 문구로 건너뜀).
 
@@ -266,7 +266,7 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
 - **대조 `W jb`의 표 밖 것들**(Task 4와 그 리뷰 반영):
   - `put` 대본 항목 `a`: "다른 프로그램이 먼저 같은 이름을 넣어서 `AlreadyExists`"(이름이 출력의 이름 집합에 들어간 뒤 `AlreadyExists`). 처음 판에서는 동시 수 1이라 `exists` 확인과 `put` 사이에 이름이 생길 일이 없어서 결정 5의 "`AlreadyExists`, 덮어쓰기 꺼짐, 지금 `exists`가 참 → 건너뜀" 줄이 한 번도 돌지 않았다. 리뷰가 잡았다.
   - 답 구역 P(`put`마다 순위와 파일 이름, `AlreadyExists` 맞춤이 자기 줄을 찾으려고)와 T(메타데이터 조회마다 영상 ID). 둘 다 비교한다. Kotlin 쪽이 예외로 끝나면 오라클 전체가 멈추지 않고 그 사례에 `THROW`로 답한다.
-  - **새 통계 "`put`이 `AlreadyExists`를 받고 곡은 건너뜀", 문턱 2%**. 계획의 표에 없고 문턱은 구현자가 골랐다. Task 4 리뷰 반영의 측정은 2.6~3.9%, 관문은 아래 표. 계획 표의 문턱은 하나도 바꾸지 않았다.
+  - **새 통계 "`put`이 `AlreadyExists`를 받고 곡은 건너뜀", 문턱 2%**. 계획의 표에 없고 문턱은 구현자가 골랐다. Task 4 리뷰 반영의 측정은 2.6~3.9%, 관문은 위 "관문 표"의 `W jb` 통계. 계획 표의 문턱은 하나도 바꾸지 않았다.
   - 생성기는 코드 112·39를 디스크 가득 낱말이 든 문구와만 쓴다. Kotlin 쪽 가짜는 문구로만 디스크 가득을 알 수 있어서(결정 5는 "Kotlin의 문구" ↔ "C++의 코드나 문구"), 코드만 있는 경우는 양쪽에 같은 뜻으로 만들 수 없다. 코드만의 길은 단위 시험 `aDiskFullCodeFromTheSinkAbortsTheJob`이 본다.
   - `put` 대본에서 접근 거부를 6%에서 9%로 올렸다(seed 987654321이 3.7%로 문턱 3%에 가까워서; 문턱은 그대로).
 - **`qt/tests/helpers/own_processes.h`**(Task 5, 파일 목록 밖). 명령줄에 시험의 임시 폴더 이름이 든 프로세스만 찾는 도우미(읽기만, 죽이지 않음). 통합 시험의 프로세스 확인이 돌지 않는 시험에만 있지 않게, 단위 시험의 취소 슬롯이 같은 도우미로 "취소 전 가짜 yt-dlp 둘 이상, 취소 뒤 0"을 본다.
@@ -287,6 +287,11 @@ C++ 판이 그대로 따른다(대조나 시험에서 같은 답).
 - **시간에 기대는 시험.** `cancellingDuringTheRetryDelayReturnsPromptly`와 `cancellingWithItemsInEveryStageEndsPromptly`는 일꾼이 재시도 대기에 들어간 것을 알릴 길이 없어 취소 전에 200ms 잔다(느린 PC에서도 통과하고 덜 증명할 뿐). `aStopBeforeThePutDeliversNothing`은 100ms 뒤 파일을 놓는 도우미 스레드에 기대고(느리면 태거가 스스로 취소를 알려 같은 기대값), 5,000곡 시험의 1ms 잠은 스레드 수 변이를 잡으려는 것이다. Kotlin에서 옮긴 `awaitStarted`는 Kotlin처럼 200ms 동안 더 들어오는 곡이 없는지 본다. 관문의 20번 되풀이에서는 모두 통과했다.
 - **단언의 같음.** `test-names.ps1`은 이름만 본다. 단언이 Kotlin과 같은지는 각 Task의 구현자와 리뷰어가 보았고 Task 6은 다시 보지 않았다.
 - **대조가 다루지 않는 것.** 대조 `W jb`는 동시 수 1, 취소 없음, 재시도 대기 0이다. 동시성과 취소는 C++ 시험으로만 본다(Kotlin 쪽 동작과 비교하지 않음). 영상 ID는 `[A-Za-z0-9_-]`로만 만들어 결정 9의 `%`는 대조에 없다.
+- **이 관문에서 돌리지 않은 다른 실제 서비스 시험.**
+  - `tst_real_lrclib`(실제 lrclib.net): Q2c에서 승인된 두 번을 다 써서 돌리지 않았다. 이 단계의 코드는 LRCLIB 공급자를 바꾸지 않았다.
+  - `XGS_INTEGRATION_DOWNLOAD` 뒤의 `downloadsTheRealYtDlpExecutable`(GitHub에서 yt-dlp.exe 약 18MB): 허락받지 않아 돌리지 않았다.
+  - `yt-dlp -U`(업데이트 뒤 `yt-dlp.exe.old`가 남는지): 허락받지 않아 돌리지 않았다.
+  - `tst_real_ytdlp` 안의 `writesTheInfoFileNextToTheM4aAndTheTestVideoHasNoAlbum`: 오디오를 내려받으므로 `XGS_INTEGRATION_AUDIO`가 필요하고, 허락이 없어 관문의 실행에서 건너뛰었다(`18-integration-ytdlp.txt`의 `SKIP`).
 - **Windows 10, 디버그 빌드의 통합 시험**(통합 시험은 릴리스만), HTTPS 위의 일들(Q2c에서 넘어온 것)은 그대로다.
 
 ## 앞 단계 인계 항목별 결과
