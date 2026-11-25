@@ -148,8 +148,9 @@ private slots:
         for (const QString& answer : answers) QVERIFY2(parseCard(answer).kind == Kind::ExtractionFailed, qPrintable(answer));
     }
 
-    // Added (Q3 brief): a card over CardMaxLines lines or CardMaxUnits units of text is a failed extraction, read quickly. One
-    // second for what takes milliseconds: generous for a slow machine and the debug build.
+    // Added (Q3 brief): a card over CardMaxLines lines or CardMaxUnits units of text is a failed extraction, read quickly. Five
+    // seconds: the five reads took 36 ms in the release build and 530 ms in the debug build (Task 2 fix round 1), so the bound
+    // leaves room for a slow machine.
     void aHugeCardIsReadWithinALimit() {
         std::vector<ScriptLine> manyLines;
         for (int i = 0; i <= CardMaxLines; ++i) manyLines.push_back(ScriptLine{0, u"더미 %1"_s.arg(i)});
@@ -172,13 +173,14 @@ private slots:
         const GoogleLyricsResult atUnits = parseCard(mostUnits);
         const GoogleLyricsResult overUnits = parseCard(tooManyUnits);
         const qint64 elapsed = timer.elapsed();
+        qInfo("parseCard on the five huge answers took %lld ms", elapsed);
 
         QCOMPARE(overLines.kind, Kind::ExtractionFailed);
         QCOMPARE(atLines.kind, Kind::Found);
         QCOMPARE(overUnitsInOneLine.kind, Kind::ExtractionFailed);
         QCOMPARE(atUnits.kind, Kind::Found);
         QCOMPARE(overUnits.kind, Kind::ExtractionFailed);
-        QVERIFY2(elapsed < 1000, qPrintable(QString::number(elapsed)));
+        QVERIFY2(elapsed < 5000, qPrintable(QString::number(elapsed)));
     }
 
     // Added (Q3 brief): cardScript() is lyrics_card.js as it is in the repository, and the script's selectors and limits are
@@ -191,13 +193,16 @@ private slots:
 
         QCOMPARE(cardScript(), text);
 
-        const QString scopes = u"  var CARD_SCOPES = ['"_s + CardScopes[0].toString() + u"', '"_s + CardScopes[1].toString() + u"'];\n"_s;
+        // Each declaration ends with ";", so no line ending is needed to tell 5000 from 50000 (qt/.gitattributes checks the script
+        // out with LF, but these checks do not depend on it).
+
+        const QString scopes = u"  var CARD_SCOPES = ['"_s + CardScopes[0].toString() + u"', '"_s + CardScopes[1].toString() + u"'];"_s;
         QVERIFY2(text.contains(scopes), qPrintable(scopes));
-        const QString line = u"  var LINE = '"_s + Line.toString() + u"';\n"_s;
+        const QString line = u"  var LINE = '"_s + Line.toString() + u"';"_s;
         QVERIFY2(text.contains(line), qPrintable(line));
-        const QString maxLines = u"  var MAX_LINES = "_s + QString::number(CardMaxLines) + u";\n"_s;
+        const QString maxLines = u"  var MAX_LINES = "_s + QString::number(CardMaxLines) + u";"_s;
         QVERIFY2(text.contains(maxLines), qPrintable(maxLines));
-        const QString maxUnits = u"  var MAX_UNITS = "_s + QString::number(CardMaxUnits) + u";\n"_s;
+        const QString maxUnits = u"  var MAX_UNITS = "_s + QString::number(CardMaxUnits) + u";"_s;
         QVERIFY2(text.contains(maxUnits), qPrintable(maxUnits));
     }
 };

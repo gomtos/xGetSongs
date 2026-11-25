@@ -122,17 +122,22 @@ private slots:
     void aDriverThatIsUnavailableGivesUnavailableWithItsReason() {
         FakeDriver noAgent(Probes{probe()});
         noAgent.loadFailure = FakeDriver::unavailable(u"no-agent"_s);
-        // Kotlin's second driver threw IllegalStateException("boom") and got the class's name as the reason; a C++ driver does
-        // not throw, so it says the reason itself.
+        // Kotlin's second driver threw IllegalStateException("boom") and got the class's name as the reason. A C++ driver must
+        // not throw; one that does anyway gives the reason "exception" (C++ has no portable class name), and is still reset.
         FakeDriver broken(Probes{probe()});
-        broken.loadFailure = FakeDriver::unavailable(u"IllegalStateException"_s);
+        broken.loadThrows = true;
 
         const RenderResult noAgentResult = render(noAgent);
         const RenderResult brokenResult = render(broken);
         QCOMPARE(noAgentResult.kind, Kind::Unavailable);
         QCOMPARE(noAgentResult.reason, u"no-agent"_s);
         QCOMPARE(brokenResult.kind, Kind::Unavailable);
-        QCOMPARE(brokenResult.reason, u"IllegalStateException"_s);
+        QCOMPARE(brokenResult.reason, u"exception"_s);
+        QCOMPARE(broken.calls.last(), u"reset"_s);
+        // A reset that throws does not get out of render either.
+        FakeDriver brokenReset(Probes{probeWithCard()});
+        brokenReset.resetThrows = true;
+        QCOMPARE(render(brokenReset).kind, Kind::Loaded);
     }
 
     void aLookAtThePageThatFailsEndsTheRenderAsUnavailableAtOnce() {
@@ -173,9 +178,10 @@ private slots:
         render(finished);
         QCOMPARE(finished.calls.last(), u"reset"_s);
 
-        // Kotlin cancelled the render while it waited between two looks. Here a stop request reaches it there, on another thread,
-        // with the real pause and clock: a poll interval of an hour shows that the pause wakes on the stop request and does
-        // not sleep it out (the bound on the time taken is generous so that a slow machine does not fail it).
+        // Kotlin cancelled the render while it waited between two looks. Here a stop request reaches it on another thread, with
+        // the real pause and clock, some time after load: in the pause (a poll interval of an hour, which it must not sleep out)
+        // or just before it. Which of the two is not fixed; theDefaultPauseWakesAtOnceOnAStopRequest tests the pause itself.
+        // The bound on the time taken is generous so that a slow machine does not fail it.
         FakeDriver endless(Probes{probeLoading()});
         std::latch loaded(1);
         endless.onLoad = [&loaded] { loaded.count_down(); };
@@ -223,6 +229,43 @@ private slots:
         QCOMPARE(stoppedDriver.calls, QStringList{u"reset"_s});
         QVERIFY(stoppedDriver.limits == std::vector<std::chrono::nanoseconds>{DrivenBrowser::ResetLimit});
         QCOMPARE(stoppedDriver.resetStopPossible, std::optional<bool>(false));
+    }
+
+    // Added (Task 2 review): the default pause wakes at once on a stop request, also from a wait as long as nanoseconds::max(),
+    // and waits out a short time without one. The thread signals just before it calls the pause and the stop comes 50 ms later,
+    // so it normally lands inside the wait; a stop that comes first must end it at once too. The bound is generous so that a
+    // slow machine does not fail it.
+    void theDefaultPauseWakesAtOnceOnAStopRequest() {
+        QVERIFY(xgs::lyrics::google::waitUnlessStopped(1ms, std::stop_token()));
+
+        for (const std::chrono::nanoseconds duration : {std::chrono::nanoseconds(1h), std::chrono::nanoseconds::max()}) {
+            std::stop_source stopSource;
+            std::latch started(1);
+            bool woke = true;
+            QElapsedTimer timer;
+            timer.start();
+            {
+                std::jthread thread([&] {
+                    started.count_down();
+                    woke = xgs::lyrics::google::waitUnlessStopped(duration, stopSource.get_token());
+                });
+                started.wait();
+                std::this_thread::sleep_for(50ms);
+                stopSource.request_stop();
+            }
+            QVERIFY2(timer.elapsed() < 30'000, qPrintable(QString::number(timer.elapsed())));
+            QVERIFY(!woke);
+        }
+    }
+
+    // Added (Task 2 review): a timeout of nanoseconds::max() is no limit, not a deadline that wrapped around into the past.
+    void theLargestTimeoutDoesNotOverflow() {
+        m_time = 1h;
+        FakeDriver driver(Probes{probeLoading(), probeWithCard()});
+
+        QCOMPARE(render(driver, std::chrono::nanoseconds::max()).kind, Kind::Loaded);
+        QVERIFY(!driver.limits.empty());
+        QVERIFY(driver.limits.front() > std::chrono::hours(24 * 365));
     }
 };
 

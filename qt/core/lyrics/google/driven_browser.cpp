@@ -38,27 +38,55 @@ std::chrono::nanoseconds DrivenBrowser::now() const {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch());
 }
 
-bool DrivenBrowser::pause(std::chrono::nanoseconds duration, const std::stop_token& stop) const {
-    if (m_options.pause) return m_options.pause(duration, stop);
+bool waitUnlessStopped(std::chrono::nanoseconds duration, std::stop_token stop) {
+    // In pieces of at most a day: wait_for adds its duration to the clock's now, which overflows for a duration near
+    // nanoseconds::max().
+    constexpr std::chrono::nanoseconds piece = std::chrono::hours(24);
     std::mutex mutex;
     std::condition_variable_any never;
     std::unique_lock lock(mutex);
-    never.wait_for(lock, stop, duration, [] { return false; });
+    while (duration > std::chrono::nanoseconds::zero()) {
+        const std::chrono::nanoseconds step = std::min(duration, piece);
+        never.wait_for(lock, stop, step, [] { return false; });
+        if (stop.stop_requested()) return false;
+        duration -= step;
+    }
     return !stop.stop_requested();
 }
 
+bool DrivenBrowser::pause(std::chrono::nanoseconds duration, const std::stop_token& stop) const {
+    if (m_options.pause) return m_options.pause(duration, stop);
+    return waitUnlessStopped(duration, stop);
+}
+
 RenderResult DrivenBrowser::render(const QString& url, std::chrono::nanoseconds timeout, std::stop_token stop) {
-    RenderResult result = renderPage(url, timeout, stop);
+    // Kotlin caught any Exception as Unavailable (with its class name) and reset in `finally`. A driver must not throw, but
+    // whatever does (std::bad_alloc, a driver that breaks its contract) ends here as Unavailable("exception"), and the reset
+    // still happens.
+    RenderResult result;
+    try {
+        result = renderPage(url, timeout, stop);
+    } catch (...) {
+        result = unavailable(u"exception"_s);
+    }
     // Stop whatever is still loading and let go of the page, also after a stop or a timeout: with a token that cannot stop and a
-    // limit of its own. What it answers changes nothing.
-    m_driver.reset(Wait{std::stop_token(), ResetLimit});
+    // limit of its own. What it answers changes nothing, and a throw from it does not get out.
+    try {
+        m_driver.reset(Wait{std::stop_token(), ResetLimit});
+    } catch (...) {
+    }
     return result;
 }
 
 RenderResult DrivenBrowser::renderPage(const QString& url, std::chrono::nanoseconds timeout, const std::stop_token& stop) {
     using Kind = RenderResult::Kind;
     using Status = DriverAnswer::Status;
-    const std::chrono::nanoseconds deadline = now() + timeout;
+    // Saturated: a timeout of nanoseconds::max() (no limit) must not wrap around to a deadline in the past.
+    const std::chrono::nanoseconds start = now();
+    const std::chrono::nanoseconds deadline =
+        start > std::chrono::nanoseconds::zero() && timeout > std::chrono::nanoseconds::max() - start
+            ? std::chrono::nanoseconds::max()
+            : start + timeout;
     auto left = [&] { return deadline - now(); };
     // What ends the render between two steps: a stop request, then the time limit (Kotlin's withTimeoutOrNull cut the call
     // that was running at the deadline, whatever it would have answered).

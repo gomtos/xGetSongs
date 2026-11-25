@@ -8,6 +8,7 @@
 #include <functional>
 #include <initializer_list>
 #include <optional>
+#include <stdexcept>
 #include <stop_token>
 #include <utility>
 #include <vector>
@@ -160,6 +161,10 @@ public:
     std::vector<std::chrono::nanoseconds> limits;
     std::optional<bool> resetStopPossible;
 
+    /// load or reset throws std::runtime_error when set: a driver that breaks its contract (Kotlin's IllegalStateException).
+    bool loadThrows = false;
+    bool resetThrows = false;
+
     /// Called at the end of load (a test that runs render on another thread waits for it).
     std::function<void()> onLoad;
 
@@ -167,6 +172,7 @@ public:
         calls.append(QStringLiteral("load ") + url);
         limits.push_back(wait.limit);
         if (onLoad) onLoad();
+        if (loadThrows) throw std::runtime_error("boom");
         if (loadFailure) return *loadFailure;
         return DriverAnswer{DriverAnswer::Status::Ok, std::nullopt, QString()};
     }
@@ -189,6 +195,7 @@ public:
         calls.append(QStringLiteral("reset"));
         limits.push_back(wait.limit);
         resetStopPossible = wait.stop.stop_possible();
+        if (resetThrows) throw std::runtime_error("boom");
         return DriverAnswer{DriverAnswer::Status::Ok, std::nullopt, QString()};
     }
 

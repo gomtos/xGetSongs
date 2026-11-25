@@ -140,7 +140,7 @@
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/DrivenBrowserTest.kt",
     "exe": "tst_driven_browser",
-    "added": ["everyDriverCallGetsTheTimeThatIsLeft"]
+    "added": ["everyDriverCallGetsTheTimeThatIsLeft", "theDefaultPauseWakesAtOnceOnAStopRequest", "theLargestTimeoutDoesNotOverflow"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealFfmpegTaggingIntegrationTest.kt",

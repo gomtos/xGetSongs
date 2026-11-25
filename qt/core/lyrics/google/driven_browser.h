@@ -18,6 +18,10 @@ namespace xgs::lyrics::google {
 /// request.
 using Pause = std::function<bool(std::chrono::nanoseconds, std::stop_token)>;
 
+/// The default Pause: waits on a condition variable for duration (any duration, nanoseconds::max() included) and wakes at
+/// once on a stop request. false when it ended because of the stop request.
+bool waitUnlessStopped(std::chrono::nanoseconds duration, std::stop_token stop);
+
 struct DrivenBrowserOptions {
     std::chrono::nanoseconds pollInterval{std::chrono::milliseconds(500)};
     std::chrono::nanoseconds settleTime{std::chrono::seconds(4)};
