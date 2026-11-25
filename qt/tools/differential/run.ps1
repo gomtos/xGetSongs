@@ -2,7 +2,13 @@
 # server/build/sidecar-image) and to the C++ ports (build/qt/xgs-diff.exe); the answers must be identical, line for line.
 #
 #   pwsh qt/tools/differential/run.ps1 [-Kinds UXMSCFDGTLYRNBZHOJEQVKAIWP] [-PerKind 10000] [-Seed 20261115] [-DebugTool]
+#                                      [-Ops gq,pc,pw,pj,gf]
 #   (the default: all kinds)
+#
+# -Ops (kinds P and W only): each op named is generated alone (`xgs-diff gen <kind> <count> <seed> <op>`) with -PerKind cases,
+# and only the statistics of those ops are checked. The Google lyrics ops of Q3 Task 5 (P gq, pc, pw, pj and W gf) are not in
+# their kinds' mix ($SeparateOps) and run only this way, so a plain run gives the older ops the cases they always had. The
+# gate of those ops: -Kinds PW -Ops gq,pc,pw,pj,gf -PerKind 10000 at the three seeds (qt/README.md).
 #
 # -DebugTool: the debug build's tool (build/qt-debug/xgs-diff.exe, where Qt's range checks and assertions are on) also answers
 # every kind: the same generated cases (or, for a table kind, the same table mode), and its answers must be identical to the
@@ -19,9 +25,8 @@
 # One deliberate exception: for kind S op `lower`, when the case's input contains U+03A3 (capital sigma), both answers are
 # compared after folding U+03C2 to U+03C3 ($Folding below, here and nowhere else): the final sigma form that Kotlin picks
 # differs from xgs::kt's approximation of Unicode's Final_Sigma rule in some contexts (qt/README.md). Likewise for kind P
-# op `gq`, when the artist or the title holds U+03A3, U+03C2 or U+03C3, U+03C2 is folded to U+03C3 in the cache key (the K
-# field) of both answers: decision 9 of the Q3 plan (the C++ key writes ς as σ, Kotlin's does not); the run shows how many
-# cases were folded. ($Folding also aligns W jb's two known differences, Format-JbFolded.) Every other case, op and
+# op `gq`: U+03C2 in the cache key (the K field) of Kotlin's answer is written as U+03C3 before the comparison, decision 9 of
+# the Q3 plan (the C++ key writes ς as σ, Kotlin's does not); the run shows how many cases that changed. ($Folding also aligns W jb's two known differences, Format-JbFolded.) Every other case, op and
 # character is compared exactly.
 #
 # Adding a kind: a generator (gen.cpp, registerGenerators), an answerer (main.cpp, registerAnswers), a `case` in
@@ -30,7 +35,8 @@ param(
     [string]$Kinds = 'UXMSCFDGTLYRNBZHOJEQVKAIWP',
     [int]$PerKind = 10000,
     [long]$Seed = 20261115,
-    [switch]$DebugTool
+    [switch]$DebugTool,
+    [string]$Ops = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
@@ -724,7 +730,6 @@ $GqCreditThenMark = [regex]::new('(?i)(?:feat|ft|prod|narr)\p{M}', 'Compiled')
 $GqCreditThenDot = [regex]::new('(?i)(?:feat|ft|prod|narr)\.', 'Compiled')
 $GqApostropheSupplementary = [regex]::new('[\uD800-\uDFFF][‘’]|[‘’][\uD800-\uDFFF]', 'Compiled')
 $GqOtherWhite = [regex]::new('[   　\u0085\u001C-\u001F  - ]', 'Compiled')
-$script:GqFoldTouched = 0
 $script:GqFoldChanged = 0
 # Helpers of the W lf statistics (for counting only; the answers are compared exactly). The URL of a /search request as hex;
 # on a field's hex, a unit outside ASCII and one of `& = # + %` or a space; on a decoded body, a record field of the wrong
@@ -1033,7 +1038,7 @@ $POpChecks = [ordered]@{
         Test-Share 'P' 'gq: an unpaired surrogate (shown only)' $lone $n 0
         Test-Share 'P' 'gq: white space that \s does not take (shown only)' $otherWhite $n 0
         Test-Share 'P' 'gq: input with Σ, σ or ς (shown only)' $sigma $n 0
-        Write-Host "  P: gq: decision 9 folding: $($script:GqFoldTouched) cases folded (input with Σ, σ or ς), of which $($script:GqFoldChanged) had a ς in Kotlin's key"
+        Write-Host "  P: gq: decision 9 folding: $($script:GqFoldChanged) cases had a ς in Kotlin's key (written as σ for the comparison)"
     }
     # pc url status body: each of the four answers (-, Consent, Captcha, RateLimited) 8% (Kotlin's answer). Shown only: bodies of
     # 1999, 2000 and 2001 units, status 429 with and without a marker.
@@ -1095,7 +1100,8 @@ $POpChecks = [ordered]@{
         Test-Share 'P' 'pw: settle time 0 (shown only, of the pw cases)' $zeroSettle $indexes.Count 0
     }
     # pj text: Kotlin decoded a probe 25%, refused the text 25% (Kotlin's answer); a text with a key other than the four 10%, with
-    # one of the four holding a value of the wrong type 10% (a scan of the text, for counting only)
+    # one of the four holding a value of the wrong type 10% (a scan of the text, for counting only; the spellings of true and
+# false that Kotlin accepts for hasCard are not counted)
     pj = {
         param($cases, $answers, $indexes)
         $decoded = 0; $refused = 0; $extra = 0; $wrong = 0
@@ -1114,16 +1120,19 @@ $POpChecks = [ordered]@{
     }
 }
 $PjWrongString = [regex]::new('"(?:url|readyState|bodyText)"\s*:\s*[^"\s]', 'Compiled')
-$PjWrongBoolean = [regex]::new('"hasCard"\s*:\s*(?!(?:true|false)\s*[,}])', 'Compiled')
+# (true and false in any ASCII case, quoted or not, are what Kotlin accepts for hasCard: not a wrong type)
+$PjWrongBoolean = [regex]::new('"hasCard"\s*:\s*(?!"?(?i:true|false)"?\s*[,}"])', 'Compiled')
 # true when a field's hex holds U+03A3, U+03C2 or U+03C3 at a unit boundary
 function Test-HasSigma([string]$field) {
     if ($field -ceq '-' -or $field -ceq '.') { return $false }
     for ($i = 0; $i + 4 -le $field.Length; $i += 4) { if ('03a3', '03c2', '03c3' -ccontains $field.Substring($i, 4)) { return $true } }
     return $false
 }
-# Decision 9 of the Q3 plan: the K field (the cache key) of a gq answer with U+03C2 folded to U+03C3, counted on the Kotlin side
+# Decision 9 of the Q3 plan: in the K field (the cache key) of Kotlin's gq answer, U+03C2 is written as U+03C3, which is what
+# the C++ key does itself. Only Kotlin's key is folded (a ς in the C++ key stays a mismatch), only the K field, only op gq;
+# the cases whose Kotlin key held a ς are counted.
 function Format-GqFolded([string]$answer, [string]$side) {
-    if ($null -eq $answer) { return $answer }
+    if ($null -eq $answer -or $side -cne 'kotlin') { return $answer }
     $at = $answer.IndexOf(' K ')
     if ($at -lt 0) { return $answer }
     $key = $answer.Substring($at + 3)
@@ -1133,7 +1142,8 @@ function Format-GqFolded([string]$answer, [string]$side) {
         [void]$sb.Append($(if ($unit -ceq '03c2') { '03c3' } else { $unit }))
     }
     $folded = $sb.ToString()
-    if ($side -ceq 'kotlin') { $script:GqFoldTouched++; if ($folded -cne $key) { $script:GqFoldChanged++ } }
+    if ($folded -ceq $key) { return $answer }
+    $script:GqFoldChanged++
     return $answer.Substring(0, $at + 3) + $folded
 }
 # Helpers of the W ln statistics, on the hex of the bytes (2 digits a byte, aligned): `\r\n`, a `\r` not before `\n`, a `\n`
@@ -1154,9 +1164,9 @@ $Statistics = [ordered]@{
                 $byOp[$op].Add($i)
             }
             foreach ($op in $byOp.Keys) { if (-not $POpChecks.Contains($op)) { "P: op $op has no statistics in `$POpChecks" } }
-            foreach ($op in $POpChecks.Keys) {
+            foreach ($op in $script:RequiredOps) {
                 $indexes = if ($byOp.ContainsKey($op)) { $byOp[$op].ToArray() } else { [int[]]@() }
-                Test-Share 'P' "op $op (shown only)" $indexes.Count $cases.Count 0
+                Write-Host ("  P: op {0}: {1} cases" -f $op, $indexes.Count)
                 if ($indexes.Count -eq 0) { "P: no cases of op $op"; continue }
                 & $POpChecks[$op] $cases $answers $indexes
             }
@@ -1173,9 +1183,9 @@ $Statistics = [ordered]@{
                 $byOp[$op].Add($i)
             }
             foreach ($op in $byOp.Keys) { if (-not $WOpChecks.Contains($op)) { "W: op $op has no statistics in `$WOpChecks" } }
-            foreach ($op in $WOpChecks.Keys) {
+            foreach ($op in $script:RequiredOps) {
                 $indexes = if ($byOp.ContainsKey($op)) { $byOp[$op].ToArray() } else { [int[]]@() }
-                Test-Share 'W' "op $op (shown only)" $indexes.Count $cases.Count 0
+                Write-Host ("  W: op {0}: {1} cases" -f $op, $indexes.Count)
                 if ($indexes.Count -eq 0) { "W: no cases of op $op"; continue }
                 & $WOpChecks[$op] $cases $answers $indexes $portAnswers
             }
@@ -1804,8 +1814,8 @@ $Folding = @{
         Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'jb' -and $null -ne $answer) { Format-JbFolded $fields $answer $side } else { $answer } }
     }
     P = @{
-        Note = 'P: op gq on an input with U+03A3, U+03C2 or U+03C3 is compared with U+03C2 folded to U+03C3 in the cache key (the K field) of both answers (decision 9 of the Q3 plan); the requests and every other op exactly'
-        Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'gq' -and ((Test-HasSigma $fields[1]) -or (Test-HasSigma $fields[2]))) { Format-GqFolded $answer $side } else { $answer } }
+        Note = "P: op gq is compared with U+03C2 written as U+03C3 in the cache key (the K field) of Kotlin's answer only (decision 9 of the Q3 plan); the requests and every other op exactly"
+        Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'gq') { Format-GqFolded $answer $side } else { $answer } }
     }
 }
 
@@ -1916,6 +1926,16 @@ $script:shown = 0
 $letters = @($Kinds.ToCharArray() | ForEach-Object { "$_" } | Select-Object -Unique)
 if ($letters.Count -eq 0) { throw 'no kinds given' }
 foreach ($letter in $letters) { if (-not $Statistics.Contains($letter)) { $failures.Add("${letter}: no statistics defined for this kind") } }
+# -Ops: the ops of kinds P and W to run, each alone with -PerKind cases (the only way to run the ops outside a kind's mix)
+$OpChecks = @{ P = $POpChecks; W = $WOpChecks }
+$SeparateOps = @{ P = @('gq', 'pc', 'pw', 'pj'); W = @('gf') }
+$SelectedOps = @($Ops -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($SelectedOps.Count -gt 0) {
+    foreach ($letter in $letters) { if (-not $OpChecks.Contains($letter)) { $failures.Add("${letter}: -Ops applies to the kinds P and W only") } }
+    foreach ($op in $SelectedOps) {
+        if (-not @($letters | Where-Object { $OpChecks.Contains($_) -and $OpChecks[$_].Contains($op) })) { $failures.Add("-Ops: no kind of -Kinds has the op $op") }
+    }
+}
 
 # ---- table kinds ----
 function Invoke-TableKind([string]$letter) {
@@ -1949,8 +1969,29 @@ function Invoke-TableKind([string]$letter) {
 
 # ---- case kinds: one kind at a time ----
 function Invoke-CaseKind([string]$letter) {
-    $generated = Invoke-Side $tool @('gen', $letter, "$PerKind", "$Seed") $null "gen-$letter"
-    if ($generated.Count -ne $PerKind) { $failures.Add("${letter}: xgs-diff generated $($generated.Count) cases, not $PerKind") }
+    # the ops whose statistics must be met: with -Ops, the selected ops of this kind (each generated alone, -PerKind cases
+    # each); otherwise the kind's mix (every op of the kind but its separate ones)
+    $script:RequiredOps = @()
+    $kindOps = @()
+    if ($OpChecks.Contains($letter)) {
+        # a name that is a separate op of another kind means that op (`pc` is both P's Google op and W's path op: -Ops pc is P pc)
+        $kindOps = @($SelectedOps | Where-Object {
+            $name = $_
+            $elsewhere = @($SeparateOps.Keys | Where-Object { $_ -cne $letter -and $SeparateOps[$_] -ccontains $name })
+            $OpChecks[$letter].Contains($name) -and ($SeparateOps[$letter] -ccontains $name -or $elsewhere.Count -eq 0)
+        })
+        $script:RequiredOps = if ($SelectedOps.Count -gt 0) { $kindOps } else { @($OpChecks[$letter].Keys | Where-Object { $SeparateOps[$letter] -notcontains $_ }) }
+    }
+    if ($SelectedOps.Count -gt 0) {
+        if ($kindOps.Count -eq 0) { $failures.Add("${letter}: none of the ops of -Ops ($Ops) belongs to this kind"); return }
+        $generated = [System.Collections.Generic.List[string]]::new()
+        foreach ($op in $kindOps) { $generated.AddRange([string[]](Invoke-Side $tool @('gen', $letter, "$PerKind", "$Seed", $op) $null "gen-$letter-$op")) }
+        $generated = $generated.ToArray()
+    } else {
+        $generated = Invoke-Side $tool @('gen', $letter, "$PerKind", "$Seed") $null "gen-$letter"
+    }
+    $expected = $PerKind * [Math]::Max(1, $kindOps.Count)
+    if ($generated.Count -ne $expected) { $failures.Add("${letter}: xgs-diff generated $($generated.Count) cases, not $expected") }
     $caseFile = Join-Path $work "cases-$letter.txt"
     [System.IO.File]::WriteAllText($caseFile, (($generated -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
     $kotlin = Invoke-Side $java $oracleArgs $caseFile "kotlin-answers-$letter"

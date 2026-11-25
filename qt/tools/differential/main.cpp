@@ -1,7 +1,8 @@
 // xgs-diff: the C++ side of the differential test of the Qt port (qt/tools/differential/run.ps1 drives it with Oracle.java,
 // the Kotlin side). Input and output are ASCII, one line per case or answer.
 //
-//   xgs-diff gen <kind> <count> <seed>    write <count> cases of a kind ("K\tfields...")
+//   xgs-diff gen <kind> <count> <seed> [op]   write <count> cases of a kind ("K\tfields..."); with an op (kinds P and W)
+//                                         every case is of that op (the only way to make the ops outside the kind's mix)
 //   xgs-diff answer                       answer the cases on stdin, one line each
 //   xgs-diff arglists <count> <seed>      the random argument lists of tst_system_process_runner, one per line (every
 //                                         argument as hex, tab-separated), for `Oracle.java argv`
@@ -9,8 +10,8 @@
 //   xgs-diff constants                    the user-facing constants, sorted by name: "name hex" (kind M)
 //   xgs-diff unicodecase                  for each code point 0..10FFFF but the surrogates: "cp lower upper" from
 //                                         kt::lowercase and kt::uppercase of the one-code-point string (kind U)
-//   xgs-diff lettertable                  for each code point 0..10FFFF but the surrogates: "cp d" = kt::isLetterOrDigit(char32_t)
-//                                         as 0/1 (kind B)
+//   xgs-diff lettertable                  for each code point 0..10FFFF but the surrogates: "cp d m" = kt::isLetterOrDigit(char32_t)
+//                                         and kt::isNonSpacingMark as 0/1 (kind B)
 //   xgs-diff nfkctable                    for each code point 0..10FFFF but the surrogates: "cp hex" = kt::nfkc of the
 //                                         one-code-point string (kind Z)
 //   xgs-diff qt-chartable                 as chartable, from Qt's own tables only (gen-tables.ps1)
@@ -1273,7 +1274,10 @@ int codePointTable(Row row) {
 }
 
 int lettertable() {
-    return codePointTable([](char32_t cp, std::string& out) { out += kt::isLetterOrDigit(cp) ? '1' : '0'; });
+    return codePointTable([](char32_t cp, std::string& out) {
+        out += kt::isLetterOrDigit(cp) ? '1' : '0';
+        out += kt::isNonSpacingMark(cp) ? " 1" : " 0";
+    });
 }
 
 int nfkctable() {
@@ -1281,7 +1285,10 @@ int nfkctable() {
 }
 
 int qtLettertable() {
-    return codePointTable([](char32_t cp, std::string& out) { out += kt::detail::qtLetterOrDigit(cp) ? '1' : '0'; });
+    return codePointTable([](char32_t cp, std::string& out) {
+        out += kt::detail::qtLetterOrDigit(cp) ? '1' : '0';
+        out += kt::detail::qtNonSpacingMark(cp) ? " 1" : " 0";
+    });
 }
 
 int constants() {
@@ -1344,13 +1351,21 @@ int main(int argc, char** argv) {
     registerAnswers();
     registerConstants();
     const std::string mode = argc > 1 ? argv[1] : "";
-    if (mode == "gen" && argc == 5) {
+    if (mode == "gen" && (argc == 5 || argc == 6)) {
         const std::string kind = argv[2];
         const long long count = std::stoll(argv[3]);
         const unsigned long long seed = std::stoull(argv[4]);
         if (kind.size() != 1 || count <= 0) {
-            std::fprintf(stderr, "xgs-diff: gen <kind letter> <positive count> <seed>\n");
+            std::fprintf(stderr, "xgs-diff: gen <kind letter> <positive count> <seed> [op]\n");
             return 2;
+        }
+        if (argc == 6) {
+            const QString op = QString::fromLatin1(argv[5]);
+            if (!hasOp(kind[0], op)) {
+                std::fprintf(stderr, "xgs-diff: kind %c has no op %s\n", kind[0], argv[5]);
+                return 2;
+            }
+            setOnlyOp(op);
         }
         return generate(kind[0], count, quint32(seed));
     }
@@ -1368,6 +1383,6 @@ int main(int argc, char** argv) {
         std::printf("%s\n", QT_VERSION_STR);
         return 0;
     }
-    std::fprintf(stderr, "usage: xgs-diff gen <kind> <count> <seed> | answer | arglists <count> <seed> | chartable | constants | unicodecase | lettertable | nfkctable | qt-chartable | qt-casetable | qt-lettertable | qt-version\n");
+    std::fprintf(stderr, "usage: xgs-diff gen <kind> <count> <seed> [op] | answer | arglists <count> <seed> | chartable | constants | unicodecase | lettertable | nfkctable | qt-chartable | qt-casetable | qt-lettertable | qt-version\n");
     return 2;
 }

@@ -739,3 +739,30 @@ inline constexpr std::array<LetterOrDigitRange, 42> kSupplementaryLetterOrDigit{
     {0x323b0, 0x33479, false},
 }};
 
+// The code points where Character.getType(int) == NON_SPACING_MARK (Mn) differs from Qt's category Mn, as ranges with
+// the JVM's answer: 76 code points in 22 ranges.
+inline constexpr std::array<NonSpacingMarkRange, 22> kNonSpacingMarkRanges{{
+    {0x897, 0x897, false},
+    {0x1acf, 0x1add, false},
+    {0x1ae0, 0x1aeb, false},
+    {0x10d69, 0x10d6d, false},
+    {0x10efa, 0x10efc, false},
+    {0x113bb, 0x113c0, false},
+    {0x113ce, 0x113ce, false},
+    {0x113d0, 0x113d0, false},
+    {0x113d2, 0x113d2, false},
+    {0x113e1, 0x113e2, false},
+    {0x1171e, 0x1171e, true},
+    {0x11b60, 0x11b60, false},
+    {0x11b62, 0x11b64, false},
+    {0x11b66, 0x11b66, false},
+    {0x11f5a, 0x11f5a, false},
+    {0x1611e, 0x16129, false},
+    {0x1612d, 0x1612f, false},
+    {0x1e5ee, 0x1e5ef, false},
+    {0x1e6e3, 0x1e6e3, false},
+    {0x1e6e6, 0x1e6e6, false},
+    {0x1e6ee, 0x1e6ef, false},
+    {0x1e6f5, 0x1e6f5, false},
+}};
+

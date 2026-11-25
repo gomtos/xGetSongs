@@ -2,7 +2,8 @@
 # obtained by asking the JVM through its public API (Oracle.java chartable, casetable and lettertable), where xgs::kt cannot
 # take Qt's own Unicode data: the units whose letter/case properties differ between the two Unicode versions, the special
 # casing (SpecialCasing.txt) of single units, the case mappings above U+FFFF, and the code points above U+FFFF whose
-# Character.isLetterOrDigit(int) differs from Qt's categories. (kt::nfkc needs no table: the kinds Z and H find no difference.)
+# Character.isLetterOrDigit(int) differs from Qt's categories, and the code points whose general category Mn (the word boundary of
+# search_query.cpp) differs. (kt::nfkc needs no table: the kinds Z and H find no difference.)
 # Run from anywhere, after building xgs-diff:
 #
 #   pwsh qt/tools/differential/gen-tables.ps1            (then rebuild; the kinds X, B and Z of run.ps1 must show 0 mismatches)
@@ -97,17 +98,28 @@ function Add-Range($list, [int]$codePoint, [string]$value) {
 }
 $letterRanges = [System.Collections.Generic.List[object]]::new()
 $letterDiffering = 0
+$markRanges = [System.Collections.Generic.List[object]]::new()
+$markDiffering = 0
 if (-not $NoQt) {
     $jvmLetters = Invoke-Lines $java ($classpath + @($oracle, 'lettertable'))
     $qtLetters = Invoke-Lines $tool @('qt-lettertable')
     if ($jvmLetters.Count -ne 1112064 -or $qtLetters.Count -ne 1112064) { throw "lettertable: the oracle wrote $($jvmLetters.Count) lines, xgs-diff $($qtLetters.Count), not 1112064" }
-    # line 63488 is U+10000 (the 55296 code points below the surrogates and the 8192 above them up to U+FFFF come first)
-    for ($line = 63488; $line -lt 1112064; $line++) {
+    for ($line = 0; $line -lt 1112064; $line++) {
         if ($jvmLetters[$line] -ceq $qtLetters[$line]) { continue }
         $j = $jvmLetters[$line].Split(' ')
-        if ($j[0] -cne $qtLetters[$line].Split(' ')[0]) { throw "lettertable line ${line}: $($jvmLetters[$line]) against $($qtLetters[$line])" }
-        $letterDiffering++
-        Add-Range $letterRanges ([Convert]::ToInt32($j[0], 16)) $(if ($j[1] -ceq '1') { 'true' } else { 'false' })
+        $q = $qtLetters[$line].Split(' ')
+        if ($j[0] -cne $q[0]) { throw "lettertable line ${line}: $($jvmLetters[$line]) against $($qtLetters[$line])" }
+        $codePoint = [Convert]::ToInt32($j[0], 16)
+        # the letter-or-digit column above U+FFFF only (below, kCharExceptions has it)
+        if ($codePoint -gt 0xFFFF -and $j[1] -cne $q[1]) {
+            $letterDiffering++
+            Add-Range $letterRanges $codePoint $(if ($j[1] -ceq '1') { 'true' } else { 'false' })
+        }
+        # the Mn column (Character.getType == NON_SPACING_MARK) of every code point
+        if ($j[2] -cne $q[2]) {
+            $markDiffering++
+            Add-Range $markRanges $codePoint $(if ($j[2] -ceq '1') { 'true' } else { 'false' })
+        }
     }
 }
 
@@ -146,6 +158,12 @@ foreach ($row in $supplementary) { [void]$sb.AppendLine($row) }
 foreach ($r in $letterRanges) { [void]$sb.AppendLine(('    {{0x{0:x}, 0x{1:x}, {2}}},' -f $r.First, $r.Last, $r.Value)) }
 [void]$sb.AppendLine('}};')
 [void]$sb.AppendLine('')
+[void]$sb.AppendLine("// The code points where Character.getType(int) == NON_SPACING_MARK (Mn) differs from Qt's category Mn, as ranges with")
+[void]$sb.AppendLine("// the JVM's answer: $markDiffering code points in $($markRanges.Count) ranges.")
+[void]$sb.AppendLine("inline constexpr std::array<NonSpacingMarkRange, $($markRanges.Count)> kNonSpacingMarkRanges{{")
+foreach ($r in $markRanges) { [void]$sb.AppendLine(('    {{0x{0:x}, 0x{1:x}, {2}}},' -f $r.First, $r.Last, $r.Value)) }
+[void]$sb.AppendLine('}};')
+[void]$sb.AppendLine('')
 [System.IO.File]::WriteAllText($output, $sb.ToString().Replace("`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
 Write-Output "wrote $output"
@@ -154,6 +172,7 @@ Write-Output "unit exceptions: $($exceptions.Count) ($exceptionSummary)"
 foreach ($name in $examples.Keys) { foreach ($e in $examples[$name]) { Write-Output "  $name $e" } }
 Write-Output "upper specials $($upper.Count), lower specials $($lower.Count), supplementary case mappings $($supplementary.Count)"
 Write-Output "letter-or-digit exceptions above U+FFFF: $letterDiffering code points in $($letterRanges.Count) ranges"
+Write-Output "Mn exceptions: $markDiffering code points in $($markRanges.Count) ranges"
 
 # For the record only: where Qt's QString::toUpper/toLower of a single unit differs from Kotlin's String.uppercase/lowercase
 # (kt_text.cpp does not use them; final sigma, which needs context, is not counted here).

@@ -51,6 +51,10 @@ using Generator = QString (*)(Rng&);
 void registerKind(char kind, Generator gen);
 Generator generatorFor(char kind);      // nullptr when the kind has no generator
 void registerGenerators();              // the place where each kind calls registerKind (gen.cpp)
+// The op kinds P and W: every case of the kind's generator is of this one op from now on (empty: the kind's mix of ops). Ops
+// outside the mix (the Google lyrics ops of Q3 Task 5) are made only this way.
+void setOnlyOp(const QString& op);
+bool hasOp(char kind, const QString& op);   // whether setOnlyOp(op) is valid for the kind
 
 QString token(Rng&);
 QString text(Rng&, int maxTokens = 40);

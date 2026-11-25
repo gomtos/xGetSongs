@@ -9,6 +9,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <span>
 
 #include "codec.h"
 #include "filename/filename_formatter.h"
@@ -3988,13 +3989,15 @@ constexpr QStringView kAddressPieces[] = {u"&", u"#", u"%", u"+", u"?", u"=", u"
                                           u")", u":", u";", u",", u"@", u"$", u"[", u"]", u"\\", u"^", u"|", u"%20", u"a+b", u"&hl=en",
                                           u"ÿ", u"Ā", u"€", u"\U0001f3b5", u"\xD83D", u"\xDBFF", u"\xDC00", QStringView(u"\0x", 2),
                                           u"\u007f", u"\u0080", u"�"};
-// Compatibility characters (NFKC changes them) and case oddities of the cache key; no σ-forms other than Σ σ ς themselves.
+// Compatibility characters (NFKC changes them) and case oddities of the cache key, Σ σ ς and code points that NFKC or
+// lowercase turn into one of them (U+03F2, U+03F9, the mathematical sigmas U+1D6BA, U+1D6D3, U+1D7BB).
 constexpr QStringView kKeyPieces[] = {u"ＡＢ", u"ｌｏｖｅ", u"ﬁ", u"ﬀ", u"ﬃ", u"ﬆ",
                                       u"㎏", u"①", u"½", u"²", u"™", u"㈱", u"İ", u"ı",
                                       u"ẞ", u"ß", u"K", u"Å", u"ǅ", u"Ǆ", u"ŉ", u"ㄱ",
                                       u"ﾡ", u"ｶﾞ", u"가", u"각", u"　", u"Σ",
                                       u"σ", u"ς", u"ΣΣ", u"AΣ", u"ΟΣ Ο", u"\U0001d400",
-                                      u"Ⅷ", u"Ⓐ", u"Å", u"Å", u"Ω"};
+                                      u"Ⅷ", u"Ⓐ", u"Å", u"Å", u"Ω",
+                                      u"ϲ", u"Ϲ", u"xϲ", u"𝚺", u"𝛓", u"𝞻", u"Ο𝚺"};
 
 QString jsonEscapedKey(const QString& key);   // (kind P below)
 
@@ -4060,25 +4063,6 @@ QString googlePiece(Rng& rng) {
     return token(rng);
 }
 
-// The code points that NFKC or lowercase turn into Σ, σ or ς, other than those three: left out of gq and gf, so that the
-// sigma folding of decision 9 (run.ps1) is only ever needed where the input holds Σ, σ or ς itself.
-QString withoutHiddenSigma(const QString& value) {
-    const QList<bool>& sources = sigmaSources();
-    QString out;
-    out.reserve(value.size());
-    for (qsizetype i = 0; i < value.size();) {
-        char32_t cp = value.at(i).unicode();
-        qsizetype units = 1;
-        if (value.at(i).isHighSurrogate() && i + 1 < value.size() && value.at(i + 1).isLowSurrogate()) {
-            cp = QChar::surrogateToUcs4(value.at(i), value.at(i + 1));
-            units = 2;
-        }
-        if (!sources.at(cp) || cp == 0x03A3 || cp == 0x03C2 || cp == 0x03C3) out += QStringView(value).sliced(i, units);
-        i += units;
-    }
-    return out;
-}
-
 QString googleArtist(Rng& rng) {
     const double roll = rng.next();
     if (roll < 0.03) return QString();
@@ -4127,7 +4111,7 @@ QString generateGq(Rng& rng) {
     QString artist = googleArtist(rng);
     QString title = googleTitle(rng);
     if (rng.chance(0.1)) artist += pick(rng, kHangulEdges);
-    return hex(withoutHiddenSigma(artist)) + u'\t' + hex(withoutHiddenSigma(title));
+    return hex(artist) + u'\t' + hex(title);
 }
 
 // A body text of exactly length units: filler with now and then a marker at a chosen place.
@@ -4376,7 +4360,8 @@ QString searchUrlOf(Rng& rng) {
     return u"https://www.google.com/search?q="_s + pick(rng, {u"a"_s, u"IU%20Love"_s}) + u"&hl=" + pick(rng, {u"en"_s, u"ko"_s});
 }
 
-// One answer of the browser; trouble: a block page, a timeout or (seldom) an unusable browser only.
+// One answer of the browser; trouble: a block page (by address or by text) or a timeout only (the roll 0.5..0.88 never reaches
+// the unusable browser, which starts no cool-down).
 QString gfAnswer(Rng& rng, bool trouble) {
     const double roll = trouble ? 0.5 + 0.38 * rng.next() : rng.next();
     if (roll < 0.22) return u"L"_s + hex(searchUrlOf(rng)) + u'/' + hex(rng.chance(0.7) ? QString() : fillerText(rng, 30)) + u'/' + cardField(rng, 3);
@@ -4476,19 +4461,40 @@ struct WOp {
     Generator fields;   // the fields after the op
 };
 constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn},
-                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}, {u"lf", generateLf}, {u"jb", generateJb},
-                         {u"gf", generateGf}};
+                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}, {u"lf", generateLf}, {u"jb", generateJb}};
+// Ops that are not in the kind's mix: only `xgs-diff gen W <count> <seed> gf` makes them (run.ps1 -Ops), so that each gets its
+// own full case count and the mix keeps the shares it had (Q3 Task 5).
+constexpr WOp kWSeparateOps[] = {{u"gf", generateGf}};
+
+// The op of `xgs-diff gen <kind> <count> <seed> <op>` (setOnlyOp), or empty: the kind's mix.
+QString& onlyOp() {
+    static QString op;
+    return op;
+}
+
+const WOp* findOp(std::span<const WOp> ops, const QString& name) {
+    for (const WOp& op : ops)
+        if (op.name == name) return &op;
+    return nullptr;
+}
+
+// A case of an op kind: an op of the mix at random, or every case of the one op that setOnlyOp named.
+template <std::size_t N, std::size_t M>
+QString generateOpCase(Rng& rng, const WOp (&mix)[N], const WOp (&separate)[M]) {
+    const WOp* op = onlyOp().isEmpty() ? &pick(rng, mix) : findOp(mix, onlyOp());
+    if (!op) op = findOp(separate, onlyOp());
+    return op->name.toString() + u'\t' + op->fields(rng);   // (main checks hasOp before generating)
+}
 
 QString generateW(Rng& rng) {
-    const WOp& op = pick(rng, kWOps);
-    return op.name.toString() + u'\t' + op.fields(rng);
+    return generateOpCase(rng, kWOps, kWSeparateOps);
 }
 
 // ---- kind P: YtDlpResolver (rs: resolve, fx: fetch) ----
 // rs input run stdout stderr... / fx videoId run stdout stderr...: the input from kind C's generator or built as a playlist or a
 // video address; the run 0, another exit code, S (a start failure) or - (no yt-dlp); the stdout bytes (hex, "." for none); the
-// stderr lines from kind E's generator. The stdout is what yt-dlp -J prints (a playlist with 0..40 entries, in 9% of the playlist
-// runs MAX_RANK - 1..+5 short ones, around the truncation boundary; or one video), every field present, absent, null or (in some
+// stderr lines from kind E's generator. The stdout is what yt-dlp -J prints (a playlist with 0..40 entries, now and then
+// MAX_RANK - 1..+5 short ones, around the truncation boundary; or one video), every field present, absent, null or (in some
 // documents) of the wrong type, titles from kind T's generator and [Private video] / [Deleted video], the availability values and others, channel/uploader combinations,
 // unknown keys (in a third of the documents with values from kind J's document generator), white space and line breaks
 // between the tokens, and the non-standard spellings Kotlin was observed to accept (a missing comma between members, loose
@@ -4684,9 +4690,8 @@ QString pStdout(Rng& rng, bool playlist) {
     if (roll < 0.02) return bytesField(QByteArray());
     if (roll < 0.03) return bytesField(QByteArrayLiteral("not json\n"));
     if (rng.chance(0.05)) playlist = !playlist;   // the other kind of document
-    if (playlist && rng.chance(0.09)) {
-        // a long playlist (never broken, so that the truncation shows; 9% since Q3 Task 5, which gave kind P four more ops
-        // and so rs fewer cases: at 6% the rs share of truncated answers sat right at its 1% threshold)
+    if (playlist && rng.chance(0.06)) {
+        // a long playlist (never broken, so that the truncation shows)
         return bytesField(utf8Of(playlistDocument(rng, 0, PStyle{}, true), false) + '\n');
     }
     PStyle style;
@@ -4755,15 +4760,25 @@ QString generateFx(Rng& rng) {
     return hex(videoId) + u'\t' + pRun(rng) + u'\t' + pStdout(rng, false) + u'\t' + generateE(rng);
 }
 
-constexpr WOp kPOps[] = {{u"rs", generateRs}, {u"fx", generateFx}, {u"gq", generateGq}, {u"pc", generateGooglePc},
-                         {u"pw", generatePw}, {u"pj", generatePj}};
+constexpr WOp kPOps[] = {{u"rs", generateRs}, {u"fx", generateFx}};
+// The Google lyrics rules (Q3 Task 5): not in the mix, made only one op at a time (`xgs-diff gen P <count> <seed> <op>`).
+constexpr WOp kPSeparateOps[] = {{u"gq", generateGq}, {u"pc", generateGooglePc}, {u"pw", generatePw}, {u"pj", generatePj}};
 
 QString generateP(Rng& rng) {
-    const WOp& op = pick(rng, kPOps);
-    return op.name.toString() + u'\t' + op.fields(rng);
+    return generateOpCase(rng, kPOps, kPSeparateOps);
 }
 
 }  // namespace
+
+void setOnlyOp(const QString& op) {
+    onlyOp() = op;
+}
+
+bool hasOp(char kind, const QString& op) {
+    if (kind == 'W') return findOp(kWOps, op) || findOp(kWSeparateOps, op);
+    if (kind == 'P') return findOp(kPOps, op) || findOp(kPSeparateOps, op);
+    return false;
+}
 
 void registerKind(char kind, Generator gen) {
     generators().insert(kind, gen);

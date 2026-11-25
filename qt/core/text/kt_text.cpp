@@ -38,6 +38,11 @@ struct LetterOrDigitRange {     // code points above U+FFFF where Qt's letter-or
     char32_t last;
     bool letterOrDigit;
 };
+struct NonSpacingMarkRange {    // code points where Qt's Mn answer differs from JVM 21's (Character.getType == NON_SPACING_MARK);
+    char32_t first;             // the JVM's answer
+    char32_t last;
+    bool mark;
+};
 
 #include "kt_tables.inc"
 
@@ -60,6 +65,7 @@ static_assert(isStrictlyAscending(kUpperSpecials), "kt_tables.inc: kUpperSpecial
 static_assert(isStrictlyAscending(kLowerSpecials), "kt_tables.inc: kLowerSpecials must be sorted by unit");
 static_assert(isStrictlyAscending(kSupplementaryCases), "kt_tables.inc: kSupplementaryCases must be sorted by code point");
 static_assert(isStrictlyAscending(kSupplementaryLetterOrDigit), "kt_tables.inc: kSupplementaryLetterOrDigit must be sorted, disjoint");
+static_assert(isStrictlyAscending(kNonSpacingMarkRanges), "kt_tables.inc: kNonSpacingMarkRanges must be sorted, disjoint");
 constexpr bool rangesAreWellFormed() {
     for (const LetterOrDigitRange& range : kSupplementaryLetterOrDigit) {
         if (range.first > range.last || range.first <= 0xFFFF) return false;
@@ -283,8 +289,9 @@ bool isLetterOrDigit(char32_t codePoint) {
 
 // A letter is a letter or digit that is not Nd (the categories are disjoint). Above U+FFFF the letter-or-digit answer is
 // JVM 21's (above) and Qt only tells a digit from a letter. That assumes no supplementary code point moved between L* and
-// Nd from Unicode 15.0 to Qt's version. The Q3 Task 5 sweep confirmed it: every code point after and before a typographic
-// apostrophe (`\p{L}` of search_query.cpp's APOSTROPHE) gave Kotlin's answer.
+// Nd from Unicode 15.0 to Qt's version. A one-off observation of Q3 Task 5 (its report) agreed: every code point after and
+// before a typographic apostrophe (`\p{L}` of search_query.cpp's APOSTROPHE) gave Kotlin's answer. Kind B checks the
+// letter-or-digit part for every code point; repeat that observation after a Qt upgrade.
 bool isLetter(char32_t codePoint) {
     if (codePoint <= 0xFFFF) return isLetter(QChar(char16_t(codePoint)));
     return isLetterOrDigit(codePoint) && QChar::category(codePoint) != QChar::Number_DecimalDigit;
@@ -292,12 +299,8 @@ bool isLetter(char32_t codePoint) {
 
 bool isNonSpacingMark(char32_t codePoint) {
     if (codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) return false;
-    // U+1171E (AHOM CONSONANT SIGN MEDIAL RA) is Mn in JVM 21's Unicode 15.0 and Mc in Qt's newer Unicode. The Q3 Task 5
-    // sweep of every code point after a credit word (`\b`) found it, and nothing else, differing from the JVM.
-    if (codePoint == 0x1171E) return true;
-    const QChar::UnicodeVersion version = QChar::unicodeVersion(codePoint);
-    return version != QChar::Unicode_Unassigned && version <= QChar::Unicode_15_0 &&
-           QChar::category(codePoint) == QChar::Mark_NonSpacing;
+    if (const NonSpacingMarkRange* range = findRange(kNonSpacingMarkRanges, codePoint)) return range->mark;
+    return detail::qtNonSpacingMark(codePoint);
 }
 
 bool isAsciiSpace(QChar c) {
@@ -676,6 +679,10 @@ CharFacts qtCharFacts(char16_t unit) {
                             category == QChar::Separator_Paragraph || (unit >= 0x0009 && unit <= 0x000D) ||
                             (unit >= 0x001C && unit <= 0x001F);
     return {whitespace, letter, letter || category == QChar::Number_DecimalDigit, c.toUpper().unicode(), c.toLower().unicode()};
+}
+
+bool qtNonSpacingMark(char32_t codePoint) {
+    return QChar::category(codePoint) == QChar::Mark_NonSpacing;
 }
 
 bool qtLetterOrDigit(char32_t codePoint) {

@@ -64,8 +64,8 @@ import kotlinx.serialization.json.JsonPrimitive;
  *       one line per code point 0..10FFFF except the surrogates D800..DFFF: "cp lower upper" = the code point in hex, and
  *       String.lowercase() and String.uppercase() of the one-code-point string as hex units
  *   ... Oracle.java lettertable
- *       one line per code point 0..10FFFF except the surrogates D800..DFFF: "cp d" = the code point in hex and
- *       Character.isLetterOrDigit(int) as 0/1 (kind B)
+ *       one line per code point 0..10FFFF except the surrogates D800..DFFF: "cp d m" = the code point in hex,
+ *       Character.isLetterOrDigit(int) and Character.getType(int) == NON_SPACING_MARK as 0/1 (kind B)
  *   ... Oracle.java nfkctable
  *       one line per code point 0..10FFFF except the surrogates: "cp hex" = the code point in hex and
  *       java.text.Normalizer.normalize(s, Normalizer.Form.NFKC) of the one-code-point string (kind Z)
@@ -138,7 +138,8 @@ import kotlinx.serialization.json.JsonPrimitive;
  *   ... Oracle.java casetable      Unicode case data as the JVM's public API reports it: String.uppercase()/lowercase() of
  *                                  each single unit where it is not uppercaseChar()/lowercaseChar() (special casing), and
  *                                  the case mappings of the code points above U+FFFF
- *   ... Oracle.java lettertable    (also kind B) the code points above U+FFFF whose answer differs from Qt's are tabled
+ *   ... Oracle.java lettertable    (also kind B) the code points above U+FFFF whose letter-or-digit answer differs from
+ *                                  Qt's are tabled, and every code point whose Mn answer differs
  */
 public class Oracle {
     static String dec(String hex) {
@@ -271,7 +272,8 @@ public class Oracle {
     static void lettertable(StringBuilder out) {
         for (int cp = 0; cp <= 0x10FFFF; cp++) {
             if (cp >= 0xD800 && cp <= 0xDFFF) continue;
-            out.append(Integer.toHexString(cp)).append(' ').append(bit(Character.isLetterOrDigit(cp))).append('\n');
+            out.append(Integer.toHexString(cp)).append(' ').append(bit(Character.isLetterOrDigit(cp))).append(' ')
+                .append(bit(Character.getType(cp) == Character.NON_SPACING_MARK)).append('\n');
         }
     }
 
