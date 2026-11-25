@@ -57,6 +57,18 @@ private slots:
         QCOMPARE(blockOf(resultsUrl, 200, u"검색 결과 더미"_s), Block());
         QCOMPARE(blockOf(resultsUrl, std::nullopt, u""_s), Block());
     }
+
+    // Added (Task 1 review): the limit itself. Kotlin reads the text when `bodyText.length <= BLOCK_PAGE_MAX_TEXT`.
+    void aTextOfExactlyTheLimitIsReadAndOneUnitMoreIsNot() {
+        const QString sign = u"unusual traffic "_s;
+        const QString atLimit = sign + QString(BlockPageMaxText - sign.size(), QChar(u'가'));
+        const QString overLimit = atLimit + u'가';
+        QCOMPARE(atLimit.size(), qsizetype(BlockPageMaxText));
+        QCOMPARE(overLimit.size(), qsizetype(BlockPageMaxText + 1));
+
+        QCOMPARE(blockOf(resultsUrl, std::nullopt, atLimit), Block(Kind::Captcha));
+        QCOMPARE(blockOf(resultsUrl, std::nullopt, overLimit), Block());
+    }
 };
 
 QTEST_APPLESS_MAIN(PageClassifierTest)

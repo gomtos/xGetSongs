@@ -59,7 +59,9 @@ private slots:
     }
 
     void theAddressIsEncodedAsUtf8WithPercentTwentyForSpaces() {
-        const QString url = requests(u"RESCENE (리센느)"_s, u"LOVE ATTACK"_s).front().url();
+        const std::vector<GoogleSearchRequest> list = requests(u"RESCENE (리센느)"_s, u"LOVE ATTACK"_s);
+        QVERIFY(!list.empty());
+        const QString url = list.front().url();
 
         QCOMPARE(url, u"https://www.google.com/search?q=RESCENE%20%28%EB%A6%AC%EC%84%BC%EB%8A%90%29%20LOVE%20ATTACK%20lyrics&hl=ko"_s);
         const std::vector<GoogleSearchRequest> plain = requests(u"IU"_s, u"Love poem"_s);
@@ -110,9 +112,15 @@ private slots:
     }
 
     void theCacheKeyIgnoresCaseAndSpacing() {
-        const QString one = cacheKey(requests(u"IU"_s, u"Love poem"_s).front());
-        const QString other = cacheKey(requests(u" iu "_s, u"LOVE  POEM"_s).front());
-        const QString another = cacheKey(requests(u"IU"_s, u"Palette"_s).front());
+        const std::vector<GoogleSearchRequest> oneList = requests(u"IU"_s, u"Love poem"_s);
+        const std::vector<GoogleSearchRequest> otherList = requests(u" iu "_s, u"LOVE  POEM"_s);
+        const std::vector<GoogleSearchRequest> anotherList = requests(u"IU"_s, u"Palette"_s);
+        QVERIFY(!oneList.empty());
+        QVERIFY(!otherList.empty());
+        QVERIFY(!anotherList.empty());
+        const QString one = cacheKey(oneList.front());
+        const QString other = cacheKey(otherList.front());
+        const QString another = cacheKey(anotherList.front());
 
         QCOMPARE(one, other);
         QVERIFY(one != another);
@@ -153,6 +161,15 @@ private slots:
         QCOMPARE(upper, lower);
         QCOMPARE(finalForm, lower);
         QCOMPARE(lower, u"οδοσ x"_s);
+    }
+
+    // Added (Task 1 review): `\b` after a credit word needs a non-word character next, so `featuring` is no credit word, in
+    // brackets or as a tail. In Kotlin, CREDIT_BRACKET and TRAILING_CREDIT both have `(?:feat|ft|prod|narr)\b`; after `feat` comes
+    // `u`, an ASCII letter and so a word character, so neither expression matches and the title is kept as written.
+    void aCreditWordFollowedByAWordCharacterIsNoCredit() {
+        QCOMPARE(texts(u"IU"_s, u"Song (featuring Someone)"_s), QStringList{u"IU Song (featuring Someone) lyrics"_s});
+        QCOMPARE(texts(u"IU"_s, u"Song featuring Someone"_s), QStringList{u"IU Song featuring Someone lyrics"_s});
+        QCOMPARE(texts(u"IU"_s, u"Song [Production Someone]"_s), QStringList{u"IU Song [Production Someone] lyrics"_s});
     }
 };
 

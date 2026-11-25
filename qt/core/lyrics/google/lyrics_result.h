@@ -20,7 +20,7 @@ struct GoogleLyricsResult {
         CoolingDown,         // Google is being left alone after trouble: no request was made
     };
 
-    Kind kind;
+    Kind kind = Kind::NoCard;
     QString lyrics;          // Found only
     int lineCount = 0;       // Found only
     int paragraphCount = 0;  // Found only

@@ -4,6 +4,7 @@
 #include <QTemporaryDir>
 
 #include <optional>
+
 #include "paths/paths.h"
 #include "tools/tool_locator.h"
 

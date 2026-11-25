@@ -125,12 +125,12 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/GoogleSearchQueryTest.kt",
     "exe": "tst_google_search_query",
     "added": ["oddCharactersStayInsideTheQueryOfTheAddress", "aSearchBaseOfTheCheckIsUsedAsGiven",
-              "theCacheKeyTreatsBothSigmasAsOneLetter"]
+              "theCacheKeyTreatsBothSigmasAsOneLetter", "aCreditWordFollowedByAWordCharacterIsNoCredit"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/PageClassifierTest.kt",
     "exe": "tst_page_classifier",
-    "added": []
+    "added": ["aTextOfExactlyTheLimitIsReadAndOneUnitMoreIsNot"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/PageWatchTest.kt",
