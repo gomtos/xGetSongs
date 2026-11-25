@@ -47,6 +47,10 @@
 #include "job/item_downloader.h"
 #include "json/json.h"
 #include "log/log_redaction.h"
+#include "lyrics/google/lyrics_fetcher.h"
+#include "lyrics/google/page_classifier.h"
+#include "lyrics/google/page_watch.h"
+#include "lyrics/google/search_query.h"
 #include "lyrics/lrclib_lyrics_provider.h"
 #include "lyrics/lyrics_extractor.h"
 #include "lyrics/lyrics_matcher.h"
@@ -59,6 +63,7 @@
 #include "support/fake_lyrics_provider.h"
 #include "support/fake_output_sink.h"
 #include "support/fake_process_runner.h"
+#include "support/google_fakes.h"
 #include "support/job_fakes.h"
 #include "support/test_tools.h"
 #include "tags/ffmetadata.h"
@@ -409,6 +414,7 @@ QString answerI(const QStringList& fields) {
 // W fn name -> 0 when output::LocalFolderSink::exists(name) throws std::invalid_argument, else 1 (answerFn)
 // W lf query maxRequests timeout step... -> lyrics::LrclibLyricsProvider on a scripted HTTP client (answerLf)
 // W jb request items scripts... -> job::DefaultDownloadService on scripted collaborators (answerJb)
+// W gf n lookup... answer... -> lyrics::google::GoogleLyricsFetcher on a scripted browser (answerGf)
 // One answerer per op (kWAnswers); the op's fields follow the op.
 QString pathOrErr(const std::optional<QString>& path) {
     return path ? hexText(*path) : QStringLiteral("ERR");
@@ -875,12 +881,168 @@ QString answerJb(const QStringList& fields) {
     return out + QStringLiteral(" R ") + QString::number(remaining);
 }
 
+// ---- Google lyrics (Q3 Task 5): P gq, P pc, P pw, P pj, W gf; Oracle.java's answerGooglePage and answerGoogleFetch
+// document the notation ----
+namespace google = lyrics::google;
+
+QString kindName(google::GoogleLyricsResult::Kind kind) {
+    google::GoogleLyricsResult result;
+    result.kind = kind;
+    return result.toString();
+}
+
+// P gq artist title -> R n (text language url)... K cacheKey
+QString answerGq(const QStringList& fields) {
+    if (fields.size() != 2) return QStringLiteral("?");
+    const std::vector<google::GoogleSearchRequest> requests = google::requests(textOf(fields.at(0)), textOf(fields.at(1)));
+    QString out = QStringLiteral("R ") + QString::number(requests.size());
+    for (const google::GoogleSearchRequest& request : requests)
+        out += u' ' + hexText(request.text) + u' ' + hexText(request.language) + u' ' + hexText(request.url());
+    if (!requests.empty()) out += QStringLiteral(" K ") + hexText(google::cacheKey(requests.front()));
+    return out;
+}
+
+// P pc url status body -> - | Consent | Captcha | RateLimited
+QString answerGoogleBlock(const QStringList& fields) {
+    if (fields.size() != 3) return QStringLiteral("?");
+    std::optional<int> status;
+    if (fields.at(1) != u"-") {
+        bool ok = false;
+        status = fields.at(1).toInt(&ok);
+        if (!ok) return QStringLiteral("?");
+    }
+    const std::optional<google::GoogleLyricsResult::Kind> block = google::blockOf(textOf(fields.at(0)), status, textOf(fields.at(2)));
+    return block ? kindName(*block) : QStringLiteral("-");
+}
+
+// P pw settle step... -> D and isDone of each probe; a step is dt,url,readyState,hasCard,body
+QString answerPw(const QStringList& fields) {
+    if (fields.isEmpty()) return QStringLiteral("?");
+    bool ok = false;
+    const qint64 settle = fields.at(0).toLongLong(&ok);
+    if (!ok) return QStringLiteral("?");
+    std::chrono::nanoseconds now{0};
+    google::PageWatch watch(std::chrono::nanoseconds(settle), [&now] { return now; });
+    QString out = QStringLiteral("D");
+    for (qsizetype k = 1; k < fields.size(); ++k) {
+        const QStringList step = fields.at(k).split(u',');
+        if (step.size() != 5) return QStringLiteral("?");
+        const qint64 dt = step.at(0).toLongLong(&ok);
+        if (!ok) return QStringLiteral("?");
+        now += std::chrono::nanoseconds(dt);
+        const google::PageProbe probe{textOf(step.at(1)), textOf(step.at(2)), step.at(3) == u"1", textOf(step.at(4))};
+        out += u' ' + flag(watch.isDone(probe));
+    }
+    return out;
+}
+
+// P pj text -> OK url readyState hasCard bodyText | N
+QString answerPj(const QStringList& fields) {
+    if (fields.size() != 1) return QStringLiteral("?");
+    const std::optional<google::PageProbe> probe = google::probeFromJson(textOf(fields.at(0)));
+    if (!probe) return QStringLiteral("N");
+    return QStringLiteral("OK ") + hexText(probe->url) + u' ' + hexText(probe->readyState) + u' ' + flag(probe->hasCard) + u' ' +
+           hexText(probe->bodyText);
+}
+
+// The browser of W gf: answers each render with the case's next answer (O, U<reason>, L<url>/<body>/<card>), as Oracle.java's
+// proxy; the card is what lyrics_card.js would answer for Oracle.java's page (google::testing::scriptAnswer). Records the
+// addresses in the events of the lookup.
+class GfBrowser final : public google::RenderingBrowser {
+public:
+    GfBrowser(QStringList answers, QStringList& events) : m_answers(std::move(answers)), m_events(events) {}
+    bool bad = false;
+
+    google::RenderResult render(const QString& url, std::chrono::nanoseconds, std::stop_token) override {
+        using Kind = google::RenderResult::Kind;
+        m_events.append(u'u' + hexText(url));
+        if (m_next >= m_answers.size()) return {Kind::Unavailable, {}, {}, {}, QStringLiteral("no answer left")};
+        const QString answer = m_answers.at(m_next++);
+        if (answer == u"O") return {Kind::TimedOut, {}, {}, {}, {}};
+        if (answer.startsWith(u'U')) return {Kind::Unavailable, {}, {}, {}, textOf(answer.mid(1))};
+        const QStringList f = answer.mid(1).split(u'/');
+        if (!answer.startsWith(u'L') || f.size() != 3) {
+            bad = true;
+            return {Kind::Unavailable, {}, {}, {}, QStringLiteral("bad answer")};
+        }
+        QString card;
+        if (f.at(2) == u"-") {
+            card = google::testing::scriptAnswer(false, {});
+        } else if (f.at(2) == u"S") {
+            card = google::testing::scriptAnswer(true, {});
+        } else {
+            std::vector<google::testing::ScriptLine> lines;
+            int parent = 0;
+            for (const QString& paragraph : f.at(2).split(u';')) {
+                if (paragraph != u"~") {
+                    for (const QString& line : paragraph.split(u'+')) lines.push_back({parent, textOf(line)});
+                }
+                ++parent;
+            }
+            card = google::testing::scriptAnswer(true, lines);
+        }
+        return {Kind::Loaded, textOf(f.at(0)), card, textOf(f.at(1)), {}};
+    }
+
+private:
+    QStringList m_answers;
+    QStringList& m_events;
+    qsizetype m_next = 0;
+};
+
+class GfLog final : public google::GoogleLyricsLog {
+public:
+    explicit GfLog(QStringList& events) : m_events(events) {}
+    void info(const QString& message) override { m_events.append(u'i' + hexText(message)); }
+    void warn(const QString& message) override { m_events.append(u'w' + hexText(message)); }
+
+private:
+    QStringList& m_events;
+};
+
+// W gf n lookup... answer... -> per lookup `; <result hex>` and its events (u<url> p<nanoseconds> i<hex> w<hex>)
+QString answerGf(const QStringList& fields) {
+    if (fields.isEmpty()) return QStringLiteral("?");
+    bool ok = false;
+    const int n = fields.at(0).toInt(&ok);
+    if (!ok || n < 1 || fields.size() < 1 + n) return QStringLiteral("?");
+    QStringList events;
+    GfBrowser browser(fields.mid(1 + n), events);
+    GfLog log(events);
+    std::chrono::nanoseconds now{0};
+    google::FetcherOptions options;
+    options.clock = [&now] { return now; };
+    options.pause = [&](std::chrono::nanoseconds length, std::stop_token) {
+        events.append(u'p' + QString::number(length.count()));
+        now += length;
+        return true;
+    };
+    options.log = &log;
+    google::GoogleLyricsFetcher fetcher(browser, options);
+    QString out;
+    for (int i = 0; i < n; ++i) {
+        const QStringList lookup = fields.at(1 + i).split(u'/');
+        if (lookup.size() != 3) return QStringLiteral("?");
+        now += std::chrono::nanoseconds(lookup.at(0).toLongLong(&ok));
+        if (!ok) return QStringLiteral("?");
+        events.clear();
+        const std::optional<google::GoogleLyricsResult> result = fetcher.fetch(textOf(lookup.at(1)), textOf(lookup.at(2)), {});
+        if (!result) return QStringLiteral("?");
+        if (i > 0) out += u' ';
+        out += QStringLiteral("; ") + hexText(result->toString());
+        for (const QString& event : std::as_const(events)) out += u' ' + event;
+    }
+    if (browser.bad) return QStringLiteral("?");
+    return out;
+}
+
 struct WAnswer {
     QStringView op;
     Answerer answer;   // gets the fields after the op (at least one)
 };
 constexpr WAnswer kWAnswers[] = {{u"pn", answerPn}, {u"pc", answerPc}, {u"pf", answerPf}, {u"px", answerPx}, {u"ln", answerLn},
-                                {u"st", answerSt}, {u"up", answerUp}, {u"fn", answerFn}, {u"lf", answerLf}, {u"jb", answerJb}};
+                                {u"st", answerSt}, {u"up", answerUp}, {u"fn", answerFn}, {u"lf", answerLf}, {u"jb", answerJb},
+                                {u"gf", answerGf}};
 
 QString answerW(const QStringList& fields) {
     if (fields.size() < 2) return QStringLiteral("?");
@@ -894,7 +1056,8 @@ QString answerW(const QStringList& fields) {
 // startFailureText, -: no yt-dlp path); the stdout bytes (2 hex digits each, "." for none), split into lines by
 // process::LineSplitter as SystemProcessRunner does; the stderr lines, one per field (an empty field is no line). Stdout goes
 // to the handler before stderr. The tools are C:\tools\yt-dlp.exe, C:\tools\ffmpeg.exe and C:\tools\node.exe. Every answer
-// ends in " R" and the commands the runner was given.
+// ends in " R" and the commands the runner was given. (The ops gq, pc, pw and pj of kind P are the Google lyrics rules,
+// answered above: answerGq, answerGoogleBlock, answerPw, answerPj.)
 const QString pYtDlp = QStringLiteral("C:\\tools\\yt-dlp.exe");
 
 struct PCase {
@@ -955,7 +1118,8 @@ QString answerFx(const QStringList& fields) {
     return answer + c.runner.commands;
 }
 
-constexpr WAnswer kPAnswers[] = {{u"rs", answerRs}, {u"fx", answerFx}};
+constexpr WAnswer kPAnswers[] = {{u"rs", answerRs}, {u"fx", answerFx}, {u"gq", answerGq}, {u"pc", answerGoogleBlock},
+                                {u"pw", answerPw}, {u"pj", answerPj}};
 
 QString answerP(const QStringList& fields) {
     if (fields.size() < 2) return QStringLiteral("?");

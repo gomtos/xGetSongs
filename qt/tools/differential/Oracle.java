@@ -121,9 +121,13 @@ import kotlinx.serialization.json.JsonPrimitive;
  *                                            name: 0 | 1, answerFileName), lf query maxRequests timeout step...
  *                                            (LrclibLyricsProvider on an HttpClient that answers from the case and sends
  *                                            nothing: answerLookUp), jb request items scripts... (the whole
- *                                            download job on scripted collaborators: answerJob)
+ *                                            download job on scripted collaborators: answerJob), gf n lookup... answer...
+ *                                            (GoogleLyricsFetcher on a scripted browser: answerGoogleFetch)
  *         P op fields...                     YtDlpResolver on a runner that plays the case, one op per case (answerP): rs input
- *                                            run stdout stderr..., fx videoId run stdout stderr...
+ *                                            run stdout stderr..., fx videoId run stdout stderr...; and the Google lyrics
+ *                                            rules (answerGooglePage): gq artist title (GoogleSearchQuery), pc url status
+ *                                            body (PageClassifier.blockOf), pw settle step... (PageWatch), pj text (the
+ *                                            decoding of a PageProbe)
  *
  * An observation, not a gate (Q2b Task 2 Step 4):
  *   xgs-diff arglists 2000 20261118 | ... Oracle.java argv <path of xgs-test-child.exe>
@@ -519,7 +523,10 @@ public class Oracle {
                     break;
                 }
                 case "P": {
-                    out.append(answerP(part));
+                    out.append(switch (part[1]) {
+                        case "gq", "pc", "pw", "pj" -> answerGooglePage(part);
+                        default -> answerP(part);
+                    });
                     break;
                 }
                 case "C": {
@@ -574,6 +581,8 @@ public class Oracle {
                     return answerLookUp(part);
                 case "jb":
                     return answerJob(part);
+                case "gf":
+                    return answerGoogleFetch(part);
                 default:
                     return "?";
             }
@@ -1229,6 +1238,226 @@ public class Oracle {
         } finally {
             deleteTree(tempRoot);
         }
+    }
+
+    // ---- Google lyrics (Q3 Task 5): P gq, P pc, P pw, P pj and W gf ----
+    // The classes are `internal` in Kotlin and public in the bytecode. A kotlin.time.Duration parameter is a long on the JVM
+    // (an inline class): DurationKt.toDuration(long, DurationUnit) makes one from nanoseconds, and the methods whose names
+    // Kotlin mangled for it (`plusAssign-LRDsOJo`, `render-8Mi8wO0`, `unbox-impl`, `getInWholeNanoseconds-impl`) are reached
+    // by reflection or through a java.lang.reflect.Proxy (a Java identifier cannot hold `-`).
+    //   P gq artist title        GoogleSearchQuery.requests(artist, title) -> R n, then text language url of each request
+    //                            (hex), then (n > 0) K and cacheKey(the first request)
+    //   P pc url status body     PageClassifier.blockOf(url, status (decimal, - for null), body) -> - | Consent | Captcha |
+    //                            RateLimited
+    //   P pw settle step...      PageWatch(settle (nanoseconds), a TestTimeSource); a step is dt,url,readyState,hasCard,body
+    //                            (dt: nanoseconds the clock moves before the probe; hasCard 0 | 1) -> D and isDone of each
+    //                            probe (0 | 1)
+    //   P pj text                Json { ignoreUnknownKeys = true }.decodeFromString<PageProbe>(text) (DrivenBrowser.probe):
+    //                            -> OK url readyState hasCard bodyText | N (IllegalArgumentException, SerializationException
+    //                            among them)
+    static long nanos(long value) {
+        return kotlin.time.DurationKt.toDuration(value, kotlin.time.DurationUnit.NANOSECONDS);
+    }
+
+    static java.lang.reflect.Method plusAssign;
+    static java.lang.reflect.Method unboxDuration;
+    static java.lang.reflect.Method durationNanos;
+
+    static void advance(kotlin.time.TestTimeSource clock, long nanoseconds) throws Exception {
+        if (nanoseconds == 0) return;
+        if (plusAssign == null) plusAssign = kotlin.time.TestTimeSource.class.getMethod("plusAssign-LRDsOJo", long.class);
+        plusAssign.invoke(clock, nanos(nanoseconds));
+    }
+
+    // the nanoseconds of a boxed kotlin.time.Duration
+    static long nanosOf(Object duration) throws Exception {
+        if (unboxDuration == null) {
+            unboxDuration = kotlin.time.Duration.class.getMethod("unbox-impl");
+            durationNanos = kotlin.time.Duration.class.getMethod("getInWholeNanoseconds-impl", long.class);
+        }
+        return (Long) durationNanos.invoke(null, unboxDuration.invoke(duration));
+    }
+
+    static kotlinx.serialization.json.Json probeJson;
+    // the constructors with a DefaultConstructorMarker (synthetic, so javac does not offer them; reached by reflection as
+    // lrclibConstructor is)
+    static java.lang.reflect.Constructor<?> pageWatchConstructor;
+    static java.lang.reflect.Constructor<?> fetcherConstructor;
+
+    static String resultName(Object result) {
+        return result == null ? "-" : result.toString();
+    }
+
+    static String answerGooglePage(String[] part) throws Exception {
+        switch (part[1]) {
+            case "gq": {
+                java.util.List<com.xgetsongs.engine.lyrics.google.GoogleSearchRequest> requests =
+                    com.xgetsongs.engine.lyrics.google.GoogleSearchQuery.INSTANCE.requests(dec(part[2]), dec(part[3]));
+                StringBuilder out = new StringBuilder("R ").append(requests.size());
+                for (var request : requests) {
+                    out.append(' ').append(enc(request.getText())).append(' ').append(enc(request.getLanguage())).append(' ')
+                        .append(enc(request.getUrl()));
+                }
+                if (!requests.isEmpty()) {
+                    out.append(" K ").append(enc(com.xgetsongs.engine.lyrics.google.GoogleSearchQuery.INSTANCE.cacheKey(requests.get(0))));
+                }
+                return out.toString();
+            }
+            case "pc": {
+                Integer status = part[3].equals("-") ? null : Integer.valueOf(Integer.parseInt(part[3]));
+                return resultName(com.xgetsongs.engine.lyrics.google.PageClassifier.INSTANCE.blockOf(dec(part[2]), status, dec(part[4])));
+            }
+            case "pw": {
+                kotlin.time.TestTimeSource clock = new kotlin.time.TestTimeSource();
+                if (pageWatchConstructor == null) {
+                    pageWatchConstructor = com.xgetsongs.engine.lyrics.google.PageWatch.class.getConstructor(long.class,
+                        kotlin.time.TimeSource.class, kotlin.jvm.internal.DefaultConstructorMarker.class);
+                }
+                com.xgetsongs.engine.lyrics.google.PageWatch watch = (com.xgetsongs.engine.lyrics.google.PageWatch)
+                    pageWatchConstructor.newInstance(nanos(Long.parseLong(part[2])), clock, null);
+                StringBuilder out = new StringBuilder("D");
+                for (int k = 3; k < part.length; k++) {
+                    String[] step = part[k].split(",", -1);
+                    advance(clock, Long.parseLong(step[0]));
+                    var probe = new com.xgetsongs.engine.lyrics.google.PageProbe(dec(step[1]), dec(step[2]), step[3].equals("1"), dec(step[4]));
+                    out.append(' ').append(bit(watch.isDone(probe)));
+                }
+                return out.toString();
+            }
+            case "pj": {
+                if (probeJson == null) {
+                    probeJson = kotlinx.serialization.json.JsonKt.Json(kotlinx.serialization.json.Json.Default, builder -> {
+                        builder.setIgnoreUnknownKeys(true);
+                        return kotlin.Unit.INSTANCE;
+                    });
+                }
+                try {
+                    com.xgetsongs.engine.lyrics.google.PageProbe probe = probeJson.decodeFromString(
+                        com.xgetsongs.engine.lyrics.google.PageProbe.Companion.serializer(), dec(part[2]));
+                    return "OK " + enc(probe.getUrl()) + " " + enc(probe.getReadyState()) + " " + bit(probe.getHasCard()) + " "
+                        + enc(probe.getBodyText());
+                } catch (IllegalArgumentException e) {
+                    return "N";
+                }
+            }
+            default:
+                return "?";
+        }
+    }
+
+    // W gf n lookup... answer...: GoogleLyricsFetcher(a scripted RenderingBrowser, a TestTimeSource, the default intervals and
+    // cool-downs, a log that records its lines, a pause that records its length and moves the clock by it), and fetch for each
+    // lookup in order. A lookup is dt/artist/title: the clock moves dt nanoseconds, then fetch(artist, title). The browser
+    // answers each render with the next answer (once they run out: Unavailable("no answer left")):
+    //   O                     TimedOut
+    //   U<reason hex>         Unavailable(reason)
+    //   L<url>/<body>/<card>  Loaded(url, html, bodyText): the html is a page as GoogleTestSupport.kt builds one: no card (-),
+    //                         a card marker without lines (S), or a card of paragraphs (;-separated; ~ a paragraph without
+    //                         lines, else +-separated lines as hex, the text HTML-escaped) in testPage(testCard(...))
+    // The browser never throws (the reason of a thrown exception differs by design: the class name here, "exception" in C++).
+    // -> per lookup: `;` and the result's toString as hex, then u<url> for each render, p<nanoseconds> for each pause, and
+    // i<hex> / w<hex> for each info / warn line, all in the order they happened.
+    static String htmlEscape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
+
+    static String gfPage(String card) {
+        String body;
+        if (card.equals("-")) {
+            body = "";
+        } else if (card.equals("S")) {
+            body = "<div data-lyricid=\"id-1\"></div>";
+        } else {
+            StringBuilder paragraphs = new StringBuilder();
+            for (String paragraph : card.split(";", -1)) {
+                StringBuilder lines = new StringBuilder();
+                if (!paragraph.equals("~")) {
+                    String[] items = paragraph.split("\\+", -1);
+                    for (int i = 0; i < items.length; i++) {
+                        if (i > 0) lines.append("<br>");
+                        lines.append("<span jsname=\"YS01Ge\">").append(htmlEscape(dec(items[i]))).append("</span>");
+                    }
+                }
+                paragraphs.append("<div jsname=\"U8S5sf\">").append(lines).append("</div>");
+            }
+            body = "<div data-lyricid=\"id-1\"><div jsname=\"WbKHeb\">" + paragraphs + "</div></div>";
+        }
+        return "<html><body><div>검색 결과 더미</div>" + body + "</body></html>";
+    }
+
+    static Object gfRender(String answer) {
+        if (answer == null) return new com.xgetsongs.engine.lyrics.google.RenderResult.Unavailable("no answer left");
+        if (answer.equals("O")) return com.xgetsongs.engine.lyrics.google.RenderResult.TimedOut.INSTANCE;
+        if (answer.startsWith("U")) return new com.xgetsongs.engine.lyrics.google.RenderResult.Unavailable(dec(answer.substring(1)));
+        String[] f = answer.substring(1).split("/", -1);
+        return new com.xgetsongs.engine.lyrics.google.RenderResult.Loaded(dec(f[0]), gfPage(f[2]), dec(f[1]));
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static String answerGoogleFetch(String[] part) throws Exception {
+        int n = Integer.parseInt(part[2]);
+        String[] answers = java.util.Arrays.copyOfRange(part, 3 + n, part.length);
+        kotlin.time.TestTimeSource clock = new kotlin.time.TestTimeSource();
+        java.util.List<String> events = new java.util.ArrayList<>();
+        int[] next = {0};
+        com.xgetsongs.engine.lyrics.google.RenderingBrowser browser = (com.xgetsongs.engine.lyrics.google.RenderingBrowser)
+            java.lang.reflect.Proxy.newProxyInstance(Oracle.class.getClassLoader(),
+                new Class<?>[] {com.xgetsongs.engine.lyrics.google.RenderingBrowser.class}, (proxy, method, args) -> {
+                    switch (method.getName()) {
+                        case "toString": return "gf browser";
+                        case "hashCode": return System.identityHashCode(proxy);
+                        case "equals": return proxy == args[0];
+                        default: break;
+                    }
+                    if (!method.getName().startsWith("render-")) throw new UnsupportedOperationException(method.getName());
+                    events.add("u" + enc((String) args[0]));
+                    return gfRender(next[0] < answers.length ? answers[next[0]++] : null);
+                });
+        com.xgetsongs.engine.lyrics.google.GoogleLyricsLog log = new com.xgetsongs.engine.lyrics.google.GoogleLyricsLog() {
+            @Override
+            public void info(String message) {
+                events.add("i" + enc(message));
+            }
+
+            @Override
+            public void warn(String message) {
+                events.add("w" + enc(message));
+            }
+        };
+        kotlin.jvm.functions.Function2<Object, Object, Object> pause = (duration, continuation) -> {
+            try {
+                long length = nanosOf(duration);
+                events.add("p" + length);
+                advance(clock, length);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+            return kotlin.Unit.INSTANCE;
+        };
+        // the mask: bits 2..5 (minInterval, firstBackoff, maxBackoff, pageTimeout) take their defaults
+        int mask = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5);
+        if (fetcherConstructor == null) {
+            fetcherConstructor = com.xgetsongs.engine.lyrics.google.GoogleLyricsFetcher.class.getConstructor(
+                com.xgetsongs.engine.lyrics.google.RenderingBrowser.class, kotlin.time.TimeSource.class, long.class, long.class,
+                long.class, long.class, com.xgetsongs.engine.lyrics.google.GoogleLyricsLog.class, kotlin.jvm.functions.Function2.class,
+                int.class, kotlin.jvm.internal.DefaultConstructorMarker.class);
+        }
+        com.xgetsongs.engine.lyrics.google.GoogleLyricsFetcher fetcher = (com.xgetsongs.engine.lyrics.google.GoogleLyricsFetcher)
+            fetcherConstructor.newInstance(browser, clock, 0L, 0L, 0L, 0L, log, pause, mask, null);
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            String[] lookup = part[3 + i].split("/", -1);
+            advance(clock, Long.parseLong(lookup[0]));
+            events.clear();
+            String artist = dec(lookup[1]);
+            String title = dec(lookup[2]);
+            Object result = kotlinx.coroutines.BuildersKt.<Object>runBlocking(kotlin.coroutines.EmptyCoroutineContext.INSTANCE,
+                (scope, continuation) -> fetcher.fetch(artist, title, (kotlin.coroutines.Continuation) continuation));
+            if (i > 0) out.append(' ');
+            out.append("; ").append(enc(result.toString()));
+            for (String event : events) out.append(' ').append(event);
+        }
+        return out.toString();
     }
 
     // argv <helper>: an observation, not a gate (Q2b Task 2 Step 4). For each argument list on stdin (one per line, every

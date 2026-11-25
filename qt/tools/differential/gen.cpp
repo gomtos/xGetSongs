@@ -3953,12 +3953,531 @@ QString generateJb(Rng& rng) {
     return line;
 }
 
+// ---- Google lyrics (Q3 Task 5): P gq, P pc, P pw, P pj, W gf ----
+// The flagged points of the plan, each of which these generators hit: `\b` after a credit word (followed by an ASCII word
+// character, a non-ASCII letter, a combining mark, a dot), in brackets and as a trailing credit; `\p{L}` around ‘ and ’ with
+// BMP and supplementary letters and digits and unpaired surrogates; `\s` (Java's ASCII set) against other white space
+// (NBSP, U+2028, U+3000, U+0085, U+001C..U+001F) and Kotlin's wider trim(); every kind of character in the address
+// (URLEncoder, `+` and `%20`, hl); NFKC and lowercase of the cache key; blockOf's 2000-unit limit and the markers in mixed
+// case; PageWatch's settle time.
+
+// White space of every kind: Java's `\s` ([ \t\n\x0B\f\r]), Kotlin white space that `\s` does not take (NBSP, U+2028,
+// U+2029, U+3000, U+001C..U+001F, U+1680, U+2000..U+200A), and what neither counts (U+0085, U+200B, U+FEFF).
+constexpr QStringView kGoogleSpaces[] = {u" ", u" ", u" ", u"  ", u"\t", u"\n", u"\r", u"\u000b", u"\f", u" ", u" ",
+                                         u" ", u"　", u"\u0085", u"\u001c", u"\u001d", u"\u001e", u"\u001f", u" ",
+                                         u" ", u" ", u"​", u"﻿", u"   ", u"\t　"};
+constexpr QStringView kCreditWordsMixed[] = {u"feat", u"ft", u"prod", u"narr"};
+// What follows a credit word: `\b` holds before a dot, white space, a bracket, a non-ASCII letter, a combining mark, an
+// emoji, an unpaired surrogate; not before an ASCII letter, digit or `_`.
+constexpr QStringView kAfterCredit[] = {u".", u". ", u" ", u"\t", u". ", u" ", u"　", u" ", u"\u0085", u"\u001c",
+                                        u"\u000b", u"\f", u"a", u"Z", u"7", u"_", u"uring", u"한", u"é", u"́", u"..",
+                                        u")", u"]", u"(", u"-", u"'", u"\U0001d49c", u"\U0001f600", u"\xD83D", u". .", u".x", u""};
+// The nine quotes of Kotlin's QUOTES, the straight apostrophe, and three that are no quote to Kotlin.
+constexpr QStringView kGoogleQuotes[] = {u"\"", u"‘", u"’", u"‚", u"‛", u"“", u"”", u"„",
+                                         u"‟", u"'", u"`", u"«", u"＂"};
+// Neighbours of a typographic apostrophe: BMP letters, supplementary letters (U+1D49C, U+10400, U+20000), digits (ASCII,
+// Arabic-Indic, U+1D7CF), an emoji, unpaired surrogates, white space, punctuation, a combining mark, nothing.
+constexpr QStringView kApostropheNeighbours[] = {u"a", u"Z", u"é", u"한", u"α", u"א", u"\U0001d49c", u"\U00010400",
+                                                 u"\U00020000", u"1", u"٣", u"\U0001d7cf", u"\U0001f600", u"\xD83D", u"\xDE00",
+                                                 u" ", u" ", u".", u"́", u"_", u""};
+// The ends of Kotlin's three Hangul ranges and their outside neighbours.
+constexpr QStringView kHangulEdges[] = {u"가", u"힣", u"꯿", u"힤", u"ᄀ", u"ᇿ", u"ჿ", u"ሀ",
+                                        u"㄰", u"㆏", u"ㄯ", u"㆐", u"ㄱ", u"한글"};
+// Characters of the address: the reserved ones, what URLEncoder leaves (`*-._`), non-ASCII, a pair, unpaired surrogates.
+constexpr QStringView kAddressPieces[] = {u"&", u"#", u"%", u"+", u"?", u"=", u"/", u"*", u"-", u".", u"_", u"~", u"!", u"'", u"(",
+                                          u")", u":", u";", u",", u"@", u"$", u"[", u"]", u"\\", u"^", u"|", u"%20", u"a+b", u"&hl=en",
+                                          u"ÿ", u"Ā", u"€", u"\U0001f3b5", u"\xD83D", u"\xDBFF", u"\xDC00", QStringView(u"\0x", 2),
+                                          u"\u007f", u"\u0080", u"�"};
+// Compatibility characters (NFKC changes them) and case oddities of the cache key; no σ-forms other than Σ σ ς themselves.
+constexpr QStringView kKeyPieces[] = {u"ＡＢ", u"ｌｏｖｅ", u"ﬁ", u"ﬀ", u"ﬃ", u"ﬆ",
+                                      u"㎏", u"①", u"½", u"²", u"™", u"㈱", u"İ", u"ı",
+                                      u"ẞ", u"ß", u"K", u"Å", u"ǅ", u"Ǆ", u"ŉ", u"ㄱ",
+                                      u"ﾡ", u"ｶﾞ", u"가", u"각", u"　", u"Σ",
+                                      u"σ", u"ς", u"ΣΣ", u"AΣ", u"ΟΣ Ο", u"\U0001d400",
+                                      u"Ⅷ", u"Ⓐ", u"Å", u"Å", u"Ω"};
+
+QString jsonEscapedKey(const QString& key);   // (kind P below)
+
+QString googleSpace(Rng& rng) {
+    return pick(rng, kGoogleSpaces).toString();
+}
+
+// a credit word in mixed case
+QString creditWordOf(Rng& rng) {
+    return asciiCaseShuffle(rng, pick(rng, kCreditWordsMixed).toString());
+}
+
+// the words of a credit: a name or two, Korean, or nothing
+QString creditNames(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.15) return QString();
+    if (roll < 0.6) return pick(rng, {u"X"_s, u"Somebody"_s, u"IU"_s, u"아이유"_s, u"A & B"_s, u"Y Z"_s, u"Émile"_s});
+    return songWords(rng, 1, 3);
+}
+
+// A credit in brackets: `(` or `[`, white space of any kind, the word, what follows it, names, and a closing bracket (now
+// and then of the other kind, a bracket inside, or none).
+QString bracketCredit(Rng& rng) {
+    QString out = rng.chance(0.6) ? u"("_s : u"["_s;
+    if (rng.chance(0.35)) out += googleSpace(rng);
+    out += creditWordOf(rng) + pick(rng, kAfterCredit) + creditNames(rng);
+    const double roll = rng.next();
+    if (roll < 0.06) return out;                                        // never closed
+    if (roll < 0.12) out += pick(rng, {u"("_s, u"["_s, u"(x)"_s});      // a bracket inside
+    return out + (rng.chance(0.75) ? (out.startsWith(u'(') ? u")"_s : u"]"_s) : (rng.chance(0.5) ? u")"_s : u"]"_s));
+}
+
+// A credit as a tail: white space (of any kind), the word, what follows it, white space, names, and now and then a bracket
+// after it.
+QString trailingCredit(Rng& rng) {
+    QString out = googleSpace(rng) + creditWordOf(rng) + pick(rng, kAfterCredit);
+    if (rng.chance(0.7)) out += googleSpace(rng);
+    out += creditNames(rng);
+    if (rng.chance(0.2)) out += pick(rng, {u" (Japanese Ver.)"_s, u" [Live]"_s, u")"_s, u" (x"_s, u"]"_s});
+    return out;
+}
+
+// One piece of a song title or artist for gq.
+QString googlePiece(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.30) return songWord(rng);
+    if (roll < 0.38) {
+        // a typographic apostrophe between two neighbours
+        return pick(rng, kApostropheNeighbours).toString() + (rng.chance(0.5) ? u"‘"_s : u"’"_s) +
+               pick(rng, kApostropheNeighbours).toString();
+    }
+    if (roll < 0.46) {
+        // a quoted part
+        const QString quote = pick(rng, kGoogleQuotes).toString();
+        return quote + songWords(rng, 1, 2) + (rng.chance(0.7) ? quote : pick(rng, kGoogleQuotes).toString());
+    }
+    if (roll < 0.52) return pick(rng, kHangulEdges).toString();
+    if (roll < 0.60) return pick(rng, kAddressPieces).toString();
+    if (roll < 0.70) return pick(rng, kKeyPieces).toString();
+    if (roll < 0.76) return u"("_s + pick(rng, kVersionPhrases) + u")";
+    if (roll < 0.80) return pick(rng, kTricky).toString();
+    if (roll < 0.84) return pick(rng, kGoogleQuotes).toString();
+    return token(rng);
+}
+
+// The code points that NFKC or lowercase turn into Σ, σ or ς, other than those three: left out of gq and gf, so that the
+// sigma folding of decision 9 (run.ps1) is only ever needed where the input holds Σ, σ or ς itself.
+QString withoutHiddenSigma(const QString& value) {
+    const QList<bool>& sources = sigmaSources();
+    QString out;
+    out.reserve(value.size());
+    for (qsizetype i = 0; i < value.size();) {
+        char32_t cp = value.at(i).unicode();
+        qsizetype units = 1;
+        if (value.at(i).isHighSurrogate() && i + 1 < value.size() && value.at(i + 1).isLowSurrogate()) {
+            cp = QChar::surrogateToUcs4(value.at(i), value.at(i + 1));
+            units = 2;
+        }
+        if (!sources.at(cp) || cp == 0x03A3 || cp == 0x03C2 || cp == 0x03C3) out += QStringView(value).sliced(i, units);
+        i += units;
+    }
+    return out;
+}
+
+QString googleArtist(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.03) return QString();
+    if (roll < 0.06) {
+        QString blank;
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) blank += googleSpace(rng);
+        return blank;
+    }
+    QString name = rng.chance(0.7) ? pick(rng, kArtistNames).toString() : songWords(rng, 1, 2);
+    if (rng.chance(0.15)) name = googlePiece(rng) + name;
+    const double shape = rng.next();
+    if (shape < 0.30) {
+        // a parenthesised part: the second request
+        name += googleSpace(rng) + u"(" + pick(rng, {u"리센느"_s, u"IU"_s, u"아이유"_s, u"Band"_s, u" "_s, u""_s,
+                                                     u"feat. X"_s, u"(x)"_s}) + u")";
+        if (rng.chance(0.2)) name += googleSpace(rng) + pick(rng, {u"(B)"_s, u"Z"_s, u"(C"_s});
+    } else if (shape < 0.36) {
+        name = pick(rng, {u"(G)I-DLE"_s, u"(only)"_s, u"( )"_s, u"A ((B))"_s, u"A (B"_s, u"A )B("_s, u"(아)(이)"_s}) +
+               (rng.chance(0.5) ? QString() : name);
+    }
+    if (rng.chance(0.25)) name = googleSpace(rng) + name + googleSpace(rng);
+    return name;
+}
+
+QString googleTitle(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.02) return QString();
+    if (roll < 0.04) return googleSpace(rng) + googleSpace(rng);
+    if (roll < 0.07) return rng.chance(0.5) ? bracketCredit(rng) : kt::trim(trailingCredit(rng));   // a credit alone
+    QString title;
+    const int count = rng.between(1, 4);
+    for (int i = 0; i < count; ++i) {
+        if (i > 0) title += rng.chance(0.75) ? googleSpace(rng) : QString();
+        title += googlePiece(rng);
+    }
+    if (rng.chance(0.3)) title += (rng.chance(0.7) ? googleSpace(rng) : QString()) + bracketCredit(rng);
+    if (rng.chance(0.3)) title += trailingCredit(rng);
+    if (rng.chance(0.1)) title += googleSpace(rng) + u"(Japanese Ver.)";
+    if (rng.chance(0.15)) title = googleSpace(rng) + title + googleSpace(rng);
+    return title;
+}
+
+// gq artist title
+QString generateGq(Rng& rng) {
+    QString artist = googleArtist(rng);
+    QString title = googleTitle(rng);
+    if (rng.chance(0.1)) artist += pick(rng, kHangulEdges);
+    return hex(withoutHiddenSigma(artist)) + u'\t' + hex(withoutHiddenSigma(title));
+}
+
+// A body text of exactly length units: filler with now and then a marker at a chosen place.
+constexpr QStringView kBlockMarkers[] = {u"unusual traffic", u"비정상적인 트래픽", u"too many requests"};
+// near misses: the marker broken by a look-alike, other white space, a missing letter
+constexpr QStringView kBlockNearMisses[] = {u"unusual traffİc", u"unuſual traffic", u"unusual traffic", u"unusual  traffic",
+                                            u"too many request", u"too many requests", u"unusualtraffic", u"비정상적인트래픽",
+                                            u"TΟΟ many requests", u"unusual traｆfic"};
+
+QString blockMarker(Rng& rng) {
+    if (rng.chance(0.2)) return mixCase(rng, pick(rng, kBlockNearMisses).toString());
+    const QString marker = pick(rng, kBlockMarkers).toString();
+    return rng.chance(0.7) ? asciiCaseShuffle(rng, marker) : mixCase(rng, marker);
+}
+
+QString fillerText(Rng& rng, qsizetype length) {
+    static constexpr QStringView pieces[] = {u"a", u"b", u"Q", u" ", u" ", u"가", u"한", u"1", u".", u"\n", u"é", u"İ", u"\U0001f600"};
+    QString out;
+    while (out.size() < length) out += pick(rng, pieces);
+    return out.left(length);   // (a pair may be cut: an unpaired surrogate at the end)
+}
+
+QString bodyOfLength(Rng& rng, qsizetype length, bool withMarker) {
+    if (!withMarker) return fillerText(rng, length);
+    const QString marker = blockMarker(rng);
+    if (marker.size() > length) return marker.left(length);
+    // the marker anywhere, at the very end, or (straddling) running over the end and cut there
+    const double where = rng.next();
+    qsizetype at;
+    if (where < 0.3) at = length - marker.size();
+    else if (where < 0.45) at = std::max<qsizetype>(0, length - marker.size() + rng.between(1, int(marker.size()) - 1));
+    else at = rng.between(0, int(length - marker.size()));
+    QString out = fillerText(rng, at) + marker;
+    out += fillerText(rng, std::max<qsizetype>(0, length - out.size()));
+    return out.left(length);
+}
+
+QString googleBody(Rng& rng) {
+    const double roll = rng.next();
+    const bool marker = rng.chance(0.55);
+    if (roll < 0.06) return QString();
+    if (roll < 0.40) return bodyOfLength(rng, rng.between(1, 300), marker);
+    if (roll < 0.55) return bodyOfLength(rng, pick(rng, {1999, 2000, 2001}), marker);
+    if (roll < 0.85) return bodyOfLength(rng, rng.between(1985, 2015), marker);
+    return bodyOfLength(rng, rng.between(2016, 6000), marker);
+}
+
+QString googleUrl(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.24) return mixCase(rng, u"https://www.google.com/search?q=x&hl="_s + pick(rng, {u"en"_s, u"ko"_s}));
+    if (roll < 0.45) {
+        return mixCase(rng, pick(rng, {u"https://consent.google.com/ml?continue=x"_s, u"https://consent.google.co.kr/"_s,
+                                      u"https://www.google.com/?u=consent.google"_s, u"https://consent-google.com/"_s,
+                                      u"https://consent.googl/"_s, u"https://consent．google.com/"_s}));
+    }
+    if (roll < 0.62) {
+        return mixCase(rng, pick(rng, {u"https://www.google.com/sorry/index?continue=x"_s, u"https://www.google.com/sorry/"_s,
+                                      u"https://www.google.com/sorry"_s, u"https://www.google.com/sorryy/"_s,
+                                      u"https://ipv4.google.com/sorry/index"_s, u"https://www.google.com/ſorry/"_s,
+                                      u"https://www.google.com/x?r=/sorry/"_s}));
+    }
+    if (roll < 0.68) return u"about:blank"_s;
+    return text(rng, 8);
+}
+
+// pc url status body
+QString generateGooglePc(Rng& rng) {
+    const double roll = rng.next();
+    QString status = u"-"_s;
+    if (roll < 0.25) status = u"429"_s;
+    else if (roll < 0.55) status = QString::number(pick(rng, {200, 200, 403, 503, 302, 404, 0, -1, 4290}));
+    return hex(googleUrl(rng)) + u'\t' + status + u'\t' + hex(googleBody(rng));
+}
+
+// pw settle step...: a step is dt,url,readyState,hasCard,body. A case watches one or two addresses; the clock moves in
+// steps around the settle time (exactly it, a nanosecond either side, halves) and in small and zero steps.
+QString generatePw(Rng& rng) {
+    const double settleRoll = rng.next();
+    const qint64 settle = settleRoll < 0.15 ? 0 : settleRoll < 0.6 ? 4'000'000'000LL : qint64(rng.between(1, 10000)) * 1'000'000LL;
+    QStringList urls = {u"https://www.google.com/search?q=a&hl=en"_s};
+    urls.append(pick(rng, {u"https://www.google.com/search?q=a&hl=ko"_s, u"https://www.google.com/search?q=b&hl=en"_s, u"about:blank"_s,
+                           u"https://www.google.com/search?q=a&hl=en#x"_s, u"HTTPS://www.google.com/search?q=a&hl=en"_s}));
+    QString out = QString::number(settle);
+    const int steps = rng.between(1, 12);
+    qsizetype url = 0;
+    for (int i = 0; i < steps; ++i) {
+        const double dtRoll = rng.next();
+        qint64 dt;
+        if (dtRoll < 0.2) dt = 0;
+        else if (dtRoll < 0.5) dt = qint64(rng.between(1, 900)) * 1'000'000LL;
+        else if (dtRoll < 0.6) dt = settle;
+        else if (dtRoll < 0.68) dt = std::max<qint64>(0, settle - 1);
+        else if (dtRoll < 0.76) dt = settle + 1;
+        else if (dtRoll < 0.86) dt = settle / 2;
+        else if (dtRoll < 0.9) dt = 1;
+        else dt = qint64(rng.between(1, 20000)) * 1'000'000LL;
+        if (rng.chance(0.15)) url = 1 - url;
+        const double stateRoll = rng.next();
+        QString state = u"complete"_s;
+        if (stateRoll < 0.2) state = u"loading"_s;
+        else if (stateRoll < 0.3) state = u"interactive"_s;
+        else if (stateRoll < 0.36) state = pick(rng, {u"Complete"_s, u""_s, u"complete "_s, u"uninitialized"_s, u"COMPLETE"_s, u"complеte"_s});
+        const bool card = rng.chance(0.06);
+        QString body = rng.chance(0.4) ? QString() : fillerText(rng, rng.between(1, 40));
+        if (rng.chance(0.05)) body = blockMarker(rng);
+        QString address = urls.at(url);
+        if (rng.chance(0.03)) address = googleUrl(rng);
+        out += u'\t' + QString::number(dt) + u',' + hex(address) + u',' + hex(state) + u',' + (card ? u"1"_s : u"0"_s) + u',' + hex(body);
+    }
+    return out;
+}
+
+// A JSON string literal of text: escapes for `"`, `\` and controls, now and then any unit as an escape (lone surrogates
+// included), or the raw unit.
+QString probeString(Rng& rng, const QString& value) {
+    QString out = u"\""_s;
+    for (const QChar c : value) {
+        const char16_t u = c.unicode();
+        if (u == u'"' || u == u'\\') out += QString(u'\\') + c;
+        else if (u < 0x20) out += rng.chance(0.5) ? jsonEscapeOf(u) : pick(rng, {u"\\n"_s, u"\\t"_s, u"\\u001F"_s});
+        else if (rng.chance(0.08)) out += jsonEscapeOf(u);
+        else out += c;
+    }
+    return out + u'"';
+}
+
+QString probeText(Rng& rng) {
+    const double roll = rng.next();
+    if (roll < 0.15) return QString();
+    if (roll < 0.35) return u"https://www.google.com/search?q=a&hl=en"_s;
+    if (roll < 0.5) return pick(rng, {u"complete"_s, u"loading"_s, u"interactive"_s});
+    if (roll < 0.6) return pick(rng, kLone).toString() + u"x";
+    return text(rng, 6);
+}
+
+// A value of the wrong type for a String property (or, for hasCard, for a Boolean one)
+QString probeWrongValue(Rng& rng, bool forBoolean) {
+    if (forBoolean) {
+        return pick(rng, {u"\"true\""_s, u"\"false\""_s, u"TRUE"_s, u"True"_s, u"FALSE"_s, u"1"_s, u"0"_s, u"null"_s, u"\"\""_s, u"{}"_s,
+                          u"[]"_s, u"tru"_s, u"truex"_s, u"t"_s, u"'true'"_s, u"[true]"_s, u"yes"_s});
+    }
+    return pick(rng, {u"1"_s, u"-2.5"_s, u"true"_s, u"false"_s, u"null"_s, u"NULL"_s, u"{}"_s, u"[]"_s, u"[\"x\"]"_s, u"{\"a\":\"b\"}"_s,
+                      u"abc"_s, u"'abc'"_s, u"NaN"_s, u"1e5"_s, u"0x10"_s, u"\"x\"\"y\""_s});
+}
+
+// pj text: the probe script's answer and a thousand ways it could be something else
+QString generatePj(Rng& rng) {
+    const double rootRoll = rng.next();
+    if (rootRoll < 0.04) {
+        return hex(pick(rng, {QString(), u" "_s, u"null"_s, u"[]"_s, u"\"x\""_s, u"1"_s, u"true"_s, u"[{\"url\":\"a\"}]"_s, u"{"_s, u"}"_s,
+                              u"{}"_s, u"﻿{}"_s}));
+    }
+    QList<std::pair<QString, QString>> members;
+    const bool wrong = rng.chance(0.25);
+    const int wrongField = wrong ? rng.between(0, 3) : -1;
+    const QString keys[] = {u"url"_s, u"readyState"_s, u"hasCard"_s, u"bodyText"_s};
+    const int missing = rng.chance(0.14) ? rng.between(0, 3) : -1;
+    for (int f = 0; f < 4; ++f) {
+        if (f == missing) continue;
+        QString value;
+        if (f == wrongField) value = probeWrongValue(rng, f == 2);
+        else if (f == 2) value = rng.chance(0.5) ? u"true"_s : u"false"_s;
+        else value = probeString(rng, probeText(rng));
+        members.append({keys[f], value});
+    }
+    if (rng.chance(0.3)) {
+        // extra keys: values of kind J's document generator, a nested probe, keys that differ from the real ones in case
+        const int count = rng.between(1, 3);
+        for (int i = 0; i < count; ++i) {
+            QStringList used;
+            const QString key = pick(rng, {u"URL"_s, u"hascard"_s, u"extra"_s, u"url "_s, u"title"_s, u"nested"_s, u""_s}) +
+                                (rng.chance(0.2) ? jsonKey(rng, used).mid(1).chopped(1) : QString());
+            const QString value = rng.chance(0.25) ? u"{\"url\":\"x\",\"hasCard\":true}"_s : jsonValue(rng, 1, rng.between(1, 3));
+            members.insert(rng.between(0, int(members.size())), {key, value});
+        }
+    }
+    if (rng.chance(0.08) && !members.isEmpty()) {
+        // a key repeated, with a value of the right or the wrong type
+        const auto copy = members.at(rng.between(0, int(members.size()) - 1));
+        const bool boolean = copy.first == u"hasCard";
+        QString value = boolean ? (rng.chance(0.5) ? u"true"_s : u"false"_s) : probeString(rng, probeText(rng));
+        if (rng.chance(0.3)) value = probeWrongValue(rng, boolean);
+        members.append({copy.first, value});
+    }
+    if (rng.chance(0.3)) {
+        for (qsizetype i = members.size() - 1; i > 0; --i) members.swapItemsAt(i, rng.between(0, int(i)));
+    }
+    QString doc = u"{"_s + (rng.chance(0.2) ? jsonSpace(rng) : QString());
+    for (qsizetype i = 0; i < members.size(); ++i) {
+        if (i > 0) doc += rng.chance(0.04) ? QString() : u","_s;
+        if (rng.chance(0.1)) doc += jsonSpace(rng);
+        const QString& key = members[i].first;
+        const double keyRoll = rng.next();
+        if (keyRoll < 0.04) doc += jsonEscapedKey(key);
+        else if (keyRoll < 0.06) doc += key;                    // unquoted
+        else if (keyRoll < 0.08) doc += u"'"_s + key + u"'";    // single-quoted
+        else doc += u"\""_s + key + u"\"";
+        doc += (rng.chance(0.1) ? jsonSpace(rng) : QString()) + u":" + (rng.chance(0.1) ? jsonSpace(rng) : QString()) + members[i].second;
+    }
+    if (rng.chance(0.04)) doc += u",";   // a trailing comma
+    doc += (rng.chance(0.2) ? jsonSpace(rng) : QString()) + u"}";
+    if (rng.chance(0.1)) doc = jsonSpace(rng) + doc + jsonSpace(rng);
+    if (rng.chance(0.04)) doc += pick(rng, {u" x"_s, u"}"_s, u"\u0000"_s, u" {}"_s, u"　"_s, u" "_s});
+    if (rng.chance(0.04)) doc = pick(rng, {u"﻿"_s, u" "_s, u"x"_s, u"\u000b"_s}) + doc;
+    if (rng.chance(0.06)) doc = jsonBreak(rng, doc);
+    return hex(doc);
+}
+
+// ---- W gf ----
+// The letters of a card line: letters, digits, Hangul and white space of the kinds Jsoup's text() treats differently (ASCII
+// space, tab, NBSP, LF; U+3000 and U+2002, which it keeps and Kotlin's trim() takes off the ends; U+200B, which it drops).
+constexpr QStringView kCardPieces[] = {u"a", u"B", u"z", u"7", u"0", u"더", u"미", u"하", u"나", u"é", u" ", u" ",
+                                       u"  ", u"\t", u" ", u"\n", u"　", u" ", u"​", u"   "};
+
+QString cardLine(Rng& rng) {
+    QString line;
+    const int count = rng.chance(0.1) ? rng.between(0, 2) : rng.between(1, 10);
+    for (int i = 0; i < count; ++i) line += pick(rng, kCardPieces);
+    return line;
+}
+
+// a card of paragraphs: ;-separated, ~ a paragraph without lines, lines +-separated hex
+QString cardField(Rng& rng, int minLines) {
+    QStringList paragraphs;
+    const int count = rng.between(1, 4);
+    int lines = 0;
+    for (int p = 0; p < count; ++p) {
+        if (rng.chance(0.05)) {
+            paragraphs.append(u"~"_s);
+            continue;
+        }
+        QStringList items;
+        const int n = rng.between(1, 5);
+        for (int i = 0; i < n; ++i) items.append(hex(cardLine(rng)));
+        lines += n;
+        paragraphs.append(items.join(u'+'));
+    }
+    while (lines < minLines) {
+        paragraphs.append(hex(cardLine(rng)));
+        ++lines;
+    }
+    return paragraphs.join(u';');
+}
+
+QString searchUrlOf(Rng& rng) {
+    return u"https://www.google.com/search?q="_s + pick(rng, {u"a"_s, u"IU%20Love"_s}) + u"&hl=" + pick(rng, {u"en"_s, u"ko"_s});
+}
+
+// One answer of the browser; trouble: a block page, a timeout or (seldom) an unusable browser only.
+QString gfAnswer(Rng& rng, bool trouble) {
+    const double roll = trouble ? 0.5 + 0.38 * rng.next() : rng.next();
+    if (roll < 0.22) return u"L"_s + hex(searchUrlOf(rng)) + u'/' + hex(rng.chance(0.7) ? QString() : fillerText(rng, 30)) + u'/' + cardField(rng, 3);
+    if (roll < 0.40) return u"L"_s + hex(searchUrlOf(rng)) + u'/' + hex(QString()) + u"/-";   // no card: 18%
+    if (roll < 0.50) {
+        // a broken card: a marker without lines, fewer than three lines, or lines of white space only
+        switch (rng.between(0, 2)) {
+        case 0: return u"L"_s + hex(searchUrlOf(rng)) + u"/./S";
+        case 1: return u"L"_s + hex(searchUrlOf(rng)) + u"/./" + hex(u"더미"_s) + (rng.chance(0.5) ? u"+"_s + hex(u"b"_s) : QString());
+        default: return u"L"_s + hex(searchUrlOf(rng)) + u"/./" + hex(u"  "_s) + u'+' + hex(u"\t"_s) + u'+' + hex(u"​"_s) + u";~";
+        }
+    }
+    if (roll < 0.58) return u"L"_s + hex(u"https://consent.google.com/ml?continue=x"_s) + u"/./-";
+    if (roll < 0.64) return u"L"_s + hex(u"https://www.google.com/sorry/index?continue=x"_s) + u"/./-";
+    if (roll < 0.69) return u"L"_s + hex(searchUrlOf(rng)) + u'/' + hex(asciiCaseShuffle(rng, u"Our systems have detected unusual traffic"_s)) + u"/-";
+    if (roll < 0.73) return u"L"_s + hex(searchUrlOf(rng)) + u'/' + hex(u"비정상적인 트래픽"_s) + u'/' + cardField(rng, 3);
+    if (roll < 0.79) return u"L"_s + hex(searchUrlOf(rng)) + u'/' + hex(asciiCaseShuffle(rng, u"Too Many Requests"_s)) + u"/-";
+    if (roll < 0.88) return u"O"_s;
+    if (roll < 0.95) return u"U"_s + hex(pick(rng, {u"webview2-missing"_s, u"no-html"_s, u"closed"_s, u"IllegalStateException"_s, u" "_s, u""_s}));
+    // a long page that talks about too many requests: no block, read for a card
+    return u"L"_s + hex(searchUrlOf(rng)) + u'/' + hex(fillerText(rng, 2001) + u"too many requests") + u'/' + (rng.chance(0.5) ? cardField(rng, 3) : u"-"_s);
+}
+
+// The same song in another spelling: ASCII case, white space, full width, quotes around the title, a credit added.
+std::pair<QString, QString> respelled(Rng& rng, const std::pair<QString, QString>& song) {
+    QString artist = song.first;
+    QString title = song.second;
+    switch (rng.between(0, 5)) {
+    case 0: artist = asciiCaseShuffle(rng, artist); title = asciiCaseShuffle(rng, title); break;
+    case 1: artist = u"  "_s + artist; title = title.replace(u' ', u"\t "_s); break;
+    case 2: title = asciiToFullWidth(title); break;
+    case 3: title = u"“"_s + title + u"”"; break;
+    case 4: title += u" (feat. Somebody)"_s; break;
+    default: break;   // the same spelling
+    }
+    return {artist, title};
+}
+
+constexpr QStringView kGfArtists[] = {u"IU", u"RESCENE (리센느)", u"아이유", u"(G)I-DLE", u"Band (밴드)", u"Someone",
+                                      u"AKMU (악뚮)", u"Taylor Swift", u"ΟΣΟ"};
+constexpr QStringView kGfParenthesisedArtists[] = {u"RESCENE (리센느)", u"Band (밴드)", u"AKMU (악뚮)",
+                                                  u"IU (아이유)", u"(G)I-DLE (여자아이들)"};
+constexpr QStringView kGfTitles[] = {u"Love poem", u"Hello", u"사랑의 시 (feat. X)", u"LOVE ATTACK", u"Rain", u"Stay ft. Y",
+                                     u"“Golden”", u"Night (Japanese Ver.)", u"Don’t Stop", u"σος"};
+
+// gf n lookup... answer...: a lookup is dt/artist/title. A streak case (12%) gets trouble answers and gaps around the
+// cool-downs (5, 10, 20, 40, 60 minutes and over), so that the doubling reaches its 60-minute cap.
+QString generateGf(Rng& rng) {
+    const bool streak = rng.chance(0.12);
+    const int n = streak ? rng.between(5, 8) : rng.between(1, 8);
+    QList<std::pair<QString, QString>> songs;
+    const int distinct = rng.between(1, 4);
+    for (int i = 0; i < distinct; ++i) {
+        if (rng.chance(0.05)) songs.append({rng.chance(0.5) ? QString() : u"  "_s, u"Love poem"_s});   // blank: no request
+        // most songs by an artist with a parenthesised name, whose NoCard is followed by the second request
+        else if (rng.chance(0.7)) songs.append({pick(rng, kGfParenthesisedArtists).toString(), pick(rng, kGfTitles).toString()});
+        else songs.append({pick(rng, kGfArtists).toString(), pick(rng, kGfTitles).toString()});
+    }
+    QStringList lookups;
+    for (int i = 0; i < n; ++i) {
+        const double dtRoll = rng.next();
+        qint64 seconds;
+        qint64 extra = 0;
+        if (streak) {
+            seconds = rng.chance(0.8) ? 61 * 60 : pick(rng, {5, 10, 20, 40, 60}) * 60;
+            extra = pick(rng, {qint64(0), qint64(1), qint64(-1), qint64(1'000'000'000)});
+        } else if (dtRoll < 0.3) {
+            seconds = 0;
+        } else if (dtRoll < 0.45) {
+            seconds = rng.between(1, 9);
+        } else if (dtRoll < 0.55) {
+            seconds = 10;
+            extra = pick(rng, {qint64(0), qint64(1), qint64(-1)});
+        } else if (dtRoll < 0.65) {
+            seconds = rng.between(11, 120);
+        } else if (dtRoll < 0.9) {
+            seconds = pick(rng, {5, 10, 20, 40, 60}) * 60;
+            extra = pick(rng, {qint64(0), qint64(1), qint64(-1), qint64(-1'000'000'000)});
+        } else {
+            seconds = 2 * 3600;
+        }
+        const qint64 dt = std::max<qint64>(0, seconds * 1'000'000'000LL + extra);
+        std::pair<QString, QString> song = songs.at(rng.between(0, int(songs.size()) - 1));
+        if (rng.chance(0.3)) song = respelled(rng, song);
+        lookups.append(QString::number(dt) + u'/' + hex(song.first) + u'/' + hex(song.second));
+    }
+    QStringList answers;
+    const int count = 2 * n + rng.between(0, 1) - (rng.chance(0.1) ? n : 0);
+    for (int i = 0; i < count; ++i) answers.append(gfAnswer(rng, streak && rng.chance(0.9)));
+    QString out = QString::number(n) + u'\t' + lookups.join(u'\t');
+    if (!answers.isEmpty()) out += u'\t' + answers.join(u'\t');
+    return out;
+}
+
 struct WOp {
     QStringView name;
     Generator fields;   // the fields after the op
 };
 constexpr WOp kWOps[] = {{u"pn", generatePn}, {u"pc", generatePc}, {u"pf", generatePn}, {u"px", generatePn}, {u"ln", generateLn},
-                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}, {u"lf", generateLf}, {u"jb", generateJb}};
+                         {u"st", generateSt}, {u"up", generateUp}, {u"fn", generateFn}, {u"lf", generateLf}, {u"jb", generateJb},
+                         {u"gf", generateGf}};
 
 QString generateW(Rng& rng) {
     const WOp& op = pick(rng, kWOps);
@@ -3968,8 +4487,8 @@ QString generateW(Rng& rng) {
 // ---- kind P: YtDlpResolver (rs: resolve, fx: fetch) ----
 // rs input run stdout stderr... / fx videoId run stdout stderr...: the input from kind C's generator or built as a playlist or a
 // video address; the run 0, another exit code, S (a start failure) or - (no yt-dlp); the stdout bytes (hex, "." for none); the
-// stderr lines from kind E's generator. The stdout is what yt-dlp -J prints (a playlist with 0..40 entries, now and then
-// MAX_RANK - 1..+5 short ones, around the truncation boundary; or one video), every field present, absent, null or (in some
+// stderr lines from kind E's generator. The stdout is what yt-dlp -J prints (a playlist with 0..40 entries, in 9% of the playlist
+// runs MAX_RANK - 1..+5 short ones, around the truncation boundary; or one video), every field present, absent, null or (in some
 // documents) of the wrong type, titles from kind T's generator and [Private video] / [Deleted video], the availability values and others, channel/uploader combinations,
 // unknown keys (in a third of the documents with values from kind J's document generator), white space and line breaks
 // between the tokens, and the non-standard spellings Kotlin was observed to accept (a missing comma between members, loose
@@ -4165,8 +4684,9 @@ QString pStdout(Rng& rng, bool playlist) {
     if (roll < 0.02) return bytesField(QByteArray());
     if (roll < 0.03) return bytesField(QByteArrayLiteral("not json\n"));
     if (rng.chance(0.05)) playlist = !playlist;   // the other kind of document
-    if (playlist && rng.chance(0.06)) {
-        // a long playlist (never broken, so that the truncation shows)
+    if (playlist && rng.chance(0.09)) {
+        // a long playlist (never broken, so that the truncation shows; 9% since Q3 Task 5, which gave kind P four more ops
+        // and so rs fewer cases: at 6% the rs share of truncated answers sat right at its 1% threshold)
         return bytesField(utf8Of(playlistDocument(rng, 0, PStyle{}, true), false) + '\n');
     }
     PStyle style;
@@ -4235,7 +4755,8 @@ QString generateFx(Rng& rng) {
     return hex(videoId) + u'\t' + pRun(rng) + u'\t' + pStdout(rng, false) + u'\t' + generateE(rng);
 }
 
-constexpr WOp kPOps[] = {{u"rs", generateRs}, {u"fx", generateFx}};
+constexpr WOp kPOps[] = {{u"rs", generateRs}, {u"fx", generateFx}, {u"gq", generateGq}, {u"pc", generateGooglePc},
+                         {u"pw", generatePw}, {u"pj", generatePj}};
 
 QString generateP(Rng& rng) {
     const WOp& op = pick(rng, kPOps);

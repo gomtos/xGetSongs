@@ -18,8 +18,11 @@
 #
 # One deliberate exception: for kind S op `lower`, when the case's input contains U+03A3 (capital sigma), both answers are
 # compared after folding U+03C2 to U+03C3 ($Folding below, here and nowhere else): the final sigma form that Kotlin picks
-# differs from xgs::kt's approximation of Unicode's Final_Sigma rule in some contexts (qt/README.md). Every other case, op
-# and character is compared exactly.
+# differs from xgs::kt's approximation of Unicode's Final_Sigma rule in some contexts (qt/README.md). Likewise for kind P
+# op `gq`, when the artist or the title holds U+03A3, U+03C2 or U+03C3, U+03C2 is folded to U+03C3 in the cache key (the K
+# field) of both answers: decision 9 of the Q3 plan (the C++ key writes ς as σ, Kotlin's does not); the run shows how many
+# cases were folded. ($Folding also aligns W jb's two known differences, Format-JbFolded.) Every other case, op and
+# character is compared exactly.
 #
 # Adding a kind: a generator (gen.cpp, registerGenerators), an answerer (main.cpp, registerAnswers), a `case` in
 # Oracle.java, and the kind's thresholds in $Statistics here. A kind without an entry in $Statistics fails.
@@ -640,7 +643,89 @@ $WOpChecks = [ordered]@{
         Test-Share 'W' 'jb: an info file read that was broken or missing' $badInfo $n 0.10
         Write-Host "  W: jb: shown only: cases equal only after the alignment: $alignedPercent with a percent that is not finite (Kotlin N), $alignedTail with an AlreadyExists tail that the alignment drops"
     }
+    # gf n lookup... answer...: the Google lookups (the plan's `W gf` row, thresholds verbatim). Counted from the Kotlin answer:
+    # each of the nine results 2% of the lookups; a lookup that went on to the second request (two addresses) 5% of the
+    # lookups; a lookup that used the remembered answer (no address, a Found / NoCard / ExtractionFailed, and a song that is not
+    # blank, so that a request was due) 5% of the lookups; a case with a cool-down of 10 minutes or more (two in a row) 3%
+    # and with one of 60 minutes (the cap) 0.5% of the gf cases.
+    gf = {
+        param($cases, $answers, $indexes)
+        $kinds = [ordered]@{ Found = 0; NoCard = 0; ExtractionFailed = 0; Captcha = 0; Consent = 0; RateLimited = 0; Timeout = 0
+                             BrowserUnavailable = 0; CoolingDown = 0 }
+        $lookups = 0; $second = 0; $remembered = 0; $doubled = 0; $capped = 0; $pauses = 0
+        foreach ($i in $indexes) {
+            $case = $cases[$i]
+            $sawDoubled = $false; $sawCap = $false
+            $k = -1; $name = $null; $urls = 0
+            $finish = {
+                if ($k -ge 0) {
+                    $script:gfLookup = $case[2 + $k].Split('/')
+                    if ($kinds.Contains($name)) { $kinds[$name]++ }
+                    if ($urls -eq 2) { $second++ }
+                    $blank = (Get-JavaCollapsed (ConvertFrom-HexRaw $script:gfLookup[1])).Length -eq 0 -or
+                             (Get-JavaCollapsed (ConvertFrom-HexRaw $script:gfLookup[2])).Length -eq 0
+                    if ($urls -eq 0 -and -not $blank -and ('Found', 'NoCard', 'ExtractionFailed' -ccontains $name)) { $remembered++ }
+                }
+            }
+            foreach ($token in ($answers[$i] -split ' ')) {
+                if ($token -ceq ';') { . $finish; $k++; $name = $null; $urls = 0; $lookups++; continue }
+                if ($null -eq $name) { $name = (ConvertFrom-HexRaw $token) -replace '\(.*$', ''; continue }
+                switch -CaseSensitive ($token[0]) {
+                    'u' { $urls++ }
+                    'p' { $pauses++ }
+                    'w' {
+                        $message = ConvertFrom-HexRaw $token.Substring(1)
+                        $match = [regex]::Match($message, '(\d+)분 동안 구글 검색을 쉼')
+                        if ($match.Success) {
+                            $minutes = [int]$match.Groups[1].Value
+                            if ($minutes -ge 10) { $sawDoubled = $true }
+                            if ($minutes -eq 60) { $sawCap = $true }
+                        }
+                    }
+                }
+            }
+            . $finish
+            if ($sawDoubled) { $doubled++ }
+            if ($sawCap) { $capped++ }
+        }
+        foreach ($kind in $kinds.Keys) { Test-Share 'W' "gf: lookup result $kind" $kinds[$kind] $lookups 0.02 }
+        Test-Share 'W' 'gf: a lookup that went on to the second request' $second $lookups 0.05
+        Test-Share 'W' 'gf: a lookup that used the remembered answer' $remembered $lookups 0.05
+        Test-Share 'W' 'gf: a case with two cool-downs in a row (10 minutes or more)' $doubled $indexes.Count 0.03
+        Test-Share 'W' 'gf: a case whose cool-down reached the 60-minute cap' $capped $indexes.Count 0.005
+        Write-Host "  W: gf: shown only: $lookups lookups, $pauses interval pauses"
+    }
 }
+# Helpers of the Google statistics (P gq, pc, pw, pj and W gf; for counting only, the answers are compared exactly). A field's
+# hex as a .NET string unit by unit (unpaired surrogates kept); Java's `\s` collapsed to one space and Kotlin's trim().
+function ConvertFrom-HexRaw([string]$field) {
+    if ($field -ceq '-' -or $field -ceq '.' -or $field.Length -lt 4) { return '' }
+    $chars = [char[]]::new($field.Length / 4)
+    for ($i = 0; $i -lt $chars.Length; $i++) { $chars[$i] = [char][Convert]::ToInt32($field.Substring($i * 4, 4), 16) }
+    return [string]::new($chars)
+}
+$JavaWhitespaceRun = [regex]::new('[ \t\n\x0B\f\r]+', 'Compiled')
+function Get-JavaCollapsed([string]$text) { $JavaWhitespaceRun.Replace($text, ' ').Trim($KotlinWhitespace) }
+$GoogleMarkers = 'unusual traffic', '비정상적인 트래픽', 'too many requests'
+function Test-GoogleBlock([string]$url, [string]$body) {
+    $address = $url.ToLowerInvariant()
+    if ($address.Contains('consent.google') -or $address.Contains('/sorry/')) { return $true }
+    if ($body.Length -gt 2000) { return $false }
+    $text = $body.ToLowerInvariant()
+    foreach ($marker in $GoogleMarkers) { if ($text.Contains($marker)) { return $true } }
+    return $false
+}
+# the flagged points of gq (shown only): a credit word followed by an ASCII word character, by a non-ASCII letter, by a
+# combining mark, by a dot; a typographic apostrophe next to a supplementary code point; white space that Java's \s does not
+# take
+$GqCreditThenWord = [regex]::new('(?i)(?:feat|ft|prod|narr)[A-Za-z0-9_]', 'Compiled')
+$GqCreditThenLetter = [regex]::new('(?i)(?:feat|ft|prod|narr)[\p{L}-[A-Za-z]]', 'Compiled')
+$GqCreditThenMark = [regex]::new('(?i)(?:feat|ft|prod|narr)\p{M}', 'Compiled')
+$GqCreditThenDot = [regex]::new('(?i)(?:feat|ft|prod|narr)\.', 'Compiled')
+$GqApostropheSupplementary = [regex]::new('[\uD800-\uDFFF][‘’]|[‘’][\uD800-\uDFFF]', 'Compiled')
+$GqOtherWhite = [regex]::new('[   　\u0085\u001C-\u001F  - ]', 'Compiled')
+$script:GqFoldTouched = 0
+$script:GqFoldChanged = 0
 # Helpers of the W lf statistics (for counting only; the answers are compared exactly). The URL of a /search request as hex;
 # on a field's hex, a unit outside ASCII and one of `& = # + %` or a space; on a decoded body, a record field of the wrong
 # type (a duration that is not a plain number or null, an instrumental that is not true, false or null in any case, a string
@@ -907,6 +992,149 @@ $POpChecks = [ordered]@{
         Test-Share 'P' 'fx: answer the metadata' $meta $indexes.Count 0.30
         Test-Share 'P' 'fx: answer NULL' $none $indexes.Count 0.30
     }
+    # gq artist title (the plan's `gq` row, thresholds verbatim, as shares of the gq cases, from Kotlin's answer): no request
+    # 3%, two requests 15%, language ko 20%, a title that cleanTitle changed (the first request's words are not the collapsed
+    # artist, the collapsed title and `lyrics`) 30%. Shown only: the flagged points and the sigma folding of decision 9.
+    gq = {
+        param($cases, $answers, $indexes)
+        $zero = 0; $two = 0; $ko = 0; $changed = 0
+        $word = 0; $letter = 0; $mark = 0; $dot = 0; $supplementary = 0; $lone = 0; $otherWhite = 0; $sigma = 0
+        foreach ($i in $indexes) {
+            $case = $cases[$i]
+            $tokens = $answers[$i] -split ' '
+            $n = [int]$tokens[1]
+            if ($n -eq 0) { $zero++ } elseif ($n -eq 2) { $two++ }
+            $artist = ConvertFrom-HexRaw $case[1]
+            $title = ConvertFrom-HexRaw $case[2]
+            if ($n -gt 0) {
+                if ((ConvertFrom-HexRaw $tokens[3]) -ceq 'ko') { $ko++ }
+                $plain = Get-JavaCollapsed ((Get-JavaCollapsed $artist) + ' ' + (Get-JavaCollapsed $title) + ' lyrics')
+                if ((ConvertFrom-HexRaw $tokens[2]) -cne $plain) { $changed++ }
+            }
+            if ($GqCreditThenWord.IsMatch($title)) { $word++ }
+            if ($GqCreditThenLetter.IsMatch($title)) { $letter++ }
+            if ($GqCreditThenMark.IsMatch($title)) { $mark++ }
+            if ($GqCreditThenDot.IsMatch($title)) { $dot++ }
+            if ($GqApostropheSupplementary.IsMatch($title)) { $supplementary++ }
+            if ($LoneHexPattern.IsMatch($case[1]) -or $LoneHexPattern.IsMatch($case[2])) { $lone++ }
+            if ($GqOtherWhite.IsMatch($artist) -or $GqOtherWhite.IsMatch($title)) { $otherWhite++ }
+            if ((Test-HasSigma $case[1]) -or (Test-HasSigma $case[2])) { $sigma++ }
+        }
+        $n = $indexes.Count
+        Test-Share 'P' 'gq: no request' $zero $n 0.03
+        Test-Share 'P' 'gq: two requests' $two $n 0.15
+        Test-Share 'P' 'gq: language ko' $ko $n 0.20
+        Test-Share 'P' 'gq: a title that cleanTitle changed' $changed $n 0.30
+        Test-Share 'P' 'gq: a credit word then an ASCII word character (shown only)' $word $n 0
+        Test-Share 'P' 'gq: a credit word then a non-ASCII letter (shown only)' $letter $n 0
+        Test-Share 'P' 'gq: a credit word then a combining mark (shown only)' $mark $n 0
+        Test-Share 'P' 'gq: a credit word then a dot (shown only)' $dot $n 0
+        Test-Share 'P' 'gq: a typographic apostrophe next to a surrogate (shown only)' $supplementary $n 0
+        Test-Share 'P' 'gq: an unpaired surrogate (shown only)' $lone $n 0
+        Test-Share 'P' 'gq: white space that \s does not take (shown only)' $otherWhite $n 0
+        Test-Share 'P' 'gq: input with Σ, σ or ς (shown only)' $sigma $n 0
+        Write-Host "  P: gq: decision 9 folding: $($script:GqFoldTouched) cases folded (input with Σ, σ or ς), of which $($script:GqFoldChanged) had a ς in Kotlin's key"
+    }
+    # pc url status body: each of the four answers (-, Consent, Captcha, RateLimited) 8% (Kotlin's answer). Shown only: bodies of
+    # 1999, 2000 and 2001 units, status 429 with and without a marker.
+    pc = {
+        param($cases, $answers, $indexes)
+        $counts = [ordered]@{ '-' = 0; Consent = 0; Captcha = 0; RateLimited = 0 }
+        $lengths = @{ 1999 = 0; 2000 = 0; 2001 = 0 }; $status429 = 0; $status429Marker = 0
+        foreach ($i in $indexes) {
+            if ($counts.Contains($answers[$i])) { $counts[$answers[$i]]++ }
+            $length = (Get-UnitCount $cases[$i][3])
+            if ($lengths.ContainsKey($length)) { $lengths[$length]++ }
+            if ($cases[$i][2] -ceq '429') {
+                $status429++
+                $text = (ConvertFrom-HexRaw $cases[$i][3]).ToLowerInvariant()
+                if (@($GoogleMarkers | Where-Object { $text.Contains($_) }).Count -gt 0) { $status429Marker++ }
+            }
+        }
+        $n = $indexes.Count
+        foreach ($answer in $counts.Keys) { Test-Share 'P' "pc: answer $answer" $counts[$answer] $n 0.08 }
+        foreach ($length in 1999, 2000, 2001) { Test-Share 'P' "pc: a body of $length units (shown only)" $lengths[$length] $n 0 }
+        Test-Share 'P' 'pc: status 429 (shown only)' $status429 $n 0
+        Test-Share 'P' 'pc: status 429 and a marker in the body (shown only)' $status429Marker $n 0
+    }
+    # pw settle step...: as shares of all probes (Kotlin's answers): done 15%; done through the settle time (no card, no block
+    # page) 3%; a probe at which the quiet time started over (a page no longer complete, or a new address while complete,
+    # after the quiet time had begun) 5%.
+    pw = {
+        param($cases, $answers, $indexes)
+        $probes = 0; $done = 0; $settled = 0; $restarted = 0; $zeroSettle = 0
+        foreach ($i in $indexes) {
+            $case = $cases[$i]
+            if ($case[1] -ceq '0') { $zeroSettle++ }
+            $bits = ($answers[$i] -split ' ')
+            $watched = $null; $since = $false
+            for ($k = 2; $k -lt $case.Count; $k++) {
+                $step = $case[$k].Split(',')
+                $url = ConvertFrom-HexRaw $step[1]
+                $state = ConvertFrom-HexRaw $step[2]
+                $body = ConvertFrom-HexRaw $step[4]
+                $bit = $bits[$k - 1]
+                $probes++
+                if ($bit -ceq '1') { $done++ }
+                if ($step[3] -ceq '1' -or (Test-GoogleBlock $url $body)) { continue }
+                if ($bit -ceq '1') { $settled++ }
+                if ($state -cne 'complete') {
+                    if ($since) { $restarted++ }
+                    $since = $false
+                    continue
+                }
+                if ($null -ne $watched -and $url -cne $watched -and $since) { $restarted++ }
+                if ($url -cne $watched) { $since = $false }
+                $watched = $url
+                $since = $true
+            }
+        }
+        Test-Share 'P' 'pw: probe done' $done $probes 0.15
+        Test-Share 'P' 'pw: probe done through the settle time' $settled $probes 0.03
+        Test-Share 'P' 'pw: probe at which the quiet time started over' $restarted $probes 0.05
+        Test-Share 'P' 'pw: settle time 0 (shown only, of the pw cases)' $zeroSettle $indexes.Count 0
+    }
+    # pj text: Kotlin decoded a probe 25%, refused the text 25% (Kotlin's answer); a text with a key other than the four 10%, with
+    # one of the four holding a value of the wrong type 10% (a scan of the text, for counting only)
+    pj = {
+        param($cases, $answers, $indexes)
+        $decoded = 0; $refused = 0; $extra = 0; $wrong = 0
+        foreach ($i in $indexes) {
+            if ($answers[$i].StartsWith('OK ')) { $decoded++ } elseif ($answers[$i] -ceq 'N') { $refused++ }
+            $text = ConvertFrom-HexRaw $cases[$i][1]
+            $keys = @([regex]::Matches($text, '"((?:[^"\\]|\\.)*)"\s*:') | ForEach-Object { $_.Groups[1].Value })
+            if (@($keys | Where-Object { 'url', 'readyState', 'hasCard', 'bodyText' -cnotcontains $_ }).Count -gt 0) { $extra++ }
+            if ($PjWrongString.IsMatch($text) -or $PjWrongBoolean.IsMatch($text)) { $wrong++ }
+        }
+        $n = $indexes.Count
+        Test-Share 'P' 'pj: Kotlin decoded a probe' $decoded $n 0.25
+        Test-Share 'P' 'pj: Kotlin refused the text' $refused $n 0.25
+        Test-Share 'P' 'pj: a text with another key' $extra $n 0.10
+        Test-Share 'P' 'pj: a text with a value of the wrong type' $wrong $n 0.10
+    }
+}
+$PjWrongString = [regex]::new('"(?:url|readyState|bodyText)"\s*:\s*[^"\s]', 'Compiled')
+$PjWrongBoolean = [regex]::new('"hasCard"\s*:\s*(?!(?:true|false)\s*[,}])', 'Compiled')
+# true when a field's hex holds U+03A3, U+03C2 or U+03C3 at a unit boundary
+function Test-HasSigma([string]$field) {
+    if ($field -ceq '-' -or $field -ceq '.') { return $false }
+    for ($i = 0; $i + 4 -le $field.Length; $i += 4) { if ('03a3', '03c2', '03c3' -ccontains $field.Substring($i, 4)) { return $true } }
+    return $false
+}
+# Decision 9 of the Q3 plan: the K field (the cache key) of a gq answer with U+03C2 folded to U+03C3, counted on the Kotlin side
+function Format-GqFolded([string]$answer, [string]$side) {
+    if ($null -eq $answer) { return $answer }
+    $at = $answer.IndexOf(' K ')
+    if ($at -lt 0) { return $answer }
+    $key = $answer.Substring($at + 3)
+    $sb = [System.Text.StringBuilder]::new($key.Length)
+    for ($i = 0; $i + 4 -le $key.Length; $i += 4) {
+        $unit = $key.Substring($i, 4)
+        [void]$sb.Append($(if ($unit -ceq '03c2') { '03c3' } else { $unit }))
+    }
+    $folded = $sb.ToString()
+    if ($side -ceq 'kotlin') { $script:GqFoldTouched++; if ($folded -cne $key) { $script:GqFoldChanged++ } }
+    return $answer.Substring(0, $at + 3) + $folded
 }
 # Helpers of the W ln statistics, on the hex of the bytes (2 digits a byte, aligned): `\r\n`, a `\r` not before `\n`, a `\n`
 # not after `\r`; and (zero-width, every position, the caller keeps the aligned ones) a place where a boundary splits something
@@ -1574,6 +1802,10 @@ $Folding = @{
     W = @{
         Note = 'W: op jb is compared with its two known differences aligned (Format-JbFolded: a percent that is not finite in the Kotlin answer is unknown; the tail of an ItemFailed after a put that answered AlreadyExists with a non-empty text of its own is dropped in both answers); every other op and all else exactly'
         Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'jb' -and $null -ne $answer) { Format-JbFolded $fields $answer $side } else { $answer } }
+    }
+    P = @{
+        Note = 'P: op gq on an input with U+03A3, U+03C2 or U+03C3 is compared with U+03C2 folded to U+03C3 in the cache key (the K field) of both answers (decision 9 of the Q3 plan); the requests and every other op exactly'
+        Fold = { param($fields, $answer, $side) if ($fields[0] -ceq 'gq' -and ((Test-HasSigma $fields[1]) -or (Test-HasSigma $fields[2]))) { Format-GqFolded $answer $side } else { $answer } }
     }
 }
 
