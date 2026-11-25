@@ -474,7 +474,8 @@ private slots:
 
     void detachFromInsideWakeDoesNotDeadlock() {
         // The wake detaches on the caller's own thread: detach must not wait for that wake (it is its own caller up the stack).
-        // A detach that did would never return, and this test would hang (ctest's timeout ends it).
+        // A detach that did would never return, and this test would hang: the ctest TIMEOUT of tst_browser_channel (120 s,
+        // qt/tests/CMakeLists.txt) ends it, and Qt Test's own watchdog (300 s per function) when the exe runs alone.
         BrowserChannel channel;
         std::atomic<int> wakes{0};
         channel.attach([&] {

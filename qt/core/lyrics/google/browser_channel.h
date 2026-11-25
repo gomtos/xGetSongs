@@ -68,8 +68,8 @@ public:
 
     /// The agent is here: from now on calls are queued and `wake` is called for each. An agent that is attached already is
     /// detached first (its waiting calls end with `closed`). Does nothing on a closed channel. When two threads attach at once,
-    /// the one that comes last wins and the earlier one counts as detached (its calls end with `closed`, its wake is not called
-    /// any more).
+    /// the one that returns last wins and the earlier one counts as detached (its calls end with `closed`, its wake is not
+    /// called any more).
     void attach(std::function<void()> wake);
 
     /// The agent is gone: every waiting call ends with `closed`, the queued commands are dropped, and later calls fail with

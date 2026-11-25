@@ -73,7 +73,16 @@ target_link_libraries(tst_driven_browser PRIVATE xgstestsupport)
 # The channel between the lookup's worker threads and the hidden browser's thread (Kotlin BrowserChannelTest), and the agent
 # that carries its commands out on a page (the tests of sidecar-host/src/browser.rs; no Kotlin class).
 xgs_add_test(tst_browser_channel tst_browser_channel.cpp)
+# A deadlock (detachFromInsideWakeDoesNotDeadlock) hangs the exe; this ends it well before Qt Test's 300 s watchdog. The whole
+# exe takes about two seconds.
+set_tests_properties(tst_browser_channel PROPERTIES TIMEOUT 120)
 xgs_add_test(tst_browser_agent tst_browser_agent.cpp)
+# The Google lookup's politeness rules (Kotlin GoogleLyricsFetcherTest) and the provider the download job calls (Kotlin
+# GoogleLyricsProviderTest).
+xgs_add_test(tst_google_lyrics_fetcher tst_google_lyrics_fetcher.cpp)
+target_link_libraries(tst_google_lyrics_fetcher PRIVATE xgstestsupport)
+xgs_add_test(tst_google_lyrics_provider tst_google_lyrics_provider.cpp)
+target_link_libraries(tst_google_lyrics_provider PRIVATE xgstestsupport)
 add_subdirectory(integration)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through

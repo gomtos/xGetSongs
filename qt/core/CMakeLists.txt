@@ -29,6 +29,8 @@ add_library(xgscore STATIC
     lyrics/google/driven_browser.h lyrics/google/driven_browser.cpp
     lyrics/google/browser_channel.h lyrics/google/browser_channel.cpp
     lyrics/google/browser_agent.h lyrics/google/browser_agent.cpp
+    lyrics/google/lyrics_fetcher.h lyrics/google/lyrics_fetcher.cpp
+    lyrics/google/google_lyrics_provider.h lyrics/google/google_lyrics_provider.cpp
     log/log_redaction.h log/log_redaction.cpp
     model/models.h
     json/json.h json/json.cpp

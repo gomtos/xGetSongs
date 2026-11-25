@@ -197,5 +197,20 @@
       "aRequestWithoutASinkIsRefusedBeforeAnythingIsCreated",
       "startingAndCancellingAtOnceEndsWithOneJobDoneCancelled"
     ]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/GoogleLyricsFetcherTest.kt",
+    "exe": "tst_google_lyrics_fetcher",
+    "added": [
+      "stoppingEndsEveryWaitingLookupPromptly",
+      "aStopDuringTheIntervalWaitMakesNoTrip",
+      "lookupsFromManyThreadsNeverOverlapAndKeepTheInterval",
+      "theSecondOfTwoWaitersForOneSongUsesTheRememberedAnswer"
+    ]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/GoogleLyricsProviderTest.kt",
+    "exe": "tst_google_lyrics_provider",
+    "added": []
   }
 ]
