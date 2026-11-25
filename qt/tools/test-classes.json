@@ -138,6 +138,11 @@
     "added": ["aProbeOfTheWrongShapeIsNoProbe"]
   },
   {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/DrivenBrowserTest.kt",
+    "exe": "tst_driven_browser",
+    "added": ["everyDriverCallGetsTheTimeThatIsLeft"]
+  },
+  {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealFfmpegTaggingIntegrationTest.kt",
     "exe": "tst_real_ffmpeg_tagging",
     "added": []

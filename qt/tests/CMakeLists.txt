@@ -63,6 +63,13 @@ xgs_add_test(tst_item_downloader tst_item_downloader.cpp)
 target_link_libraries(tst_item_downloader PRIVATE xgstestsupport)
 xgs_add_test(tst_default_download_service tst_default_download_service.cpp)
 target_link_libraries(tst_default_download_service PRIVATE xgstestsupport)
+# The answers of lyrics_card.js read by parseCard (the Kotlin LyricsCardParserTest's pages, as script answers written by hand),
+# and the check that the embedded script is the repository's file.
+xgs_add_test(tst_lyrics_card tst_lyrics_card.cpp)
+target_link_libraries(tst_lyrics_card PRIVATE xgstestsupport)
+target_compile_definitions(tst_lyrics_card PRIVATE XGS_LYRICS_CARD_JS="${PROJECT_SOURCE_DIR}/core/lyrics/google/lyrics_card.js")
+xgs_add_test(tst_driven_browser tst_driven_browser.cpp)
+target_link_libraries(tst_driven_browser PRIVATE xgstestsupport)
 add_subdirectory(integration)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
