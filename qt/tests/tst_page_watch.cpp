@@ -110,8 +110,54 @@ private slots:
         QVERIFY(!probeFromJson(u"42"_s).has_value());
         QVERIFY(!probeFromJson(u"[]"_s).has_value());
         QVERIFY(!probeFromJson(u"{\"url\":\"u\",\"readyState\":\"complete\",\"hasCard\":true}"_s).has_value());
-        QVERIFY(!probeFromJson(u"{\"url\":\"u\",\"readyState\":\"complete\",\"hasCard\":\"true\",\"bodyText\":\"\"}"_s).has_value());
+        // (This line once expected `"hasCard":"true"` to be refused; the Q3 Task 5 differential showed that Kotlin reads it as
+        // true: see aProbeIsReadAsKotlinDecodesIt. A string that is no boolean is refused.)
+        QVERIFY(!probeFromJson(u"{\"url\":\"u\",\"readyState\":\"complete\",\"hasCard\":\"yes\",\"bodyText\":\"\"}"_s).has_value());
         QVERIFY(!probeFromJson(u""_s).has_value());
+    }
+
+    // Added (Q3 Task 5, found by the differential `P pj`): Kotlin's decodeFromString<PageProbe> is not parseToJsonElement. It
+    // takes the next key without a comma, skips the values of other keys without checking them, reads true and false in any
+    // ASCII case, quoted or not, refuses null for a string, checks every occurrence of a repeated key, and keeps the last.
+    void aProbeIsReadAsKotlinDecodesIt() {
+        const auto read = [](const QString& members) { return probeFromJson(u"{"_s + members + u"}"_s); };
+        const QString base = u"\"url\":\"u\",\"readyState\":\"r\",\"bodyText\":\"b\","_s;
+
+        // the next key without a comma, after any kind of value
+        QVERIFY(read(u"\"url\":\"u\" \"readyState\":\"r\" \"bodyText\":\"b\" \"hasCard\":true"_s).has_value());
+        QVERIFY(read(base + u"\"hasCard\":false\"x\":1"_s).has_value());
+        QVERIFY(read(base + u"\"hasCard\":true,\"x\":1 \"y\":null \"z\":{} \"w\":2"_s).has_value());
+        // the value of another key is skipped unchecked inside a container, and any literal will do
+        QVERIFY(read(base + u"\"hasCard\":true,\"x\":[1,,2],\"y\":{\"a\":},\"z\":#,\"v\":'y'"_s).has_value());
+        QVERIFY(!read(base + u"\"hasCard\":true,\"x\":[}]"_s).has_value());
+        QVERIFY(!read(base + u"\"hasCard\":true,\"x\":\"a\"b"_s).has_value());
+        // booleans in any ASCII case, quoted (escapes decoded) or not; nothing else
+        for (const QString& yes : {u"TRUE"_s, u"True"_s, u"tRuE"_s, u"\"true\""_s, u"\"TRUE\""_s, u"\"\\u0074rue\""_s}) {
+            const std::optional<PageProbe> probe = read(base + u"\"hasCard\":"_s + yes);
+            QVERIFY2(probe.has_value(), qPrintable(yes));
+            QCOMPARE(probe->hasCard, true);
+        }
+        for (const QString& no : {u"FALSE"_s, u"\"False\""_s}) {
+            const std::optional<PageProbe> probe = read(base + u"\"hasCard\":"_s + no);
+            QVERIFY2(probe.has_value(), qPrintable(no));
+            QCOMPARE(probe->hasCard, false);
+        }
+        for (const QString& bad : {u"1"_s, u"null"_s, u"tru"_s, u"truex"_s, u"\"true \""_s, u"fal\u017fe"_s, u"\"FAL\u017fE\""_s,
+                                   u"\uff54rue"_s, u"[true]"_s, u"'true'"_s}) {
+            QVERIFY2(!read(base + u"\"hasCard\":"_s + bad).has_value(), qPrintable(bad));
+        }
+        // a string property takes a string only; a repeated key is checked each time and the last value counts
+        QVERIFY(!read(u"\"url\":null,\"url\":\"a\",\"readyState\":\"r\",\"bodyText\":\"b\",\"hasCard\":true"_s).has_value());
+        QVERIFY(!read(base + u"\"hasCard\":\"x\",\"hasCard\":true"_s).has_value());
+        QVERIFY(!read(base + u"\"url\":1,\"hasCard\":true"_s).has_value());
+        const std::optional<PageProbe> last = read(base + u"\"url\":\"c\",\"hasCard\":true,\"hasCard\":\"FALSE\""_s);
+        QVERIFY(last.has_value());
+        QCOMPARE(last->url, u"c"_s);
+        QCOMPARE(last->hasCard, false);
+        // a key written with an escape is that key; nothing but JSON white space around the object
+        QVERIFY(probeFromJson(u"{\"\\u0068asCard\":true,"_s + base.chopped(1) + u"}\r\n\t "_s).has_value());
+        QVERIFY(!probeFromJson(u"\u00a0{"_s + base + u"\"hasCard\":true}"_s).has_value());
+        QVERIFY(!probeFromJson(u"{"_s + base + u"\"hasCard\":true,}"_s).has_value());
     }
 };
 

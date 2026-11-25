@@ -22,10 +22,12 @@ struct PageProbe {
 
 /// The probe script's answer read as Kotlin's `Json { ignoreUnknownKeys = true }.decodeFromString<PageProbe>(text)` does
 /// (DrivenBrowser.probe); nothing where that throws. The root must be an object holding `url`, `readyState` and `bodyText` as
-/// strings and `hasCard` as the literal `true` or `false`; other keys are ignored. The text is read by xgs::json::parse
-/// (kotlinx's parseToJsonElement grammar); where decodeFromString's own grammar differs (lenient literals, repeated keys,
-/// `null` for a property) is for the Q3 Task 5 differential to look at. The script always answers JSON.stringify of an object
-/// with these four fields, so only a page that is not ready yet gives anything else.
+/// strings and `hasCard` as true or false; other keys are skipped. The grammar is decodeFromString's, not parseToJsonElement's
+/// (observed by the Q3 Task 5 differential, kind P op pj; the rules are in page_watch.cpp): the next key may follow a value
+/// without a comma, other keys' values are skipped without being checked inside, `hasCard` is true or false in any ASCII case
+/// and may be quoted, `null` is no string, and every occurrence of a repeated property is checked (the last one counts). The
+/// script always answers JSON.stringify of an object with these four fields, so only a page that is not ready yet gives
+/// anything else.
 std::optional<PageProbe> probeFromJson(const QString& text);
 
 /// Decides when to stop waiting for a page. Done when the page shows a lyrics card or a block page (it will not change), or

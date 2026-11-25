@@ -125,7 +125,8 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/GoogleSearchQueryTest.kt",
     "exe": "tst_google_search_query",
     "added": ["oddCharactersStayInsideTheQueryOfTheAddress", "aSearchBaseOfTheCheckIsUsedAsGiven",
-              "theCacheKeyTreatsBothSigmasAsOneLetter", "aCreditWordFollowedByAWordCharacterIsNoCredit"]
+              "theCacheKeyTreatsBothSigmasAsOneLetter", "aCreditWordFollowedByAWordCharacterIsNoCredit",
+              "anApostropheAfterALetterAboveTheBmpIsDroppedLikeAQuote", "aCreditWordFollowedByANonSpacingMarkIsNoCredit"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/PageClassifierTest.kt",
@@ -135,7 +136,7 @@
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/PageWatchTest.kt",
     "exe": "tst_page_watch",
-    "added": ["aProbeOfTheWrongShapeIsNoProbe"]
+    "added": ["aProbeOfTheWrongShapeIsNoProbe", "aProbeIsReadAsKotlinDecodesIt"]
   },
   {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/DrivenBrowserTest.kt",

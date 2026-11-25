@@ -21,6 +21,10 @@ bool isLetterOrDigit(char32_t codePoint);   // Character.isLetterOrDigit(int); a
 bool isDigit(QChar c);             // Char.isDigit() (inline-only: Character.isDigit(char)): Nd; a surrogate unit is not
 int digitValue(QChar c);           // Character.digit(c, 10) of an isDigit unit (what toIntOrNull adds per digit), else -1
 bool isAsciiSpace(QChar c);        // \s of a Java regular expression without flags: ' ', \t, \n, U+000B, \f, \r
+// Character.getType(int) == Character.NON_SPACING_MARK (Mn) with JVM 21's Unicode 15.0: a code point that Qt's newer Unicode
+// assigned later is none. The Q3 Task 5 sweep put every code point after a credit word (`\b`, search_query.cpp) on both sides
+// and found the answers equal (once U+1171E, Mc in Qt's Unicode, was made Mn here).
+bool isNonSpacingMark(char32_t codePoint);
 bool isHighSurrogate(QChar c);
 bool isSurrogate(QChar c);
 QChar uppercaseChar(QChar c);      // Char.uppercaseChar()

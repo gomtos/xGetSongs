@@ -283,10 +283,21 @@ bool isLetterOrDigit(char32_t codePoint) {
 
 // A letter is a letter or digit that is not Nd (the categories are disjoint). Above U+FFFF the letter-or-digit answer is
 // JVM 21's (above) and Qt only tells a digit from a letter. That assumes no supplementary code point moved between L* and
-// Nd from Unicode 15.0 to Qt's version; qt/tools/differential is to confirm it where a port relies on it (Q3 Task 5: `\p{L}`).
+// Nd from Unicode 15.0 to Qt's version. The Q3 Task 5 sweep confirmed it: every code point after and before a typographic
+// apostrophe (`\p{L}` of search_query.cpp's APOSTROPHE) gave Kotlin's answer.
 bool isLetter(char32_t codePoint) {
     if (codePoint <= 0xFFFF) return isLetter(QChar(char16_t(codePoint)));
     return isLetterOrDigit(codePoint) && QChar::category(codePoint) != QChar::Number_DecimalDigit;
+}
+
+bool isNonSpacingMark(char32_t codePoint) {
+    if (codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) return false;
+    // U+1171E (AHOM CONSONANT SIGN MEDIAL RA) is Mn in JVM 21's Unicode 15.0 and Mc in Qt's newer Unicode. The Q3 Task 5
+    // sweep of every code point after a credit word (`\b`) found it, and nothing else, differing from the JVM.
+    if (codePoint == 0x1171E) return true;
+    const QChar::UnicodeVersion version = QChar::unicodeVersion(codePoint);
+    return version != QChar::Unicode_Unassigned && version <= QChar::Unicode_15_0 &&
+           QChar::category(codePoint) == QChar::Mark_NonSpacing;
 }
 
 bool isAsciiSpace(QChar c) {

@@ -13,11 +13,15 @@ using namespace Qt::StringLiterals;
 // meaning is taken from the public documentation of java.util.regex.Pattern on JVM 21, and the Q3 Task 5 differential compares
 // the results with the Kotlin original:
 //   - `\s` is the ASCII white space [ \t\n\x0B\f\r] (no UNICODE_CHARACTER_CLASS): kt::isAsciiSpace;
-//   - `\b` is a word boundary where a word character is `\w`, i.e. [a-zA-Z_0-9] (since JDK 19 `\b` follows `\w`, which is
-//     ASCII-only without UNICODE_CHARACTER_CLASS). It only ever follows one of the credit words here, whose last character is
-//     an ASCII letter, so it holds exactly when the next unit is not [a-zA-Z_0-9] or there is none;
-//   - `\p{L}` is a code point of general category L (a surrogate pair is one code point; an unpaired surrogate is not a
-//     letter): kt::isLetter(char32_t);
+//   - `\b` only ever follows one of the credit words here, whose last character is an ASCII letter. It holds when the next
+//     unit is not [a-zA-Z_0-9] (`\w` without UNICODE_CHARACTER_CLASS) and the next code point (a surrogate pair is one) is not
+//     a non-spacing mark (general category Mn, kt::isNonSpacingMark), or when there is none. The marks were observed by the
+//     Q3 Task 5 differential: after `feat` a U+0301, U+0300 or U+1D167 leaves no boundary, while U+20DD (Me), U+0903 (Mc),
+//     U+200C (Cf), non-ASCII letters, digits and symbols do;
+//   - `\p{L}` is a code point of general category L: kt::isLetter(char32_t). The lookahead `(?=\p{L})` takes the code point
+//     after the quote (a surrogate pair is one code point); the lookbehind `(?<=\p{L})` looks at the one unit before it only,
+//     so a letter above U+FFFF before the quote does not count (observed by the Q3 Task 5 differential: `𝒜’a` keeps no
+//     apostrophe, `a’𝒜` gets a straight one);
 //   - a match is the leftmost one, the greedy quantifiers take what they can, and replace() goes on after a match without
 //     overlap, with the lookarounds seeing the original text.
 // Case: CREDIT_BRACKET and TRAILING_CREDIT have RegexOption.IGNORE_CASE, which in Kotlin is Unicode case folding. The scanners
@@ -74,9 +78,13 @@ bool isWordUnit(char16_t unit) {
     return (unit >= u'a' && unit <= u'z') || (unit >= u'A' && unit <= u'Z') || (unit >= u'0' && unit <= u'9') || unit == u'_';
 }
 
-// `\b` right after a credit word (whose last character is a word character).
+std::optional<char32_t> codePointAt(const QString& text, qsizetype at);
+
+// `\b` right after a credit word (whose last character is a word character): neither a word unit nor a non-spacing mark next.
 bool boundaryAfterWord(const QString& text, qsizetype at) {
-    return at >= text.size() || !isWordUnit(text.at(at).unicode());
+    if (at >= text.size()) return true;
+    if (isWordUnit(text.at(at).unicode())) return false;
+    return !kt::isNonSpacingMark(*codePointAt(text, at));
 }
 
 bool isBracket(char16_t unit) {
@@ -178,15 +186,11 @@ QList<Span> findParenthesised(const QString& text) {
     return found;
 }
 
-// The code point that ends just before `at` (a pair when a low surrogate follows a high one), or nothing at the start.
-std::optional<char32_t> codePointBefore(const QString& text, qsizetype at) {
+// What the lookbehind `(?<=\p{L})` looks at: the one unit before `at` (a low surrogate there is no letter, whatever comes
+// before it), or nothing at the start.
+std::optional<char32_t> unitBefore(const QString& text, qsizetype at) {
     if (at <= 0) return std::nullopt;
-    const char16_t last = text.at(at - 1).unicode();
-    if (last >= 0xDC00 && last <= 0xDFFF && at >= 2) {
-        const char16_t first = text.at(at - 2).unicode();
-        if (first >= 0xD800 && first <= 0xDBFF) return 0x10000 + ((char32_t(first) - 0xD800) << 10) + (char32_t(last) - 0xDC00);
-    }
-    return last;
+    return text.at(at - 1).unicode();
 }
 
 // The code point that starts at `at`, or nothing at the end.
@@ -210,7 +214,7 @@ QString straightenApostrophes(const QString& text) {
     for (qsizetype i = 0; i < text.size(); ++i) {
         const char16_t unit = text.at(i).unicode();
         if (unit != 0x2018 && unit != 0x2019) continue;
-        if (isLetterCodePoint(codePointBefore(text, i)) && isLetterCodePoint(codePointAt(text, i + 1))) out[i] = u'\'';
+        if (isLetterCodePoint(unitBefore(text, i)) && isLetterCodePoint(codePointAt(text, i + 1))) out[i] = u'\'';
     }
     return out;
 }

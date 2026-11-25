@@ -171,6 +171,32 @@ private slots:
         QCOMPARE(texts(u"IU"_s, u"Song featuring Someone"_s), QStringList{u"IU Song featuring Someone lyrics"_s});
         QCOMPARE(texts(u"IU"_s, u"Song [Production Someone]"_s), QStringList{u"IU Song [Production Someone] lyrics"_s});
     }
+
+    // Added (Q3 Task 5, found by the differential `P gq`): in Kotlin's APOSTROPHE `(?<=\p{L})[‘’](?=\p{L})` the lookbehind
+    // looks at the one UTF-16 unit before the quote, so a letter above U+FFFF (a surrogate pair) before it does not count and
+    // the quote is dropped with the other quotes; the lookahead takes the whole pair after it.
+    void anApostropheAfterALetterAboveTheBmpIsDroppedLikeAQuote() {
+        const QString script = QString::fromUcs4(U"\U0001D49C");   // MATHEMATICAL SCRIPT CAPITAL A, a letter
+        const QString deseret = QString::fromUcs4(U"\U00010400");  // DESERET CAPITAL LONG I, a letter
+        QCOMPARE(texts(u"IU"_s, u"x"_s + script + u"’a y"_s), QStringList{u"IU x"_s + script + u"a y lyrics"_s});
+        QCOMPARE(texts(u"IU"_s, u"x"_s + deseret + u"‘"_s + script), QStringList{u"IU x"_s + deseret + script + u" lyrics"_s});
+        QCOMPARE(texts(u"IU"_s, u"a’"_s + script + u" y"_s), QStringList{u"IU a'"_s + script + u" y lyrics"_s});
+    }
+
+    // Added (Q3 Task 5, found by the differential `P gq`): `\b` after a credit word does not hold before a non-spacing mark
+    // (general category Mn, a combining accent; above U+FFFF too), which counts as part of the word; an enclosing or a
+    // spacing mark, a non-ASCII letter or a format character do not.
+    void aCreditWordFollowedByANonSpacingMarkIsNoCredit() {
+        const QString acute = QString(QChar(0x0301));
+        const QString musical = QString::fromUcs4(U"\U0001D167");   // MUSICAL SYMBOL COMBINING TREMOLO-1, Mn
+        QCOMPARE(texts(u"IU"_s, u"Song (feat"_s + acute + u" Z)"_s), QStringList{u"IU Song (feat"_s + acute + u" Z) lyrics"_s});
+        QCOMPARE(texts(u"IU"_s, u"Song [Prod"_s + musical + u" Z]"_s), QStringList{u"IU Song [Prod"_s + musical + u" Z] lyrics"_s});
+        // U+1171E is Mn on the JVM (Unicode 15.0), Mc in Qt's newer Unicode: the JVM's category counts
+        const QString ahom = QString::fromUcs4(U"\U0001171E");
+        QCOMPARE(texts(u"IU"_s, u"Song (narr"_s + ahom + u" Z)"_s), QStringList{u"IU Song (narr"_s + ahom + u" Z) lyrics"_s});
+        for (const char16_t other : {char16_t(0x20DD), char16_t(0x0903), char16_t(0x200C), char16_t(0x00E9), char16_t(0xD55C)})
+            QCOMPARE(texts(u"IU"_s, u"Song (ft"_s + QChar(other) + u" Z)"_s), QStringList{u"IU Song lyrics"_s});
+    }
 };
 
 QTEST_APPLESS_MAIN(GoogleSearchQueryTest)
