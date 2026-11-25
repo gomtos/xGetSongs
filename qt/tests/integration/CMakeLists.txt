@@ -21,3 +21,10 @@ xgs_add_test(tst_real_download tst_real_download.cpp ffprobe.h ffprobe.cpp integ
 target_include_directories(tst_real_download PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(tst_real_download PRIVATE xgstestsupport)
 set_tests_properties(tst_real_download PROPERTIES LABELS integration TIMEOUT 1200)
+
+# The one real Google lookup of the Q3 plan (decision 15): needs XGS_INTEGRATION=1 and XGS_INTEGRATION_GOOGLE=1 and skips
+# otherwise, so the planned runs only check that it skips. It starts a hidden WebView2 (xgswebview) when it does run.
+xgs_add_test(tst_real_google tst_real_google.cpp integration_support.h)
+target_link_libraries(tst_real_google PRIVATE xgswebview Qt6::Gui)
+target_include_directories(tst_real_google PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(tst_real_google PROPERTIES LABELS integration TIMEOUT 1200)
