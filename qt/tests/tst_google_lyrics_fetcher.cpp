@@ -123,6 +123,53 @@ private:
     bool m_set = false;
 };
 
+/// Counts what happened (threads that started, threads that finished) and lets a test wait, with a limit, for a count.
+class Counter {
+public:
+    void add() {
+        {
+            std::lock_guard lock(m_mutex);
+            ++m_count;
+        }
+        m_changed.notify_all();
+    }
+    bool waitFor(int count, std::chrono::nanoseconds limit) {
+        std::unique_lock lock(m_mutex);
+        return m_changed.wait_for(lock, limit, [&] { return m_count >= count; });
+    }
+    int count() {
+        std::lock_guard lock(m_mutex);
+        return m_count;
+    }
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_changed;
+    int m_count = 0;
+};
+
+/// A gate the browser waits at until the test opens it; the wait is bounded, so a test that fails before opening it does not
+/// hang. waitOpen gives false when the limit ran out first.
+class Gate {
+public:
+    void open() {
+        {
+            std::lock_guard lock(m_mutex);
+            m_open = true;
+        }
+        m_changed.notify_all();
+    }
+    bool waitOpen(std::chrono::nanoseconds limit) {
+        std::unique_lock lock(m_mutex);
+        return m_changed.wait_for(lock, limit, [this] { return m_open; });
+    }
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_changed;
+    bool m_open = false;
+};
+
 // The limit of a wait for something that happens within milliseconds; generous for a loaded machine and the debug build.
 constexpr std::chrono::seconds EventLimit{30};
 
@@ -336,6 +383,9 @@ private slots:
         FakeBrowser sorryBrowser({loadedSorry()});
         GoogleLyricsFetcher sorryFetcher(sorryBrowser, options());
         QCOMPARE(kindOf(fetch(sorryFetcher, u"IU"_s, u"Love poem"_s)), OptKind(Kind::Captcha));
+        QVERIFY(consentBrowser.unexpected.isEmpty());
+        QVERIFY(tooManyBrowser.unexpected.isEmpty());
+        QVERIFY(sorryBrowser.unexpected.isEmpty());
     }
 
     void anUnavailableBrowserNeitherCoolsDownNorIsRemembered() {
@@ -428,7 +478,8 @@ private slots:
         GoogleLyricsFetcher fetcher(browser, options());
 
         std::stop_source source;
-        std::latch started(threads);
+        Counter started;
+        Counter finished;
         std::vector<std::optional<GoogleLyricsResult>> results(threads);
         bool inBrowser = false;
         QElapsedTimer timer;
@@ -436,15 +487,20 @@ private slots:
             std::vector<std::jthread> workers;
             for (int i = 0; i < threads; ++i) {
                 workers.emplace_back([&, i] {
-                    started.count_down();
+                    started.add();
                     results[i] = fetcher.fetch(u"Artist %1"_s.arg(i), u"Song %1"_s.arg(i), source.get_token());
+                    finished.add();
                 });
             }
-            started.wait();
+            const bool allStarted = started.waitFor(threads, EventLimit);
             inBrowser = entered.waitFor(EventLimit);
             timer.start();
             source.request_stop();
-            for (std::jthread& worker : workers) worker.join();
+            // Bounded: a thread that the stop does not wake fails the test here (logged at once) instead of being waited for
+            // without end; the jthreads' joins after it would still hang, and the ctest TIMEOUT (120 s) ends the exe then.
+            QVERIFY2(finished.waitFor(threads, EventLimit),
+                     qPrintable(u"%1 of %2 lookups returned"_s.arg(finished.count()).arg(threads)));
+            QVERIFY(allStarted);
         }
         QVERIFY(inBrowser);
         QVERIFY2(timer.elapsed() < 1000, qPrintable(u"%1 ms"_s.arg(timer.elapsed())));
@@ -458,6 +514,84 @@ private slots:
         QCOMPARE(kindOf(fetch(fetcher, u"Artist 0"_s, u"Song 0"_s)), OptKind(Kind::Found));
         QCOMPARE(renders.load(), 2);
         QVERIFY(pauses().empty());
+    }
+
+    void aWaiterForTheTurnWakesOnItsOwnStopWhileAnotherLookupHoldsIt() {
+        // The holder is inside the browser with a token nobody stops, held at a gate. Four other lookups, each with its own
+        // stop source, wait for the turn. Stopping only the waiters must end each of them while the holder is still in the
+        // browser: a turn wait that ignored its stop would keep them until the holder let go.
+        constexpr int waiters = 4;
+        Gate gate;
+        Signal holderEntered;
+        std::atomic<int> renders{0};
+        std::atomic<bool> gateHeld{true};
+        LambdaBrowser browser([&](const QString&, std::stop_token) {
+            if (++renders == 1) {
+                holderEntered.set();
+                if (!gate.waitOpen(EventLimit)) gateHeld = false;
+            }
+            return loadedCard();
+        });
+        GoogleLyricsFetcher fetcher(browser, options());
+
+        std::optional<GoogleLyricsResult> held;
+        std::atomic<bool> holderDone{false};
+        std::vector<std::stop_source> sources(waiters);
+        std::vector<std::optional<GoogleLyricsResult>> results(waiters, GoogleLyricsResult{});
+        Counter started;
+        Counter finished;
+        bool inBrowser = false;
+        bool allStarted = false;
+        bool allReturned = false;
+        int returnedInTime = 0;
+        bool holderStillInside = false;
+        QElapsedTimer timer;
+        {
+            std::jthread holder([&] {
+                held = fetcher.fetch(u"Holder"_s, u"Song"_s, std::stop_token());
+                holderDone = true;
+            });
+            inBrowser = holderEntered.waitFor(EventLimit);
+            std::vector<std::jthread> workers;
+            for (int i = 0; i < waiters; ++i) {
+                workers.emplace_back([&, i] {
+                    started.add();
+                    results[i] = fetcher.fetch(u"Waiter %1"_s.arg(i), u"Song"_s, sources[i].get_token());
+                    finished.add();
+                });
+            }
+            allStarted = started.waitFor(waiters, EventLimit);
+            // Gives the waiters time to make their first look and reach the turn's wait. A waiter that has not reached it yet
+            // when its stop comes also returns nothing, so this cannot make the test fail wrongly; it makes it test the turn's
+            // wait rather than the look before it.
+            std::this_thread::sleep_for(200ms);
+            timer.start();
+            for (std::stop_source& source : sources) source.request_stop();
+            // Generous: the stop wakes the waits at once; a wait that ignored it would last until the gate opens below.
+            allReturned = finished.waitFor(waiters, 5s);
+            returnedInTime = finished.count();
+            holderStillInside = !holderDone;
+            gate.open();
+        }
+        QVERIFY(inBrowser);
+        QVERIFY(allStarted);
+        QVERIFY2(allReturned, qPrintable(u"%1 of %2 waiters returned while the holder was in the browser"_s
+                                             .arg(returnedInTime)
+                                             .arg(waiters)));
+        QVERIFY(holderStillInside);
+        QVERIFY2(gateHeld, "the gate was opened before its limit ran out");
+        QVERIFY2(timer.elapsed() < 5000, qPrintable(u"%1 ms"_s.arg(timer.elapsed())));
+        for (int i = 0; i < waiters; ++i)
+            QVERIFY2(!results[i].has_value(), qPrintable(results[i] ? results[i]->toString() : QString()));
+        QCOMPARE(renders.load(), 1);
+        QCOMPARE(kindOf(held), OptKind(Kind::Found));
+        QCOMPARE(m_log.lines().size(), 1);   // the holder's trip only
+
+        // Nothing was remembered for a waiter and no cool-down began: asking for one again makes a trip and finds the card
+        // (after the interval since the holder's trip).
+        QCOMPARE(kindOf(fetch(fetcher, u"Waiter 0"_s, u"Song"_s)), OptKind(Kind::Found));
+        QCOMPARE(renders.load(), 2);
+        QVERIFY(pauses() == Durations{10s});
     }
 
     void aStopDuringTheIntervalWaitMakesNoTrip() {
@@ -514,15 +648,23 @@ private slots:
 
         std::vector<std::optional<GoogleLyricsResult>> results(threads);
         {
+            // Nobody stops the lookups unless they do not all return in time: then the stop releases any that wait for a turn
+            // that never comes (a lost wakeup), so that the test fails instead of hanging.
+            std::stop_source source;
+            Counter finished;
             std::latch go(1);
             std::vector<std::jthread> workers;
             for (int i = 0; i < threads; ++i) {
                 workers.emplace_back([&, i] {
                     go.wait();
-                    results[i] = fetcher.fetch(u"Artist %1"_s.arg(i), u"Song %1"_s.arg(i), std::stop_token());
+                    results[i] = fetcher.fetch(u"Artist %1"_s.arg(i), u"Song %1"_s.arg(i), source.get_token());
+                    finished.add();
                 });
             }
             go.count_down();
+            const bool allReturned = finished.waitFor(threads, EventLimit);
+            if (!allReturned) source.request_stop();
+            QVERIFY2(allReturned, qPrintable(u"%1 of %2 lookups returned"_s.arg(finished.count()).arg(threads)));
         }
         for (const auto& result : results) QCOMPARE(kindOf(result), OptKind(Kind::Found));
         QVERIFY(!overlapped);
@@ -538,15 +680,12 @@ private slots:
         // answer comes, B must take it from what was remembered (the look after the turn) and not make a second trip, which
         // the fake would answer as unexpected.
         FakeBrowser answers({loadedCard()});
-        std::mutex gateMutex;
-        std::condition_variable gateChanged;
-        bool open = false;
+        Gate gate;
         Signal entered;
+        std::atomic<bool> gateHeld{true};
         LambdaBrowser browser([&](const QString& url, std::stop_token stop) {
             entered.set();
-            std::unique_lock lock(gateMutex);
-            gateChanged.wait(lock, [&] { return open; });
-            lock.unlock();
+            if (!gate.waitOpen(EventLimit)) gateHeld = false;
             return answers.render(url, 20s, stop);
         });
         GoogleLyricsFetcher fetcher(browser, options());
@@ -554,21 +693,26 @@ private slots:
         std::optional<GoogleLyricsResult> first;
         std::optional<GoogleLyricsResult> second;
         bool inBrowser = false;
+        bool bAboutToAsk = false;
         {
             std::jthread a([&] { first = fetcher.fetch(u"IU"_s, u"Love poem"_s, std::stop_token()); });
             inBrowser = entered.waitFor(EventLimit);
-            std::jthread b([&] { second = fetcher.fetch(u"IU"_s, u"Love poem"_s, std::stop_token()); });
-            // Gives B time to make its first look and start waiting for the turn. Nothing outside the fetcher shows that B
-            // waits; should B be slower than this, it finds the answer in its first look instead and the test still passes,
-            // it just does not exercise the second look that time.
+            Signal aboutToAsk;
+            std::jthread b([&] {
+                aboutToAsk.set();
+                second = fetcher.fetch(u"IU"_s, u"Love poem"_s, std::stop_token());
+            });
+            // B says it is about to call fetch; the head start after that gives it time to make its first look and start
+            // waiting for the turn. Still no proof: nothing outside the fetcher shows that B waits. Should B be slower than
+            // this, it finds the answer in its first look instead and the test still passes, it just does not exercise the
+            // second look that time.
+            bAboutToAsk = aboutToAsk.waitFor(EventLimit);
             std::this_thread::sleep_for(200ms);
-            {
-                std::lock_guard lock(gateMutex);
-                open = true;
-            }
-            gateChanged.notify_all();
+            gate.open();
         }
         QVERIFY(inBrowser);
+        QVERIFY(bAboutToAsk);
+        QVERIFY2(gateHeld, "the gate was opened before its limit ran out");
         QCOMPARE(kindOf(first), OptKind(Kind::Found));
         QCOMPARE(kindOf(second), OptKind(Kind::Found));
         QCOMPARE(answers.urls.size(), 1);

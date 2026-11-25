@@ -203,6 +203,7 @@
     "exe": "tst_google_lyrics_fetcher",
     "added": [
       "stoppingEndsEveryWaitingLookupPromptly",
+      "aWaiterForTheTurnWakesOnItsOwnStopWhileAnotherLookupHoldsIt",
       "aStopDuringTheIntervalWaitMakesNoTrip",
       "lookupsFromManyThreadsNeverOverlapAndKeepTheInterval",
       "theSecondOfTwoWaitersForOneSongUsesTheRememberedAnswer"

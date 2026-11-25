@@ -83,6 +83,9 @@ xgs_add_test(tst_google_lyrics_fetcher tst_google_lyrics_fetcher.cpp)
 target_link_libraries(tst_google_lyrics_fetcher PRIVATE xgstestsupport)
 xgs_add_test(tst_google_lyrics_provider tst_google_lyrics_provider.cpp)
 target_link_libraries(tst_google_lyrics_provider PRIVATE xgstestsupport)
+# Their threaded tests bound every wait with events; this ends a hang that is left (a join after a failed wait) well before Qt
+# Test's 300 s watchdog. Each exe takes about a second or less (the fetcher's includes three 200 ms head starts).
+set_tests_properties(tst_google_lyrics_fetcher tst_google_lyrics_provider PROPERTIES TIMEOUT 120)
 add_subdirectory(integration)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through

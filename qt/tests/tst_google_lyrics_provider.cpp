@@ -1,5 +1,7 @@
 #include <QtTest>
 
+#include <QElapsedTimer>
+
 #include <chrono>
 #include <optional>
 #include <stop_token>
@@ -146,9 +148,13 @@ private slots:
         };
         GoogleLyricsProvider provider(channel, nullptr, standingStill(&fetcherPauses), browserOptions);
 
+        QElapsedTimer timer;
+        timer.start();
         QCOMPARE(provider.find(query, std::stop_token()), std::optional<QString>());
 
         QVERIFY2(fetcherPauses.empty() && browserPauses.empty(), "nothing was waited for");
+        // Loose: the lookup takes microseconds; the bound only makes "at once" explicit in real time too.
+        QVERIFY2(timer.elapsed() < 5000, qPrintable(u"%1 ms"_s.arg(timer.elapsed())));
     }
 };
 
