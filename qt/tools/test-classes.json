@@ -144,6 +144,11 @@
     "added": ["everyDriverCallGetsTheTimeThatIsLeft", "theDefaultPauseWakesAtOnceOnAStopRequest", "theLargestTimeoutDoesNotOverflow"]
   },
   {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/LyricsCardParserTest.kt",
+    "exe": "tst_lyrics_card_parser",
+    "added": ["theScriptGivesWhatTheFakesAssume", "aLineWithScriptAndNestedMarkupGivesOnlyItsText"]
+  },
+  {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/BrowserChannelTest.kt",
     "exe": "tst_browser_channel",
     "added": ["theAgentCountsAsPresentOnlyWhileAttached", "destroyingTheAgentWhileACallWaitsFailsItWithClosed",

@@ -87,6 +87,7 @@ target_link_libraries(tst_google_lyrics_provider PRIVATE xgstestsupport)
 # Test's 300 s watchdog. Each exe takes about a second or less (the fetcher's includes three 200 ms head starts).
 set_tests_properties(tst_google_lyrics_fetcher tst_google_lyrics_provider PROPERTIES TIMEOUT 120)
 add_subdirectory(integration)
+add_subdirectory(webview)
 
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
 # XGS_TEST_CHILD.
