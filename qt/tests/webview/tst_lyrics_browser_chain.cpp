@@ -289,7 +289,8 @@ private slots:
         // Thirty seconds: the window is made first (about a second here).
         QTRY_VERIFY2_WITH_TIMEOUT(m_server->countOf(u"/search"_s) == 1,
                                   qPrintable(u"requests: "_s + m_server->requests().join(u", "_s) + u"; finished: "_s
-                                             + QString::number(lookup.finished()) + u"; log: "_s + log.lines().join(u" | "_s)),
+                                             + QString::number(lookup.finished()) + u"; log: "_s + log.lines().join(u" | "_s)
+                                             + u"; windows made in: "_s + creationTimes(browser->view().creationTimesMs())),
                                   30000);
         // The page stops answering as soon as it has loaded; by now the lookup waits for a script that will not answer.
         QTest::qWait(1500);
@@ -326,7 +327,8 @@ private slots:
         // Thirty seconds: the window is made first (about a second here).
         QTRY_VERIFY2_WITH_TIMEOUT(m_server->countOf(u"/search"_s) == 1,
                                   qPrintable(u"requests: "_s + m_server->requests().join(u", "_s) + u"; finished: "_s
-                                             + QString::number(lookup.finished()) + u"; log: "_s + log.lines().join(u" | "_s)),
+                                             + QString::number(lookup.finished()) + u"; log: "_s + log.lines().join(u" | "_s)
+                                             + u"; windows made in: "_s + creationTimes(browser.view().creationTimesMs())),
                                   30000);
         // The page changes its address every 100 ms, so it never settles; the lookup keeps looking at it.
         QTest::qWait(1000);
@@ -385,8 +387,10 @@ private slots:
 };
 
 int main(int argc, char** argv) {
+    const std::optional<QString> folder = childUserDataFolder();
+    if (folder) quietChildFailures();
     QGuiApplication app(argc, argv);
-    if (const std::optional<QString> folder = childUserDataFolder()) return childMain(*folder);
+    if (folder) return childMain(*folder);
     LyricsBrowserChainTest test;
     QTEST_SET_MAIN_SOURCE_PATH
     return QTest::qExec(&test, argc, argv);

@@ -1,6 +1,7 @@
 #include "webview/hidden_web_view.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QTimer>
 
@@ -99,7 +100,8 @@ struct HiddenWebView::Window {
     ComPtr<ICoreWebView2> view;
     std::vector<std::function<void()>> removers;                // take the event handlers off again
     bool ready = false;
-    std::vector<std::function<void()>> waiting;                 // steps that wait for the window to be made
+    QElapsedTimer started;                                      // since ensureWindow
+    std::vector<std::function<void()>> waiting;                // steps that wait for the window to be made
     std::vector<std::function<void()>> onNavigationCompleted;   // one-shot
 };
 
@@ -132,6 +134,10 @@ int HiddenWebView::windowsMade() const {
 
 int HiddenWebView::downloadsRefused() const {
     return m_downloadsRefused;
+}
+
+QList<qint64> HiddenWebView::creationTimesMs() const {
+    return m_creationTimes;
 }
 
 std::optional<quint32> HiddenWebView::browserProcessId() const {
@@ -250,10 +256,23 @@ std::shared_ptr<HiddenWebView::Window> HiddenWebView::ensureWindow() {
     if (m_window) return m_window;
     auto window = std::make_shared<Window>();
     window->number = ++m_made;
+    window->started.start();
+    m_creationTimes.append(-1);
     m_window = window;
+    const std::weak_ptr<Window> weak = window;
     // Made from the event loop, so that no call is ever answered inside load (a failure to start included).
-    QTimer::singleShot(0, this, [this, weak = std::weak_ptr<Window>(window)] {
-        if (const std::shared_ptr<Window> made = weak.lock()) startWindow(made);
+    if (m_held < m_options.holdCreationsForTest) {
+        ++m_held;   // a check holds this one back: its callbacks never come
+    } else {
+        QTimer::singleShot(0, this, [this, weak] {
+            if (const std::shared_ptr<Window> made = weak.lock()) startWindow(made);
+        });
+    }
+    // WebView2 may never call back (a runtime that hangs): what waits on the window must not wait for ever, and the next load
+    // must get a new window.
+    QTimer::singleShot(m_options.createLimit, this, [this, weak] {
+        const std::shared_ptr<Window> made = weak.lock();
+        if (made && !made->ready) failWindow(made, unavailable(u"timeout"_s));
     });
     return window;
 }
@@ -510,6 +529,7 @@ void HiddenWebView::onController(const std::weak_ptr<Window>& weak, long result,
     }
 
     window->ready = true;
+    if (window->number - 1 < m_creationTimes.size()) m_creationTimes[window->number - 1] = window->started.elapsed();
     std::vector<std::function<void()>> steps = std::move(window->waiting);
     window->waiting.clear();
     for (const std::function<void()>& step : steps) step();

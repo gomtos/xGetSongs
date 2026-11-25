@@ -107,7 +107,8 @@ class HiddenWebViewTest : public QObject {
             },
             10000);
         if (!shown)
-            qWarning("no card after %d looks; hasWindow %d; last answer: %s", looks, int(view.hasWindow()), qUtf8Printable(why.left(400)));
+            qWarning("no card after %d looks; hasWindow %d; windows made in: %s; last answer: %s", looks, int(view.hasWindow()),
+                     qUtf8Printable(creationTimes(view.creationTimesMs())), qUtf8Printable(why.left(400)));
         return seen;
     }
 
@@ -364,6 +365,37 @@ private slots:
         QVERIFY(waitForCard(view).value(u"text"_s).toString().contains(u"card of second"_s));
     }
 
+    // Added (fix round 1): a window whose WebView2 callbacks never come is given up after createLimit; what waited on it is
+    // answered and the next load makes a new window. The first window is held back by the test hook; 1.5 s limit.
+    void aWindowThatIsNotMadeInTimeIsGivenUp() {
+        HiddenWebViewOptions held = options();
+        held.createLimit = std::chrono::milliseconds(1500);
+        held.holdCreationsForTest = 1;
+        HiddenWebView view(held);
+
+        QElapsedTimer timer;
+        timer.start();
+        const Waited first = load(view, url(u"/first"_s));
+        const qint64 waited = timer.elapsed();
+        QVERIFY(first.outcome);
+        QVERIFY(!first.outcome->ok);
+        QCOMPARE(first.outcome->text, u"webview2 unavailable (timeout)"_s);
+        QCOMPARE(first.calls, 1);
+        // The limit is 1.5 s; five leaves room for a slow event loop.
+        QVERIFY2(waited >= 1400 && waited <= 5000, qPrintable(QString::number(waited)));
+        QVERIFY(!view.hasWindow());
+        QCOMPARE(view.windowsMade(), 1);
+
+        QVERIFY(load(view, url(u"/first"_s)).outcome.value_or(PageOutcome{}).ok);
+        QCOMPARE(view.windowsMade(), 2);
+        QVERIFY(waitForCard(view).value(u"card"_s).toBool());
+        const QList<qint64> times = view.creationTimesMs();
+        QCOMPARE(times.size(), 2);
+        QCOMPARE(times.at(0), qint64(-1));
+        QVERIFY2(times.at(1) >= 0, qPrintable(creationTimes(times)));
+        qInfo("windows made in: %s", qPrintable(creationTimes(times)));
+    }
+
     void destroyingTheViewAnswersWhatIsPendingWithClosed() {
         // A load whose window is still being made.
         auto calls = std::make_shared<int>(0);
@@ -416,8 +448,10 @@ private slots:
 };
 
 int main(int argc, char** argv) {
+    const std::optional<QString> folder = childUserDataFolder();
+    if (folder) quietChildFailures();
     QGuiApplication app(argc, argv);
-    if (const std::optional<QString> folder = childUserDataFolder()) return childMain(*folder);
+    if (folder) return childMain(*folder);
     HiddenWebViewTest test;
     QTEST_SET_MAIN_SOURCE_PATH
     return QTest::qExec(&test, argc, argv);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QtGlobal>
@@ -30,6 +31,12 @@ struct HiddenWebViewOptions {
     QString extraBrowserArguments;
     /// How long a script may take to answer (Rust's SCRIPT_LIMIT).
     std::chrono::milliseconds scriptLimit{5000};
+    /// How long making a window may take (environment and controller); after that the window counts as failed: what waits on
+    /// it is answered `webview2 unavailable (timeout)` and the next load makes a new one. Making one takes about a second.
+    std::chrono::milliseconds createLimit{30000};
+    /// For the checks only: how many of the first windows are never started (their WebView2 callbacks never come), so that the
+    /// createLimit can be seen at work. 0 in the product.
+    int holdCreationsForTest = 0;
 };
 
 /// A WebView2 window that is never shown, as the Page of a BrowserAgent. The rules (Q3 decision 10, as browser_window.rs):
@@ -42,7 +49,8 @@ struct HiddenWebViewOptions {
 ///    external program (LaunchingExternalUriScheme cancelled), no script dialog, no context menu, no developer tools;
 ///  - a navigation goes only where lyrics::google::allowedNavigation allows (`https://`, `http://` to the machine itself,
 ///    `about:blank`), redirects included; a load of an address that allowedUrl refuses is answered `url not allowed`;
-///  - a script answers within scriptLimit or the call fails with `script timed out`;
+///  - a script answers within scriptLimit or the call fails with `script timed out`; a window is made within createLimit or
+///    it is given up (`webview2 unavailable (timeout)`);
 ///  - the browser or render process dying (ProcessFailed) closes the window and fails what was waiting
 ///    (`browser process failed`);
 ///  - the User-Agent is WebView2's own.
@@ -53,7 +61,9 @@ struct HiddenWebViewOptions {
 /// Threads: make it, call it and destroy it on one thread, which must be a single-threaded COM apartment with a message loop
 /// (the GUI thread of a QGuiApplication; otherwise every load fails). Every `done` is called on that thread, exactly once,
 /// inside the call or later; a done may call into the view again (close included). Destroying the view answers every call that
-/// waits with `closed` (inside the destructor) and nothing is called after it is gone.
+/// waits with `closed` (inside the destructor) and nothing is called after it is gone. The view (and the LyricsBrowser that owns
+/// one) must not be destroyed from inside one of its own `done`s or from inside a WebView2 handler: the call that is running
+/// would return into a destroyed object.
 class HiddenWebView final : public QObject, public lyrics::google::Page {
     Q_OBJECT
 
@@ -77,6 +87,9 @@ public:
     int windowsMade() const;
     /// How many downloads a page started and the view refused (the checks see that the refusal was reached).
     int downloadsRefused() const;
+    /// How long each window took to be made, in ms, in order (-1: never made: failed, closed or timed out first). The checks
+    /// print it when something fails.
+    QList<qint64> creationTimesMs() const;
     /// The process id of the window's browser process (ICoreWebView2::BrowserProcessId); nothing until the window is made.
     std::optional<quint32> browserProcessId() const;
 
@@ -113,6 +126,8 @@ private:
     quint64 m_nextId = 1;
     int m_made = 0;
     int m_downloadsRefused = 0;
+    int m_held = 0;                   // windows left unstarted so far (holdCreationsForTest)
+    QList<qint64> m_creationTimes;    // per window, by number - 1
     bool m_destroying = false;   // inside the destructor: calls from a done are answered `closed` and make nothing
 };
 

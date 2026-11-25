@@ -12,7 +12,9 @@
 #include <QtTest>
 
 #include <windows.h>
+#include <crtdbg.h>
 #include <shlobj.h>
+#include <stdlib.h>
 #include <tlhelp32.h>
 
 #include <functional>
@@ -132,6 +134,13 @@ inline QList<testsupport::SeenProcess> browserProcessesLeft(const QString& folde
     return testsupport::waitForNoneMentioning(QDir::toNativeSeparators(folder), since, limitMs);
 }
 
+/// How long each window of a view took to be made ("1203 ms, never"), for failure messages.
+inline QString creationTimes(const QList<qint64>& times) {
+    QStringList out;
+    for (const qint64 ms : times) out.append(ms < 0 ? QStringLiteral("never") : QString::number(ms) + QStringLiteral(" ms"));
+    return out.isEmpty() ? QStringLiteral("no window made") : out.join(QStringLiteral(", "));
+}
+
 inline QString describe(const QList<testsupport::SeenProcess>& processes) {
     QStringList out;
     for (const testsupport::SeenProcess& p : processes) out.append(QString::number(p.pid) + u' ' + p.image);
@@ -183,9 +192,22 @@ inline ChildRun runNoRuntimeChild(const QString& emptyFolder, const QString& use
 
 /// The user-data folder the child was given; nothing when this process is not the child.
 inline std::optional<QString> childUserDataFolder() {
-    const QByteArray value = qgetenv(ChildVariable);
+    const QString value = qEnvironmentVariable(ChildVariable);
     if (value.isEmpty()) return std::nullopt;
-    return QString::fromLocal8Bit(value);
+    return value;
+}
+
+/// The child runs before QTest::qExec, without Qt Test's fault handler: should it crash, abort or fail an assertion, it must
+/// end without a box on screen (no Windows error dialog, no CRT "Debug Error" or assertion box; reports go to the debugger
+/// output instead). Called first thing in the child.
+inline void quietChildFailures() {
+    SetErrorMode(SetErrorMode(0) | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#ifdef _DEBUG
+    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG);
+#endif
 }
 
 }  // namespace xgs::webview::testing
