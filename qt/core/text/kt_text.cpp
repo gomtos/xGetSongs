@@ -281,6 +281,14 @@ bool isLetterOrDigit(char32_t codePoint) {
     return detail::qtLetterOrDigit(codePoint);
 }
 
+// A letter is a letter or digit that is not Nd (the categories are disjoint). Above U+FFFF the letter-or-digit answer is
+// JVM 21's (above) and Qt only tells a digit from a letter. That assumes no supplementary code point moved between L* and
+// Nd from Unicode 15.0 to Qt's version; qt/tools/differential is to confirm it where a port relies on it (Q3 Task 5: `\p{L}`).
+bool isLetter(char32_t codePoint) {
+    if (codePoint <= 0xFFFF) return isLetter(QChar(char16_t(codePoint)));
+    return isLetterOrDigit(codePoint) && QChar::category(codePoint) != QChar::Number_DecimalDigit;
+}
+
 bool isAsciiSpace(QChar c) {
     const char16_t unit = c.unicode();
     return unit == u' ' || unit == u'\t' || unit == u'\n' || unit == 0x000B || unit == u'\f' || unit == u'\r';

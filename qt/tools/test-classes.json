@@ -122,6 +122,22 @@
               "anInstrumentalFlagIsReadWhateverItsCase"]
   },
   {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/GoogleSearchQueryTest.kt",
+    "exe": "tst_google_search_query",
+    "added": ["oddCharactersStayInsideTheQueryOfTheAddress", "aSearchBaseOfTheCheckIsUsedAsGiven",
+              "theCacheKeyTreatsBothSigmasAsOneLetter"]
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/PageClassifierTest.kt",
+    "exe": "tst_page_classifier",
+    "added": []
+  },
+  {
+    "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/PageWatchTest.kt",
+    "exe": "tst_page_watch",
+    "added": ["aProbeOfTheWrongShapeIsNoProbe"]
+  },
+  {
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/integration/RealFfmpegTaggingIntegrationTest.kt",
     "exe": "tst_real_ffmpeg_tagging",
     "added": []

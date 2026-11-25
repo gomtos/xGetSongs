@@ -17,6 +17,11 @@ add_library(xgscore STATIC
     lyrics/lyrics_matcher.h lyrics/lyrics_matcher.cpp
     lyrics/lyrics_provider.h lyrics/lyrics_provider.cpp
     lyrics/lrclib_lyrics_provider.h lyrics/lrclib_lyrics_provider.cpp
+    lyrics/google/selectors.h
+    lyrics/google/search_query.h lyrics/google/search_query.cpp
+    lyrics/google/lyrics_result.h lyrics/google/lyrics_result.cpp
+    lyrics/google/page_classifier.h lyrics/google/page_classifier.cpp
+    lyrics/google/page_watch.h lyrics/google/page_watch.cpp
     log/log_redaction.h log/log_redaction.cpp
     model/models.h
     json/json.h json/json.cpp
@@ -34,7 +39,8 @@ add_library(xgscore STATIC
     job/download_service.h job/job_events.h job/job_events.cpp
     job/default_download_service.h job/default_download_service.cpp
     net/http_client.h net/qt_http_client.h net/qt_http_client.cpp
-    net/http_fetch.h net/http_fetch.cpp)
+    net/http_fetch.h net/http_fetch.cpp
+    net/url_encoding.h net/url_encoding.cpp)
 target_include_directories(xgscore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(xgscore PUBLIC Qt6::Core Qt6::Network)
 xgs_target_defaults(xgscore)

@@ -15,6 +15,7 @@ namespace xgs::kt {
 
 bool isWhitespace(QChar c);        // Char.isWhitespace(): Zs, Zl, Zp, U+0009..000D, U+001C..001F
 bool isLetter(QChar c);            // Char.isLetter()
+bool isLetter(char32_t codePoint); // Character.isLetter(int), and `\p{L}` of a Java regular expression; a surrogate is none
 bool isLetterOrDigit(QChar c);     // Char.isLetterOrDigit(): a letter (L*) or Nd; a surrogate unit is neither
 bool isLetterOrDigit(char32_t codePoint);   // Character.isLetterOrDigit(int); a surrogate code point is neither
 bool isDigit(QChar c);             // Char.isDigit() (inline-only: Character.isDigit(char)): Nd; a surrogate unit is not

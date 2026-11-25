@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <optional>
 #include "paths/paths.h"
 #include "tools/tool_locator.h"
 
@@ -14,7 +15,9 @@ using xgs::tools::ToolLocator;
 class ToolLocatorTest : public QObject {
     Q_OBJECT
 
-    QTemporaryDir m_temp;
+    // Made in initTestCase, not with the object: QTEST_APPLESS_MAIN builds the object before Qt Test reads the arguments, and
+    // `-functions` ends the process without destroying it, which left a %TEMP%\qt_temp-* folder behind on every such call.
+    std::optional<QTemporaryDir> m_temp;
     QString m_root, m_appBin, m_pathDir;
 
     static QString windowsPath(const QString& path) {
@@ -39,9 +42,11 @@ class ToolLocatorTest : public QObject {
     }
 
 private slots:
+    void initTestCase() { m_temp.emplace(); }
+    void cleanupTestCase() { m_temp.reset(); }
     void init() {
-        QVERIFY(m_temp.isValid());
-        m_root = *xgs::paths::fromText(windowsPath(m_temp.path()));
+        QVERIFY(m_temp && m_temp->isValid());
+        m_root = *xgs::paths::fromText(windowsPath(m_temp->path()));
         m_appBin = dirIn(m_root, u"app-bin"_s);
         m_pathDir = dirIn(m_root, u"path-dir"_s);
         QVERIFY(!m_appBin.isEmpty());

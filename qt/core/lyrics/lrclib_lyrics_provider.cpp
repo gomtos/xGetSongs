@@ -8,6 +8,7 @@
 #include "json/json.h"
 #include "lyrics/lyrics_extractor.h"
 #include "lyrics/lyrics_matcher.h"
+#include "net/url_encoding.h"
 #include "text/kt_text.h"
 
 using namespace Qt::StringLiterals;
@@ -21,61 +22,6 @@ constexpr int HttpTooManyRequests = 429;
 constexpr int HttpBadGateway = 502;
 constexpr int HttpServiceUnavailable = 503;
 constexpr int HttpGatewayTimeout = 504;
-
-void appendPercentByte(QString& out, unsigned byte) {
-    static constexpr char16_t hex[] = u"0123456789ABCDEF";
-    out += u'%';
-    out += QChar(hex[(byte >> 4) & 0xF]);
-    out += QChar(hex[byte & 0xF]);
-}
-
-// Kotlin's `URLEncoder.encode(value, UTF_8).replace("+", "%20")`, written from the public description of URLEncoder: the
-// ASCII letters and digits and `.`, `-`, `*`, `_` stay as they are, a space is `%20` (URLEncoder's `+`, replaced; a `+` of
-// the value itself is `%2B`, so only spaces become `%20`), and every other character is its UTF-8 bytes as `%XX` with
-// upper-case hex digits. An unpaired surrogate, which has no UTF-8 form, is `%3F` (the `?` that the JVM's encoders put in
-// place of what they cannot encode): observed on the JVM by the Q2c Task 4 differential (kind W op lf), as was the rest.
-QString encode(const QString& value) {
-    QString out;
-    out.reserve(value.size() * 3);
-    const qsizetype size = value.size();
-    for (qsizetype i = 0; i < size; ++i) {
-        const char16_t unit = value.at(i).unicode();
-        if ((unit >= u'a' && unit <= u'z') || (unit >= u'A' && unit <= u'Z') || (unit >= u'0' && unit <= u'9') || unit == u'.' ||
-            unit == u'-' || unit == u'*' || unit == u'_') {
-            out += QChar(unit);
-            continue;
-        }
-        if (unit == u' ') {
-            out += u"%20";
-            continue;
-        }
-        char32_t codePoint = unit;
-        if (unit >= 0xD800 && unit <= 0xDBFF && i + 1 < size && value.at(i + 1).unicode() >= 0xDC00 &&
-            value.at(i + 1).unicode() <= 0xDFFF) {
-            codePoint = 0x10000 + ((char32_t(unit) - 0xD800) << 10) + (char32_t(value.at(i + 1).unicode()) - 0xDC00);
-            ++i;
-        } else if (unit >= 0xD800 && unit <= 0xDFFF) {
-            appendPercentByte(out, '?');
-            continue;
-        }
-        if (codePoint < 0x80) {
-            appendPercentByte(out, codePoint);
-        } else if (codePoint < 0x800) {
-            appendPercentByte(out, 0xC0 | (codePoint >> 6));
-            appendPercentByte(out, 0x80 | (codePoint & 0x3F));
-        } else if (codePoint < 0x10000) {
-            appendPercentByte(out, 0xE0 | (codePoint >> 12));
-            appendPercentByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
-            appendPercentByte(out, 0x80 | (codePoint & 0x3F));
-        } else {
-            appendPercentByte(out, 0xF0 | (codePoint >> 18));
-            appendPercentByte(out, 0x80 | ((codePoint >> 12) & 0x3F));
-            appendPercentByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
-            appendPercentByte(out, 0x80 | (codePoint & 0x3F));
-        }
-    }
-    return out;
-}
 
 // The primitive at key of record (kotlinx's `record[key] as? JsonPrimitive`); nullptr for anything else. JsonNull is a
 // JsonPrimitive in kotlinx (not a string, content "null"); every reader below gives null for it, as it does for json::Null.
@@ -307,14 +253,16 @@ LrclibLyricsProvider::Answer LrclibLyricsProvider::exchange(const QString& url, 
 }
 
 QString LrclibLyricsProvider::getUrl(const LyricsQuery& query) const {
-    QString url = m_baseUrl + u"/get?artist_name="_s + encode(query.artist) + u"&track_name="_s + encode(query.title);
-    if (query.album && !kt::isBlank(*query.album)) url += u"&album_name="_s + encode(*query.album);
+    QString url = m_baseUrl + u"/get?artist_name="_s + net::encodeQueryValue(query.artist) + u"&track_name="_s +
+                  net::encodeQueryValue(query.title);
+    if (query.album && !kt::isBlank(*query.album)) url += u"&album_name="_s + net::encodeQueryValue(*query.album);
     if (query.durationSeconds && *query.durationSeconds > 0) url += u"&duration="_s + QString::number(*query.durationSeconds);
     return url;
 }
 
 QString LrclibLyricsProvider::searchUrl(const QString& artist, const QString& title) const {
-    return m_baseUrl + u"/search?track_name="_s + encode(title) + u"&artist_name="_s + encode(artist);
+    return m_baseUrl + u"/search?track_name="_s + net::encodeQueryValue(title) + u"&artist_name="_s +
+           net::encodeQueryValue(artist);
 }
 
 }  // namespace xgs::lyrics

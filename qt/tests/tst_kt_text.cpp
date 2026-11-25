@@ -177,6 +177,21 @@ private slots:
         QCOMPARE(kt::isLetterOrDigit(char32_t(0xD83D)), false);    // a surrogate code point
     }
 
+    // Character.isLetter(int) by the general categories of Unicode 15.0 (not yet observed on the JVM; the Q3 Task 5
+    // differential compares `\p{L}` around apostrophes, which uses it).
+    void codePointIsLetterTellsSupplementaryLettersFromDigits() {
+        QCOMPARE(kt::isLetter(char32_t(0x1D49C)), true);    // 𝒜 MATHEMATICAL SCRIPT CAPITAL A (Lu)
+        QCOMPARE(kt::isLetter(char32_t(0x10428)), true);    // DESERET SMALL LONG I (Ll)
+        QCOMPARE(kt::isLetter(char32_t(0x20000)), true);    // CJK Extension B (Lo)
+        QCOMPARE(kt::isLetter(char32_t(0x1D7CE)), false);   // MATHEMATICAL BOLD DIGIT ZERO (Nd)
+        QCOMPARE(kt::isLetter(char32_t(0x104A0)), false);   // OSMANYA DIGIT ZERO (Nd)
+        QCOMPARE(kt::isLetter(char32_t(0x1F600)), false);   // 😀 (So)
+        QCOMPARE(kt::isLetter(char32_t(0x0041)), true);     // A
+        QCOMPARE(kt::isLetter(char32_t(0x0661)), false);    // ARABIC-INDIC DIGIT ONE (Nd)
+        QCOMPARE(kt::isLetter(char32_t(0xD83D)), false);    // a surrogate code point
+        QCOMPARE(kt::isLetter(char32_t(0x110000)), false);  // beyond Unicode
+    }
+
     // Kotlin's answers from Oracle.java (case lines `H text`: Normalizer.normalize(text, Form.NFKC), JVM 21.0.9).
     void nfkcComposesHangulJamoAndFoldsFullWidth() {
         QCOMPARE(kt::nfkc(QStringLiteral(u"가")), QStringLiteral(u"가"));
