@@ -58,7 +58,12 @@ public:
         answer(std::move(done), PageOutcome{true, QString()});
     }
 
-    void close() override { calls.append(u"close"_s); }
+    void close() override {
+        calls.append(depth > 0 ? u"close (inside a page call)"_s : u"close"_s);
+    }
+
+    /// How many page calls are running (a done given at once runs inside its call).
+    int depth = 0;
 
     /// Gives the answers held back so far, in order.
     void answerHeldBack() {
@@ -69,6 +74,12 @@ public:
 
 private:
     void answer(std::function<void(PageOutcome)> done, PageOutcome outcome) {
+        ++depth;
+        give(std::move(done), std::move(outcome));
+        --depth;
+    }
+
+    void give(std::function<void(PageOutcome)> done, PageOutcome outcome) {
         if (later) {
             m_held.push_back([done, outcome] { done(outcome); });
             if (twice) m_held.push_back([done, outcome] { done(outcome); });
@@ -104,7 +115,11 @@ std::vector<BrowserAnswer> run(BrowserAgent& agent, FakePage& page, const Browse
     agent.handle(command, [&answers](BrowserAnswer answer) { answers.push_back(std::move(answer)); });
     if (page.later) {
         // Held back: nothing is answered before the page answers.
-        if (!answers.empty()) return {failedAnswer(0, u"answered before the page did"_s)};
+        // A failure of the running test, and an empty result, so that no size check can pass.
+        if (!answers.empty()) {
+            QTest::qFail("the agent answered before the page did", __FILE__, __LINE__);
+            return {};
+        }
         page.answerHeldBack();
     }
     return answers;
@@ -229,7 +244,9 @@ private slots:
 
         QCOMPARE(answers.size(), std::size_t(1));
         QCOMPARE_ANSWER(answers[0], failedAnswer(3, u"script timed out"_s));
-        QCOMPARE(page.calls, (QStringList{u"evaluate while(true){}"_s, u"close"_s}));
+        // Rust: ["evaluate while(true){}", "close"]. A page that answers at once is closed from inside its own call.
+        QCOMPARE(page.calls,
+                 (QStringList{u"evaluate while(true){}"_s, later ? u"close"_s : u"close (inside a page call)"_s}));
     }
 
     void aLoadOfAForbiddenAddressIsRefusedWithoutTouchingThePage_data() { pageAnswers(); }
@@ -349,6 +366,29 @@ private slots:
             page.answerHeldBack();
             QCOMPARE(answers.size(), std::size_t(1));
         }
+    }
+
+    void aPageThatFailsInsideItsOwnCallIsClosedThere() {
+        // The page answers at once, so the agent closes it from inside the page's own evaluate (see Page::close). The page
+        // copes, and the agent is in a sound state afterwards: the next load opens the page again and the idle close sees it.
+        FakePage page;
+        page.evaluations.push_back(PageOutcome{false, u"no window"_s});
+        BrowserAgent agent(page, 0ns);
+
+        const auto failed = run(agent, page, BrowserCommand{1, Type::Evaluate, u"x"_s});
+        QCOMPARE(failed.size(), std::size_t(1));
+        QCOMPARE_ANSWER(failed[0], failedAnswer(1, u"no window"_s));
+        QCOMPARE(page.calls, (QStringList{u"evaluate x"_s, u"close (inside a page call)"_s}));
+        QCOMPARE(page.depth, 0);
+        agent.idleTick();
+        QCOMPARE(page.calls.size(), qsizetype(2));   // closed already: the idle close does nothing
+
+        const auto loaded = run(agent, page, BrowserCommand{2, Type::Load, u"https://www.google.com/"_s});
+        QCOMPARE(loaded.size(), std::size_t(1));
+        QCOMPARE_ANSWER(loaded[0], okAnswer(2));
+        agent.idleTick();
+        QCOMPARE(page.calls,
+                 (QStringList{u"evaluate x"_s, u"close (inside a page call)"_s, u"load https://www.google.com/"_s, u"close"_s}));
     }
 };
 

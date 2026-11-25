@@ -28,12 +28,18 @@ BrowserChannel::BrowserChannel(std::chrono::nanoseconds answerLimit) : m_answerL
 
 BrowserChannel::~BrowserChannel() {
     close();
+    // close() has woken every waiting call, but each still has to take the lock again and leave call(); the members must outlive
+    // that. The last one notifies while it holds the lock, so the wait ends only once no call can touch the channel any more.
+    std::unique_lock lock(m_mutex);
+    m_changed.wait(lock, [this] { return m_callers == 0; });
 }
 
 void BrowserChannel::attach(std::function<void()> wake) {
     std::unique_lock lock(m_mutex);
+    // endAgent lets the lock go while it waits for running wakes: another attach (or close) may come in meanwhile, so look again
+    // until no earlier agent is left. The last attach wins.
+    while (!m_closed && m_wake) endAgent(lock);
     if (m_closed) return;
-    if (m_wake) endAgent(lock);
     if (wake) m_wake = std::make_shared<const std::function<void()>>(std::move(wake));
 }
 
@@ -103,6 +109,18 @@ DriverAnswer BrowserChannel::reset(const Wait& wait) {
 DriverAnswer BrowserChannel::call(BrowserCommand::Type type, const QString& text, const Wait& wait) {
     using std::chrono::nanoseconds;
     std::unique_lock lock(m_mutex);
+    // Counts this call for the destructor. Declared after the lock, so it is undone (and notified) while the lock is held, on
+    // every way out, a throw included.
+    struct Inside {
+        BrowserChannel& channel;
+        explicit Inside(BrowserChannel& owner) : channel(owner) { ++channel.m_callers; }
+        ~Inside() {
+            --channel.m_callers;
+            channel.m_changed.notify_all();
+        }
+        Inside(const Inside&) = delete;
+        Inside& operator=(const Inside&) = delete;
+    } inside(*this);
     if (m_closed) return unavailable(u"closed"_s);
     if (!m_wake) return unavailable(u"no-agent"_s);
     if (wait.stop.stop_requested()) return stopped();
@@ -119,20 +137,39 @@ DriverAnswer BrowserChannel::call(BrowserCommand::Type type, const QString& text
 
     const quint64 id = m_nextId++;
     Waiter waiter;
-    m_waiting.emplace(id, &waiter);
-    m_queue.push_back(BrowserCommand{id, type, text});
+    // Either both are in or neither: a throw (std::bad_alloc) leaves nothing behind and answers `exception`.
+    try {
+        m_queue.push_back(BrowserCommand{id, type, text});
+        try {
+            m_waiting.emplace(id, &waiter);
+        } catch (...) {
+            m_queue.pop_back();
+            throw;
+        }
+    } catch (...) {
+        return unavailable(u"exception"_s);
+    }
 
     // Wake the agent outside the lock, with a copy of the function that stays valid however detach and attach go meanwhile;
     // detach waits until this thread's entry in m_waking is gone. A wake must not throw (the agent's contract); one that does is
-    // taken as having woken nobody, and the call waits for its answer as usual.
-    const std::shared_ptr<const std::function<void()>> wake = m_wake;
+    // taken as having woken nobody, and the call waits for its answer as usual. The copy is let go before the lock is taken
+    // again: when detach has dropped m_wake meanwhile it is the last one, and the agent's captures must be destroyed before
+    // detach returns (it waits for this thread's entry in m_waking).
+    std::shared_ptr<const std::function<void()>> wake = m_wake;
     const std::thread::id self = std::this_thread::get_id();
-    m_waking.push_back(self);
+    try {
+        m_waking.push_back(self);
+    } catch (...) {
+        m_waiting.erase(id);
+        std::erase_if(m_queue, [id](const BrowserCommand& command) { return command.id == id; });
+        return unavailable(u"exception"_s);
+    }
     lock.unlock();
     try {
         (*wake)();
     } catch (...) {
     }
+    wake.reset();
     lock.lock();
     m_waking.erase(std::find(m_waking.begin(), m_waking.end(), self));
     m_changed.notify_all();
@@ -150,8 +187,7 @@ DriverAnswer BrowserChannel::call(BrowserCommand::Type type, const QString& text
         // Given up: nobody waits for the command any more, so it leaves the queue (takeCommand would skip it anyway) and a late
         // answer is refused.
         m_waiting.erase(id);
-        m_queue.erase(std::remove_if(m_queue.begin(), m_queue.end(), [id](const BrowserCommand& command) { return command.id == id; }),
-                      m_queue.end());
+        std::erase_if(m_queue, [id](const BrowserCommand& command) { return command.id == id; });
         if (wait.stop.stop_requested()) return stopped();
         return unavailable(u"no-answer"_s);
     }

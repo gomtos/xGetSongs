@@ -34,7 +34,10 @@ public:
     virtual void evaluate(const QString& script, std::function<void(PageOutcome)> done) = 0;
     /// Back to `about:blank`; the window stays. Without a window: succeeds.
     virtual void reset(std::function<void(PageOutcome)> done) = 0;
-    /// Destroys the window and everything it holds. Does nothing when there is none.
+    /// Destroys the window and everything it holds. Does nothing when there is none. The agent closes a page that failed from
+    /// inside that call's `done`, which may itself run inside the page's own load, evaluate or reset (a page that answers at
+    /// once): close must cope with being called there (Rust called it after the page call had returned), and the page call
+    /// must not touch the window after its `done` has returned.
     virtual void close() = 0;
 };
 

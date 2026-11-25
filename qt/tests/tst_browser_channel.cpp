@@ -3,6 +3,8 @@
 #include <QElapsedTimer>
 
 #include <atomic>
+#include <cstring>
+#include <new>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
@@ -108,7 +110,10 @@ public:
         return m_taken;
     }
 
-    std::vector<bool> accepted() const {
+    /// What answer() said for each answer, once `count` answers have been recorded (the record is made after answer() has
+    /// already woken the caller, so a caller that has its result must still wait for it); nothing after the generous limit.
+    std::optional<std::vector<bool>> accepted(int count) {
+        if (!m_answers.waitFor(count)) return std::nullopt;
         std::lock_guard lock(m_mutex);
         return m_accepted;
     }
@@ -133,8 +138,11 @@ private:
                 takes.raise();
                 if (std::optional<BrowserAnswer> answer = m_respond(*command)) {
                     const bool accepted = m_channel.answer(*answer);
-                    std::lock_guard lock(m_mutex);
-                    m_accepted.push_back(accepted);
+                    {
+                        std::lock_guard lock(m_mutex);
+                        m_accepted.push_back(accepted);
+                    }
+                    m_answers.raise();
                 }
             }
         }
@@ -147,6 +155,7 @@ private:
     bool m_woken = false;
     std::vector<BrowserCommand> m_taken;
     std::vector<bool> m_accepted;
+    Signal m_answers;
     std::jthread m_thread;
 };
 
@@ -205,7 +214,7 @@ private slots:
         QCOMPARE(taken.size(), std::size_t(1));
         QCOMPARE(taken[0].type, BrowserCommand::Type::Evaluate);
         QCOMPARE(taken[0].text, u"1+1"_s);
-        QCOMPARE(agent.accepted(), std::vector<bool>{true});
+        QCOMPARE(agent.accepted(1), std::optional<std::vector<bool>>(std::vector<bool>{true}));
         QCOMPARE(answer.status, Status::Ok);
         QCOMPARE(answer.value, std::optional<QString>(u"2"_s));
     }
@@ -244,19 +253,25 @@ private slots:
         // Kotlin: the answer limit is 15 s of virtual time, and the call fails exactly 15 s after the agent took the command. Here
         // the limit is 50 ms of real time, measured from the call's start (the deadline is counted from there): at least 50 ms,
         // and well under the generous limit.
+        // The agent takes the command inside wake, on the calling thread, so the take has happened before the wait starts
+        // whatever the scheduler does, and the test reads what it took on the same thread.
         BrowserChannel channel(50ms);
-        AgentThread agent(channel, [](const BrowserCommand&) { return std::optional<BrowserAnswer>(); });
+        std::vector<BrowserCommand> taken;
+        channel.attach([&] {
+            if (std::optional<BrowserCommand> command = channel.takeCommand()) taken.push_back(*command);
+        });
         QElapsedTimer timer;
         timer.start();
 
         const DriverAnswer answer = channel.evaluate(u"x"_s, waitFor());
         const qint64 elapsed = timer.elapsed();
 
-        QCOMPARE(agent.taken().size(), std::size_t(1));   // the agent took the command and never answers
+        QCOMPARE(taken.size(), std::size_t(1));   // the agent took the command and never answers
         QCOMPARE(answer.status, Status::Unavailable);
         QCOMPARE(answer.reason, u"no-answer"_s);
         QVERIFY2(elapsed >= 50, qPrintable(QString::number(elapsed)));
         QVERIFY2(elapsed < 5000, qPrintable(QString::number(elapsed)));
+        channel.detach();
     }
 
     void aCommandThatTimedOutIsNotHandedOutLater() {
@@ -298,7 +313,7 @@ private slots:
 
         const DriverAnswer answer = channel.evaluate(u"x"_s, waitFor());
 
-        QCOMPARE(agent.accepted(), std::vector<bool>{true});
+        QCOMPARE(agent.accepted(1), std::optional<std::vector<bool>>(std::vector<bool>{true}));
         QCOMPARE(answer.status, Status::Ok);
         QCOMPARE(answer.value, std::optional<QString>(u"v"_s));
         const quint64 id = agent.taken().at(0).id;
@@ -378,8 +393,6 @@ private slots:
         });
         CallThread waiting([&channel](std::stop_token stop) { return channel.evaluate(u"x"_s, waitFor(15s, stop)); });
         QVERIFY(wakes->waitFor());
-        QElapsedTimer timer;
-        timer.start();
 
         channel.detach();
         detached = true;
@@ -390,10 +403,93 @@ private slots:
         QVERIFY2(answer.has_value(), "the waiting call returned within a second");
         QCOMPARE(answer->status, Status::Unavailable);
         QCOMPARE(answer->reason, u"closed"_s);
-        QVERIFY(timer.elapsed() < 1000);
         QVERIFY(!channel.takeCommand().has_value());
         QCOMPARE(channel.evaluate(u"y"_s, waitFor()).reason, u"no-agent"_s);
         QCOMPARE(wakesAfterDetach.load(), 0);
+    }
+
+    void destroyingTheChannelWhileCallsWaitEndsThemWithClosed() {
+        // The channel lives in memory of its own; once its destructor has returned the memory is overwritten, so a call that still
+        // touched the channel (its lock, its map) would crash or hang instead of returning. Whether a woken call has left the
+        // channel before a destructor that did not wait for it returns is up to the scheduler, so this goes round many times.
+        constexpr int rounds = 20;
+        constexpr int callers = 8;
+        for (int round = 0; round < rounds; ++round) {
+            void* storage = ::operator new(sizeof(BrowserChannel));
+            auto* channel = new (storage) BrowserChannel;
+            Signal wakes;
+            channel->attach([&wakes] { wakes.raise(); });
+            std::vector<std::unique_ptr<CallThread>> calls;
+            for (int i = 0; i < callers; ++i) {
+                calls.push_back(std::make_unique<CallThread>(
+                    [channel](std::stop_token stop) { return channel->evaluate(u"x"_s, waitFor(15s, stop)); }));
+            }
+            // Every caller has queued its command and is past its wake: it waits for the answer, or is about to.
+            QVERIFY(wakes.waitFor(callers));
+
+            channel->~BrowserChannel();
+            std::memset(storage, 0xDD, sizeof(BrowserChannel));
+
+            for (const auto& call : calls) {
+                const std::optional<DriverAnswer> answer = call->result();
+                QVERIFY2(answer.has_value(), "every call returned");
+                QCOMPARE(answer->status, Status::Unavailable);
+                QCOMPARE(answer->reason, u"closed"_s);
+            }
+            calls.clear();
+            ::operator delete(storage);
+        }
+    }
+
+    void detachWaitsForAWakeThatIsRunningOnAnotherThread() {
+        BrowserChannel channel;
+        Signal inWake;
+        Signal release;
+        Signal detaching;
+        Signal detached;
+        channel.attach([&] {
+            inWake.raise();
+            release.waitFor();
+        });
+        CallThread call([&channel](std::stop_token stop) { return channel.evaluate(u"x"_s, waitFor(15s, stop)); });
+        QVERIFY(inWake.waitFor());   // the wake runs on the caller's thread and holds there
+
+        std::jthread detacher([&] {
+            detaching.raise();
+            channel.detach();
+            detached.raise();
+        });
+        QVERIFY(detaching.waitFor());
+        // detach must not return while the wake still runs. Half a second is far more than a detach that wrongly returned at
+        // once would need to show; a correct one cannot return here at all.
+        QVERIFY2(!detached.waitFor(1, 500ms), "detach returned while the wake was still running");
+
+        release.raise();
+        QVERIFY2(detached.waitFor(), "detach returned once the wake had");
+        const std::optional<DriverAnswer> answer = call.result();
+        QVERIFY(answer.has_value());
+        QCOMPARE(answer->status, Status::Unavailable);
+        QCOMPARE(answer->reason, u"closed"_s);
+    }
+
+    void detachFromInsideWakeDoesNotDeadlock() {
+        // The wake detaches on the caller's own thread: detach must not wait for that wake (it is its own caller up the stack).
+        // A detach that did would never return, and this test would hang (ctest's timeout ends it).
+        BrowserChannel channel;
+        std::atomic<int> wakes{0};
+        channel.attach([&] {
+            ++wakes;
+            channel.detach();
+        });
+        CallThread call([&channel](std::stop_token stop) { return channel.evaluate(u"x"_s, waitFor(15s, stop)); });
+
+        const std::optional<DriverAnswer> answer = call.result();
+        QVERIFY2(answer.has_value(), "the call returned");
+        QCOMPARE(answer->status, Status::Unavailable);
+        QCOMPARE(answer->reason, u"closed"_s);
+        QVERIFY(!channel.hasAgent());
+        QCOMPARE(channel.evaluate(u"y"_s, waitFor()).reason, u"no-agent"_s);
+        QCOMPARE(wakes.load(), 1);
     }
 
     void aStoppedCallerReturnsAtOnce() {
@@ -408,16 +504,14 @@ private slots:
         QCOMPARE(wakes.count(), 0);
         QVERIFY(!channel.takeCommand().has_value());
 
-        // A stop requested while the call waits: it returns well before any limit (one second against 15 s).
+        // A stop requested while the call waits: it returns well before its limit (five seconds against 15 s, generous for a
+        // loaded machine; only the stop request can end it that early).
         CallThread call([&channel](std::stop_token stop) { return channel.evaluate(u"x"_s, waitFor(15s, stop)); });
         QVERIFY(wakes.waitFor());
-        QElapsedTimer timer;
-        timer.start();
         call.requestStop();
-        const std::optional<DriverAnswer> answer = call.result(1s);
-        QVERIFY2(answer.has_value(), "the stopped call returned within a second");
+        const std::optional<DriverAnswer> answer = call.result(5s);
+        QVERIFY2(answer.has_value(), "the stopped call returned within five seconds");
         QCOMPARE(answer->status, Status::Stopped);
-        QVERIFY(timer.elapsed() < 1000);
         QVERIFY(!channel.takeCommand().has_value());
         channel.detach();
     }

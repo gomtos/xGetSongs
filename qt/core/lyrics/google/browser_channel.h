@@ -59,14 +59,17 @@ struct BrowserAnswer {
 class BrowserChannel final : public PageDriver {
 public:
     explicit BrowserChannel(std::chrono::nanoseconds answerLimit = std::chrono::seconds(15));
-    /// close().
+    /// close(), then waits until every call that was inside the channel has left it (each ends with `closed`), so that none
+    /// touches the channel after it is gone. Must not be called from inside a call of this channel (from inside `wake`).
     ~BrowserChannel() override;
 
     BrowserChannel(const BrowserChannel&) = delete;
     BrowserChannel& operator=(const BrowserChannel&) = delete;
 
     /// The agent is here: from now on calls are queued and `wake` is called for each. An agent that is attached already is
-    /// detached first (its waiting calls end with `closed`). Does nothing on a closed channel.
+    /// detached first (its waiting calls end with `closed`). Does nothing on a closed channel. When two threads attach at once,
+    /// the one that comes last wins and the earlier one counts as detached (its calls end with `closed`, its wake is not called
+    /// any more).
     void attach(std::function<void()> wake);
 
     /// The agent is gone: every waiting call ends with `closed`, the queued commands are dropped, and later calls fail with
@@ -112,6 +115,7 @@ private:
     std::shared_ptr<const std::function<void()>> m_wake;
     std::vector<std::thread::id> m_waking;   // one entry per wake in progress, by the thread it runs on
     quint64 m_nextId = 1;
+    int m_callers = 0;                        // calls inside call(), which the destructor waits for
     bool m_closed = false;
 };
 

@@ -146,7 +146,9 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/BrowserChannelTest.kt",
     "exe": "tst_browser_channel",
     "added": ["theAgentCountsAsPresentOnlyWhileAttached", "destroyingTheAgentWhileACallWaitsFailsItWithClosed",
-              "aStoppedCallerReturnsAtOnce", "aCallNeverWaitsLongerThanItsOwnLimit", "manyCallersFromManyThreadsEachGetTheirOwnAnswer"],
+              "aStoppedCallerReturnsAtOnce", "aCallNeverWaitsLongerThanItsOwnLimit", "manyCallersFromManyThreadsEachGetTheirOwnAnswer",
+              "destroyingTheChannelWhileCallsWaitEndsThemWithClosed", "detachWaitsForAWakeThatIsRunningOnAnotherThread",
+              "detachFromInsideWakeDoesNotDeadlock"],
     "omitted": [{"name": "theAgentCountsAsPresentForTheFreshnessTimeOnly",
                  "reason": "Q3 decision 2: the agent is attached or not; there is no freshness time"}]
   },

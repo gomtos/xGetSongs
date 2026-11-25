@@ -178,8 +178,10 @@ bool allowedNavigation(QStringView url) {
 // Rust read the text with serde_json::from_str (RFC 8259). Here xgs::json (Kotlin's grammar, which accepts more) reads it, and
 // what it accepts beyond RFC 8259 is refused before (hasLooseText) and after (isStrictTree). Not followed: serde_json refuses a
 // number too large for an f64 (`1e400`), and writes "any other value" anew (keys in sorted order, numbers in its own form) where
-// this keeps the text as it came. WebView2's answer is JSON.stringify's output, which never holds such a number and in which
-// the scripts of this lookup always answer a string, so neither shows.
+// this keeps the text as it came, white space inside it included (serde_json writes it without). serde_json also refuses
+// nesting deeper than 128 levels, which xgs::json reads (up to its own limit of 1000 open arrays, objects without limit).
+// WebView2's answer is JSON.stringify's output, which never holds such a number, and the scripts of this lookup always answer
+// a string, so none of these shows.
 std::optional<QString> decodeScriptResult(const QString& jsonText) {
     if (hasLooseText(jsonText)) return std::nullopt;
     const std::optional<json::Value> parsed = json::parse(jsonText);
