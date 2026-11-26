@@ -322,6 +322,8 @@ private slots:
     }
 
     void aCancelRightAfterTheLastItemStillEndsWithJobDone() {
+        // This pins the bridge only: the service is a script that ends with a JobDone whichever way the race goes. Whether the
+        // real DefaultDownloadService does so is tst_default_download_service's business.
         Engine engine;
         engine.downloads.script = [](JobEvents& events, std::stop_token stop) {
             events.push(xgs::ItemDone{2, u"002 A2 - T2.m4a"_s, std::nullopt});
@@ -348,6 +350,41 @@ private slots:
     }
 
     // ---- not named by the plan ----
+
+    void destroyingTheApiWhileAJobRunsEndsEverything() {
+        Engine engine;
+        std::atomic<bool> resolving{false};
+        engine.onRun = [&resolving](const QStringList&, const LineHandler&, const LineHandler&, std::stop_token stop) {
+            resolving = true;
+            xgs::testsupport::awaitStop(stop);
+            return 1;
+        };
+        engine.downloads.script = [](JobEvents& events, std::stop_token stop) {
+            for (int rank = 1; rank <= 50; ++rank) events.push(xgs::ItemSkipped{rank, u"이미 존재"_s});
+            waitForStop(stop);
+            events.push(JobDone{JobStatus::Cancelled, JobSummary{}});
+        };
+        Seen seen;
+        int answers = 0;
+        engine.api->startJob(requestInto(engine.dir), recorder(seen));
+        engine.api->resolve(u"PL2HEDIx6Li8jGsqCiXUq9fzCqpH99qqHV"_s, [&answers](Outcome<ResolveResult>) { answers += 1; });
+        QTRY_VERIFY_WITH_TIMEOUT(resolving.load(), kLimitMs);
+        // A moment without the event loop, so that the reader queues the fifty events as answers nobody has delivered yet (a
+        // sleep: there is no event for "posted but not delivered").
+        std::this_thread::sleep_for(300ms);
+        const QStringList before = seen.log;
+
+        QElapsedTimer clock;
+        clock.start();
+        engine.api.reset();  // no stop() first: the destructor does it
+        const qint64 took = clock.elapsed();
+
+        QVERIFY2(took < 5000, qPrintable(u"destroying took %1 ms"_s.arg(took)));
+        QVERIFY2(engine.downloads.alive.load() == 0, "the job's thread has ended");
+        QTest::qWait(200);  // spin the event loop: the queued answers of the destroyed object must never run
+        QVERIFY2(seen.log == before, qPrintable(seen.log.join(u',')));
+        QCOMPARE(answers, 0);
+    }
 
     void theDownloadRequestIsBuiltLikeTheServerBuiltIt() {
         Engine engine;

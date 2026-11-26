@@ -17,7 +17,8 @@ UserSettings normalizeSettings(const QJsonValue& raw);
 /// the Rust shell read it: a key that is missing takes its default, a key of the wrong type makes the whole file unusable,
 /// unknown keys are ignored, a boolean may be quoted (`"true"`), a UTF-8 byte order mark is skipped, and a file that is missing,
 /// unreadable, not valid UTF-8 or not a JSON object means the defaults. (What it hands out is always something normalizeSettings
-/// would take as it is.) save writes all four keys to `<file>.tmp` next to the target and moves that over the file (tried again
+/// would take as it is.) save replaces the four keys in the JSON object the file holds, keeping every other key (a file that is
+/// not a JSON object is replaced by the four keys), writes the result to `<file>.tmp` next to the target and moves that over the file (tried again
 /// for about 1.5 s while another program holds the file, see fs::moveFile), creating the folders above it; a place that cannot be
 /// written means the options are not kept (false), and no temporary file stays. Saves from several threads are taken one at a
 /// time. load and save are virtual so that tests can stand in for the file.

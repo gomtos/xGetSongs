@@ -70,18 +70,23 @@ template <class T>
 void EngineApi::runWorker(std::function<T(std::stop_token)> work, std::function<void(T)> deliver) {
     const std::uint64_t id = m_nextId++;
     std::jthread worker([this, id, work = std::move(work), deliver = std::move(deliver), stop = m_stop.get_token()] {
-        std::optional<T> result;
+        // Nothing may leave the thread: a failure of the work is its answer, and a failure to post the answer (memory) leaves the
+        // worker to stop(), which joins it.
         try {
-            result = work(stop);
+            std::optional<T> result;
+            try {
+                result = work(stop);
+            } catch (...) {
+                result = T::failed(exceptionText(std::current_exception()));
+            }
+            post([this, id, deliver, answer = std::move(*result)] {
+                if (m_stopped) return;  // stop() has joined the worker already
+                auto node = m_workers.extract(id);
+                if (!node.empty()) node.mapped().join();  // the worker's last step was the post that brought us here
+                deliver(answer);
+            });
         } catch (...) {
-            result = T::failed(exceptionText(std::current_exception()));
         }
-        post([this, id, deliver, answer = std::move(*result)] {
-            if (m_stopped) return;  // stop() has joined the worker already
-            auto node = m_workers.extract(id);
-            if (!node.empty()) node.mapped().join();  // the worker's last step was the post that brought us here
-            deliver(answer);
-        });
     });
     m_workers.emplace(id, std::move(worker));
 }
@@ -191,38 +196,45 @@ void EngineApi::startJob(JobRequest request, JobCallbacks callbacks) {
     running->handle = m_downloads.start(std::move(download), std::stop_source());
     const std::uint64_t id = m_nextId++;
     job::JobHandle* const handle = running->handle.get();
-    // The job's one reader: it says the job started, hands over every event up to the JobDone in order, waits for the job's
-    // threads, and says the events are over.
-    running->reader = std::jthread([this, id, handle] {
-        post([this, id] {
-            if (m_stopped) return;
-            const auto it = m_jobs.find(id);
-            if (it == m_jobs.end()) return;
-            const auto started = it->second->callbacks.started;
-            started(std::nullopt);
-        });
-        try {
-            for (;;) {
-                std::optional<JobEvent> event = handle->nextEvent();
-                if (!event) break;
-                const bool last = std::holds_alternative<JobDone>(*event);
-                post([this, id, event = std::move(*event)] {
+    // Kept before its reader starts: if the reader cannot be started, taking the job out again cancels and joins it (the handle's
+    // destructor), and no reader of an uncancelled job is left for the GUI thread to wait for.
+    RunningJob& job = *m_jobs.emplace(id, std::move(running)).first->second;
+    try {
+        // The job's one reader: it says the job started, hands over every event up to the JobDone in order, waits for the job's
+        // threads, and says the events are over. Nothing may leave the thread (a post that fails for lack of memory ends it;
+        // the job then stays until stop()).
+        job.reader = std::jthread([this, id, handle] {
+            try {
+                post([this, id] {
                     if (m_stopped) return;
                     const auto it = m_jobs.find(id);
                     if (it == m_jobs.end()) return;
-                    const auto deliver = it->second->callbacks.event;  // a copy: the callback may call stop()
-                    deliver(event);
+                    const auto started = it->second->callbacks.started;
+                    started(std::nullopt);
                 });
-                if (last) break;
+                for (;;) {
+                    std::optional<JobEvent> event = handle->nextEvent();
+                    if (!event) break;
+                    const bool last = std::holds_alternative<JobDone>(*event);
+                    post([this, id, event = std::move(*event)] {
+                        if (m_stopped) return;
+                        const auto it = m_jobs.find(id);
+                        if (it == m_jobs.end()) return;
+                        const auto deliver = it->second->callbacks.event;  // a copy: the callback may call stop()
+                        deliver(event);
+                    });
+                    if (last) break;
+                }
+                handle->join();
+                post([this, id] { finishJob(id); });
+            } catch (...) {
             }
-            handle->join();
-        } catch (...) {
-            // nextEvent and join do not throw; nothing may leave the thread all the same
-        }
-        post([this, id] { finishJob(id); });
-    });
+        });
+    } catch (...) {
+        m_jobs.erase(id);
+        throw;
+    }
     m_lastJob = id;
-    m_jobs.emplace(id, std::move(running));
 }
 
 void EngineApi::finishJob(std::uint64_t id) {

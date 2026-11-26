@@ -34,8 +34,8 @@ std::optional<bool> flag(const QJsonObject& object, const QString& key, bool fal
     return std::nullopt;
 }
 
-/// The settings in the file, or nothing when it cannot be used (see SettingsStore).
-std::optional<UserSettings> read(const QString& path) {
+/// The JSON object the file holds, or nothing when it is missing, unreadable, not UTF-8 or not a JSON object.
+std::optional<QJsonObject> readObject(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return std::nullopt;  // missing, unreadable, or a folder
     const QByteArray bytes = file.readAll();
@@ -49,7 +49,14 @@ std::optional<UserSettings> read(const QString& path) {
     QJsonParseError error;
     const QJsonDocument document = QJsonDocument::fromJson(text.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError || !document.isObject()) return std::nullopt;
-    const QJsonObject object = document.object();
+    return document.object();
+}
+
+/// The settings in the file, or nothing when it cannot be used (see SettingsStore).
+std::optional<UserSettings> read(const QString& path) {
+    const std::optional<QJsonObject> found = readObject(path);
+    if (!found) return std::nullopt;
+    const QJsonObject& object = *found;
 
     const UserSettings defaults;
     UserSettings settings;
@@ -103,14 +110,17 @@ bool SettingsStore::save(const UserSettings& settings) {
     const std::optional<QString> path = paths::fromText(m_filePath);
     if (!path || paths::fileName(*path).value_or(QString()).isEmpty()) return false;
 
-    QJsonObject object;
+    const std::lock_guard lock(writeLock);
+    // Keys the app does not know (a newer version's, an older version's `concurrency`) stay in the file: only the four keys are
+    // replaced. A file that cannot be read as a JSON object is replaced by the four keys. (A deliberate difference from the Rust
+    // shell, sidecar-host/src/settings.rs, which wrote the four keys only: the design spec §3 says unknown keys are not deleted.)
+    QJsonObject object = readObject(*path).value_or(QJsonObject());
     object.insert(u"outputDir"_s, settings.outputDir ? QJsonValue(*settings.outputDir) : QJsonValue(QJsonValue::Null));
     object.insert(u"overwrite"_s, settings.overwrite);
     object.insert(u"includeRank"_s, settings.includeRank);
     object.insert(u"searchLyricsOnline"_s, settings.searchLyricsOnline);
     const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Indented);
 
-    const std::lock_guard lock(writeLock);
     if (!QDir().mkpath(QFileInfo(*path).path())) return false;
     // Writes next to the target and moves it over, so a crash never leaves half a file behind. The move is tried again for a
     // moment when another program (a virus scanner, an indexer) holds the file (fs::moveFile); a leftover temporary file is

@@ -258,7 +258,8 @@
       "saveOverADirectoryThatIsNotEmptyDoesNotPanicAndLeavesNoTemporaryFile",
       "savesFromSeveralThreadsLeaveOneValidFileAndNoTemporaryFile",
       "quotedBooleansAreReadLikeKotlinxDoes",
-      "theDefaultOutputFolderIsMusicXGetSongsInTheHomeFolder"
+      "theDefaultOutputFolderIsMusicXGetSongsInTheHomeFolder",
+        "savingKeepsKeysTheAppDoesNotKnow"
     ],
     "omitted": [
       {

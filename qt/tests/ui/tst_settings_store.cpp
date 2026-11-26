@@ -352,7 +352,10 @@ private slots:
 
         rig.store().save(rig.store().load());
 
-        QVERIFY(!rig.text().contains(u"concurrency"_s));
+        // Rust left the key out of the next save; the design spec §3 keeps keys the app does not know (a deliberate difference,
+        // see savingKeepsKeysTheAppDoesNotKnow). The value is not read either way.
+        QVERIFY(rig.text().contains(u"\"concurrency\""_s));
+        QCOMPARE(rig.store().load(), settings(std::nullopt, true, true, true));
     }
 
     void aBlankStoredFolderIsKeptAsItIsForTheCallerToReplace() {
@@ -398,7 +401,32 @@ private slots:
 
         QCOMPARE(rig.store().load(), saved);
         QCOMPARE(Rig::filesIn(rig.dir.path()), QStringList{u"settings.json"_s});
-        QVERIFY2(!rig.text().contains(u"future"_s), "the old content is gone");
+        // A deliberate difference from sidecar-host/src/settings.rs (whose test asserted that `future` is gone): the design spec
+        // §3 says keys the app does not know are not deleted.
+        QVERIFY2(rig.text().contains(u"\"future\": 1"_s), qPrintable(rig.text()));
+    }
+
+    // ---- not in the reference: what the design spec adds to saving ----
+
+    void savingKeepsKeysTheAppDoesNotKnow() {
+        Rig rig;
+        rig.write(json("{'outputDir':'D:/old','theme':'dark','future':{'a':[1,2]},'concurrency':3}"));
+
+        QVERIFY(rig.store().save(settings(u"D:/new"_s, true, false, true)));
+
+        QCOMPARE(rig.store().load(), settings(u"D:/new"_s, true, false, true));
+        const QString text = rig.text();
+        QVERIFY2(text.contains(u"\"theme\": \"dark\""_s), qPrintable(text));
+        QVERIFY2(text.contains(u"\"future\""_s) && text.contains(u"\"a\""_s), qPrintable(text));
+        QVERIFY2(text.contains(u"\"concurrency\": 3"_s), qPrintable(text));
+        QVERIFY2(!text.contains(u"D:/old"_s), qPrintable(text));
+
+        // A broken file is replaced by the four keys.
+        rig.write("{ broken");
+        QVERIFY(rig.store().save(settings(u"D:/x"_s, false, true, true)));
+        QCOMPARE(rig.store().load(), settings(u"D:/x"_s, false, true, true));
+        QVERIFY2(!rig.text().contains(u"broken"_s), qPrintable(rig.text()));
+        QCOMPARE(Rig::filesIn(rig.dir.path()), QStringList{u"settings.json"_s});
     }
 
     void saveIntoALocationThatCannotBeWrittenDoesNotPanic() {
