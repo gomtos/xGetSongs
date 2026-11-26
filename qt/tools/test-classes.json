@@ -219,5 +219,88 @@
     "kotlin": "engine/src/test/kotlin/com/xgetsongs/engine/lyrics/google/GoogleLyricsProviderTest.kt",
     "exe": "tst_google_lyrics_provider",
     "added": []
+  },
+  {
+    "kotlin": "shell/tests/labels.test.ts",
+    "exe": "tst_labels",
+    "added": []
+  },
+  {
+    "kotlin": "shell/tests/holder.test.ts",
+    "exe": "tst_app_state_holder",
+    "added": []
+  },
+  {
+    "kotlin": "shell/tests/desktop.test.ts",
+    "exe": "tst_settings_store",
+    "added": [
+      "aMissingFileGivesTheDefaults",
+      "theDefaultsAreWhatTheSpecSays",
+      "savedSettingsComeBackUnchangedIncludingAKoreanPath",
+      "defaultValuesAreWrittenOutToo",
+      "anOldFileWithoutTheLyricsKeyLoadsWithTheSearchOn",
+      "aStoredSearchLyricsOnlineValueIsRead",
+      "aTurnedOffLyricsSearchIsWrittenAndComesBack",
+      "filesThatCannotBeUsedGiveTheDefaultsAndNeverPanic",
+      "validJsonWithBytesThatAreNotUtf8GivesTheDefaultsInsteadOfAGarbledFolder",
+      "aUtf16FileGivesTheDefaults",
+      "aUtf8ByteOrderMarkInFrontOfValidJsonIsIgnored",
+      "aFolderInPlaceOfTheFileGivesTheDefaults",
+      "unknownKeysAreIgnoredAndTheKnownOnesStillRead",
+      "missingKeysTakeTheirDefaults",
+      "aConcurrencyFromAnOlderFileIsIgnoredAndLeftOutOfTheNextSave",
+      "aBlankStoredFolderIsKeptAsItIsForTheCallerToReplace",
+      "saveCreatesTheParentDirectories",
+      "saveLeavesNoTemporaryFileBehind",
+      "saveReplacesAnExistingFile",
+      "saveIntoALocationThatCannotBeWrittenDoesNotPanic",
+      "anUnexpectedRuntimeFailureNeverEscapesFromLoadOrSave",
+      "saveOverADirectoryThatIsNotEmptyDoesNotPanicAndLeavesNoTemporaryFile",
+      "savesFromSeveralThreadsLeaveOneValidFileAndNoTemporaryFile",
+      "quotedBooleansAreReadLikeKotlinxDoes",
+      "theDefaultOutputFolderIsMusicXGetSongsInTheHomeFolder"
+    ],
+    "omitted": [
+      {
+        "name": "theFolderChooserStartsWhereTheScreenSaysAndHandsBackWhatWasChosen",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "aCancelledFolderChooserHandsBackNothing",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "aFolderChooserThatFailsIsACancelledOne",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "showingAFolderIsAskedOfTheRustSideAndNeverFails",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "theRustSideIsToldThePageListensOnlyOnceTheListenerIsInPlace",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "whenTheWindowIsClosedTheOptionsAreWrittenFirstAndThenTheWindowIsClosed",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "aWriteThatNeverEndsDoesNotKeepTheWindowOpenLongerThanTheLimit",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "theWindowIsClosedEvenWhenFinishingUpFails",
+        "reason": "Tauri glue around the window (Task 3: the Qt folder picker, file manager and close handling are widget code)"
+      },
+      {
+        "name": "theDemoChooserHandsOutAnotherFolderEachTime",
+        "reason": "the demo page (index.html?demo) has no Qt counterpart"
+      },
+      {
+        "name": "theDemoRemembersWhatWasShownAndWhatWasSaved",
+        "reason": "the demo page (index.html?demo) has no Qt counterpart"
+      }
+    ]
   }
 ]

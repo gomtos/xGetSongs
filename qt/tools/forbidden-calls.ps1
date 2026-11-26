@@ -2,7 +2,7 @@
 #
 #   pwsh qt/tools/forbidden-calls.ps1
 #
-# 1. Under qt/core, except qt/core/text/kt_text.* (the xgs::kt layer, which implements them): Qt character and string
+# 1. Under qt/core, except qt/core/text/kt_text.* (the xgs::kt layer, which implements them), and under qt/ui: Qt character and string
 #    functions whose meaning differs from Kotlin's or that depend on the locale or on Qt's Unicode version (case, category,
 #    folding, locale-aware comparison), unless the match is `kt::<name>(` (the Q1 list, $forbidden).
 # 2. Under all of qt/core, the xgs::kt layer and qt/core/json included (the Q2a list, $forbiddenQ2a): Qt's JSON classes,
@@ -35,8 +35,10 @@ function Get-Files([string]$dir) {
 }
 $hits = [System.Collections.Generic.List[string]]::new()
 
-# every file under qt/core (not only .cpp/.h) except the kt layer
+# every file under qt/core (not only .cpp/.h) except the kt layer, and every file under qt/ui (the screen logic ported from
+# shell/src, which trims and compares through xgs::kt as well)
 $coreFiles = @(Get-Files (Join-Path $qt 'core') | Where-Object { $_.BaseName -ne 'kt_text' -and $_.BaseName -ne 'kt_tables' })
+$coreFiles += @(Get-Files (Join-Path $qt 'ui'))
 foreach ($file in $coreFiles) {
     $lines = [System.IO.File]::ReadAllLines($file.FullName)
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -79,7 +81,7 @@ foreach ($file in $allFiles) {
     }
 }
 
-Write-Output "looked at $($coreFiles.Count) files under qt/core for the Q1 list (kt_text.* and kt_tables.inc excluded), $($allCoreFiles.Count) for the Q2a list, and $($allFiles.Count) text files under qt/ (qt/spike excluded)"
+Write-Output "looked at $($coreFiles.Count) files under qt/core and qt/ui for the Q1 list (kt_text.* and kt_tables.inc excluded), $($allCoreFiles.Count) for the Q2a list, and $($allFiles.Count) text files under qt/ (qt/spike excluded)"
 if ($binaryFiles.Count -gt 0) { Write-Output "skipped as binary (a NUL byte): $($binaryFiles -join ', ')" }
 if ($hits.Count -gt 0) {
     $hits | ForEach-Object { Write-Output $_ }

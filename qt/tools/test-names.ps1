@@ -1,6 +1,7 @@
 # Compares the names of the Kotlin @Test functions of the ported test classes with the names of the Qt Test functions of
-# their test executables (`build/qt/<exe>.exe -functions`, without the trailing "()"). The classes are listed in
-# qt/tools/test-classes.json: an array of { "kotlin": <the Kotlin test file, relative to the repository root>,
+# their test executables (`build/qt/<exe>.exe -functions`, without the trailing "()"), and likewise the names of the TypeScript
+# tests (`test("<name>", ...)`) of a .ts file under shell/tests that the screen logic ports. The classes are listed in
+# qt/tools/test-classes.json: an array of { "kotlin": <the Kotlin (or TypeScript) test file, relative to the repository root>,
 # "exe": <the Qt test executable's name, or an array of names when the port of one Kotlin class is split over several
 # executables; their functions are then taken together>, "added": [<names the port adds on purpose, not in the Kotlin class>],
 # and optionally "omitted": [{ "name": <a Kotlin test name the port leaves out on purpose>, "reason": <why> }] }.
@@ -42,9 +43,17 @@ foreach ($spec in $classes) {
     $absentExe = @($exes | Where-Object { -not (Test-Path $_) })
     if ($absentExe.Count -gt 0) { Write-Output "${class}: no executable $($absentExe -join ', ') (build first, see qt/README.md)"; $failed = $true; continue }
 
-    # `fun <name>(` on the line right after `@Test` (a name may be written on the @Test line itself too)
+    # Kotlin: `fun <name>(` on the line right after `@Test` (a name may be written on the @Test line itself too).
+    # TypeScript (a .ts file, the node:test files of shell/tests): `test("<name>"` at the start of a line.
     $lines = [System.IO.File]::ReadAllLines($source)
     $kotlin = [System.Collections.Generic.List[string]]::new()
+    if ($source.EndsWith('.ts', [StringComparison]::OrdinalIgnoreCase)) {
+        foreach ($line in $lines) {
+            if ($line -match '^test\("([A-Za-z_][A-Za-z0-9_]*)"') { $kotlin.Add($Matches[1]) }
+            elseif ($line -match '^test\(') { Write-Output "${class}: a test( whose name is not an identifier: $line"; $failed = $true }
+        }
+        $lines = @()
+    }
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -notmatch '^\s*@Test\b') { continue }
         $text = $lines[$i] + ' ' + $(if ($i + 1 -lt $lines.Count) { $lines[$i + 1] } else { '' })

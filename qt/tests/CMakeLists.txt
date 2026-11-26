@@ -89,6 +89,18 @@ set_tests_properties(tst_google_lyrics_fetcher tst_google_lyrics_provider PROPER
 add_subdirectory(integration)
 add_subdirectory(webview)
 
+# The screen logic (xgsui): the ports of shell/tests/{labels,holder}.test.ts and of the settings part of desktop.test.ts (with the
+# settings-file tests of sidecar-host/src/settings.rs), and the bridge from the engine to the GUI thread.
+foreach(test tst_labels tst_settings_store tst_app_state_holder)
+    xgs_add_test(${test} ui/${test}.cpp ui/fake_app_api.h)
+    target_link_libraries(${test} PRIVATE xgsui)
+endforeach()
+xgs_add_test(tst_engine_api ui/tst_engine_api.cpp ui/fake_app_api.h)
+target_link_libraries(tst_engine_api PRIVATE xgsui xgstestsupport)
+# Every wait of the bridge's tests is bounded by 5 s; this ends a hang that is left (a join after a failed wait) well before Qt
+# Test's 300 s watchdog. The exe takes a second or two.
+set_tests_properties(tst_engine_api PROPERTIES TIMEOUT 120)
+
 # xgs-test-child: the child process of tst_system_process_runner (Win32 and C++ only, no Qt). The test finds it through
 # XGS_TEST_CHILD.
 add_executable(xgs-test-child helpers/test_child.cpp)
