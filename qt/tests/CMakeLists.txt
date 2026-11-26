@@ -115,3 +115,12 @@ xgs_add_test(tst_job_with_real_processes tst_job_with_real_processes.cpp)
 target_link_libraries(tst_job_with_real_processes PRIVATE xgstestsupport)
 target_compile_definitions(tst_job_with_real_processes PRIVATE XGS_TEST_CHILD="$<TARGET_FILE:xgs-test-child>")
 add_dependencies(tst_job_with_real_processes xgs-test-child)
+
+# The playlist logic (xgsui, no Kotlin or TypeScript original): the file, the merge of the remote lists, the check of an entry, and
+# the transfer of the remote lists (against 127.0.0.1 only; the real addresses are https and are never contacted).
+foreach(test tst_playlist_store tst_playlist_merge tst_playlist_entry_check tst_remote_playlists)
+    xgs_add_test(${test} ui/${test}.cpp)
+    target_link_libraries(${test} PRIVATE xgsui)
+endforeach()
+# Every wait of the transfer tests is bounded; this ends a hang that is left well before Qt Test's 300 s watchdog.
+set_tests_properties(tst_remote_playlists PROPERTIES TIMEOUT 120)
