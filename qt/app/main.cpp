@@ -19,7 +19,9 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationVersion(xgs::app::AboutDialog::appVersion());
     QApplication::setQuitOnLastWindowClosed(false);
 
-    xgs::app::SingleInstance single(xgs::app::SingleInstance::productId());
+    // Check tools set XGS_CHECK_INSTANCE_ID (with a fake APPDATA and LOCALAPPDATA) so a check never meets the user's running app.
+    const QString checkId = qEnvironmentVariable("XGS_CHECK_INSTANCE_ID");
+    xgs::app::SingleInstance single(checkId.isEmpty() ? xgs::app::SingleInstance::productId() : checkId);
     if (!single.isFirst()) return 0;
 
     QFile style(QStringLiteral(":/xgs/app.qss"));

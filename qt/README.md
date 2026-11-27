@@ -103,6 +103,8 @@ pwsh qt/tools/differential/run.ps1 -PerKind 100000 -Seed <아무 값>
 
 `xGetSongs.exe`(Qt 판)는 위 "공통 명령"의 빌드에 함께 들어 있고 `build/qt/xGetSongs.exe`(디버그는 `build/qt-debug/xGetSongs.exe`)에 생긴다. 이것만 빌드하려면 `cmake --build build/qt --target xGetSongs`. Qt와 CRT가 정적으로 들어간 exe 하나다(2026-11-27 릴리스 약 22MB; 포장은 Q6).
 
+점검할 때는 `XGS_CHECK_INSTANCE_ID`(단일 인스턴스 식별자)와 가짜 `APPDATA`·`LOCALAPPDATA`를 주고 띄운다. 그래야 사용자의 실행 중인 앱과 설정을 건드리지 않는다.
+
 - 읽고 쓰는 것: 설정 `%APPDATA%\xGetSongs\settings.json`(Tauri 판과 같은 파일·형식, 모르는 키는 남긴다), 플레이리스트 `%APPDATA%\xGetSongs\playlists.json`, 앱이 설치한 yt-dlp `%APPDATA%\xGetSongs\bin`(Tauri 판이 받아 둔 것을 그대로 찾는다; 그다음 `PATH`), 내려받는 동안의 작업 폴더 `%APPDATA%\xGetSongs\work`(출력 폴더가 다른 드라이브면 그 출력 폴더 안의 `job-…`), 구글 가사용 WebView2 사용자 데이터 `%LOCALAPPDATA%\xGetSongs\qt-webview2`(Tauri 판과 따로). `APPDATA`가 없으면 `%USERPROFILE%\.xgetsongs`, `LOCALAPPDATA`가 없으면 그 앱 데이터 폴더. 값은 시작할 때 환경 변수에서 한 번 읽으므로 점검은 둘을 임시 폴더로 돌려 띄운다. 로그 파일은 아직 없다(Q5; 지금은 Qt 메시지로만 나간다).
 - 단일 인스턴스: `tauri-plugin-single-instance`의 Windows 이름 규칙(`com.xgetsongs.shell-sim` 뮤텍스, `-sic`/`-siw` 메시지 창, `WM_COPYDATA` 1542)을 그대로 써서 Tauri 판과 Qt 판이 서로를 알아본다. 두 번째 실행은 첫 창을 앞으로 가져오고 끝난다.
 - 네트워크는 사용자가 누를 때만: 조회·내려받기(yt-dlp), yt-dlp 설치(GitHub), 가사(LRCLIB, 구글), 플레이리스트 `초기화`(www.gtcsoft.kr).
