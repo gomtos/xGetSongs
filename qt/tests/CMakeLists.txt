@@ -124,3 +124,15 @@ foreach(test tst_playlist_store tst_playlist_merge tst_playlist_entry_check tst_
 endforeach()
 # Every wait of the transfer tests is bounded; this ends a hang that is left well before Qt Test's 300 s watchdog.
 set_tests_properties(tst_remote_playlists PROPERTIES TIMEOUT 120)
+
+# The widgets (qt/app, no TypeScript or Kotlin original): the main window with the fake engine of the screen logic tests, the
+# playlists dialogs with a stand-in for the remote transfer, and the single instance with a made-up id. They run on the offscreen
+# platform only (their main forces it), so no window reaches the screen; the static Qt needs that platform plugin linked in.
+foreach(test tst_main_window tst_playlists_dialog tst_single_instance)
+    xgs_add_test(${test} app/${test}.cpp app/app_test_support.h)
+    target_link_libraries(${test} PRIVATE xgsapp)
+    target_include_directories(${test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/app)
+    qt_import_plugins(${test} INCLUDE Qt6::QOffscreenIntegrationPlugin)
+    set_tests_properties(${test} PROPERTIES TIMEOUT 120)
+endforeach()
+target_compile_definitions(tst_main_window PRIVATE XGS_APP_VERSION="${PROJECT_VERSION}")

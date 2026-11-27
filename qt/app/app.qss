@@ -1,0 +1,43 @@
+/* The few styles of the window on top of the system's style: the system font, Qt's own spacing, colours from the palette where
+   possible, so light and dark themes and 100-200 % scaling keep working. */
+
+QFrame#tools {
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+}
+
+QFrame#errorBanner {
+    background: rgba(198, 40, 40, 0.10);
+    border: 1px solid rgba(198, 40, 40, 0.45);
+    border-radius: 6px;
+}
+
+QLabel#infoTitle {
+    font-size: 12pt;
+    font-weight: 600;
+}
+
+QLabel[role="caption"] {
+    font-weight: 600;
+}
+
+QLabel[small="true"] {
+    font-size: 8pt;
+}
+
+QLabel[tone="bad"] {
+    color: #c62828;
+}
+
+QLabel#summary {
+    font-weight: 600;
+}
+
+QPushButton[primary="true"] {
+    font-weight: 600;
+}
+
+QToolButton#playlists::menu-indicator {
+    image: none;
+    width: 0px;
+}

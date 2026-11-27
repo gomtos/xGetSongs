@@ -99,6 +99,16 @@ pwsh qt/tools/differential/run.ps1 -PerKind 100000 -Seed <아무 값>
 
 약 26분 (구성 1555초; 17:16~17:42). 스파이크 때(약 89분)와 달리 의존성은 바이너리 캐시에서 왔고 qtbase만 새로 빌드됐다.
 
+## 앱 (`qt/app`)
+
+`xGetSongs.exe`(Qt 판)는 위 "공통 명령"의 빌드에 함께 들어 있고 `build/qt/xGetSongs.exe`(디버그는 `build/qt-debug/xGetSongs.exe`)에 생긴다. 이것만 빌드하려면 `cmake --build build/qt --target xGetSongs`. Qt와 CRT가 정적으로 들어간 exe 하나다(2026-11-27 릴리스 약 22MB; 포장은 Q6).
+
+- 읽고 쓰는 것: 설정 `%APPDATA%\xGetSongs\settings.json`(Tauri 판과 같은 파일·형식, 모르는 키는 남긴다), 플레이리스트 `%APPDATA%\xGetSongs\playlists.json`, 앱이 설치한 yt-dlp `%APPDATA%\xGetSongs\bin`(Tauri 판이 받아 둔 것을 그대로 찾는다; 그다음 `PATH`), 내려받는 동안의 작업 폴더 `%APPDATA%\xGetSongs\work`(출력 폴더가 다른 드라이브면 그 출력 폴더 안의 `job-…`), 구글 가사용 WebView2 사용자 데이터 `%LOCALAPPDATA%\xGetSongs\qt-webview2`(Tauri 판과 따로). `APPDATA`가 없으면 `%USERPROFILE%\.xgetsongs`, `LOCALAPPDATA`가 없으면 그 앱 데이터 폴더. 값은 시작할 때 환경 변수에서 한 번 읽으므로 점검은 둘을 임시 폴더로 돌려 띄운다. 로그 파일은 아직 없다(Q5; 지금은 Qt 메시지로만 나간다).
+- 단일 인스턴스: `tauri-plugin-single-instance`의 Windows 이름 규칙(`com.xgetsongs.shell-sim` 뮤텍스, `-sic`/`-siw` 메시지 창, `WM_COPYDATA` 1542)을 그대로 써서 Tauri 판과 Qt 판이 서로를 알아본다. 두 번째 실행은 첫 창을 앞으로 가져오고 끝난다.
+- 네트워크는 사용자가 누를 때만: 조회·내려받기(yt-dlp), yt-dlp 설치(GitHub), 가사(LRCLIB, 구글), 플레이리스트 `초기화`(www.gtcsoft.kr).
+- WebView2 런타임이 없으면 구글 가사만 빠지고(Qt 메시지 한 줄) 나머지는 그대로다. 창을 닫으면 숨은 WebView2 창과 상관없이 앱이 끝나고, 엔진은 이벤트 루프가 끝난 뒤 정해진 순서로 내려간다(작업이 돌고 있으면 취소하고 기다리느라 1.5초쯤 걸릴 수 있다).
+- 시험: `tests/app/`의 `tst_main_window`, `tst_playlists_dialog`, `tst_single_instance`는 `offscreen` 플랫폼에서만 돈다(실행 파일이 직접 정한다; 정적 Qt에 그 플러그인을 링크한다). 가짜 엔진(`tests/ui/fake_app_api.h`)과 `QTemporaryDir`의 파일, 네트워크 없는 가짜 원격 목록, 지어낸 단일 인스턴스 id를 쓴다. TS·Kotlin 짝이 없어 `test-classes.json`에는 넣지 않는다.
+
 ## 구성
 
 - `core/`: 정적 라이브러리 `xgscore`(Qt Core·Qt Network와 Win32, 네임스페이스 `xgs`)
@@ -116,6 +126,8 @@ pwsh qt/tools/differential/run.ps1 -PerKind 100000 -Seed <아무 값>
   - `core/output/`: `xgs::output`, 끝난 파일을 사용자 폴더에 넣는 `LocalFolderSink`(파일 이름 판정 `isAcceptedFileName`: 대조 `W fn`)
   - `core/tools/`: `xgs::tools`, 도구 찾기(`ToolLocator`)와 도구 상태·yt-dlp 설치·업데이트(`ToolManager`; 내려받기는 주입된 `Fetch`가 하고 이 코드는 네트워크 요청을 보내지 않는다. 대조 `W st`·`W up`)
   - `core/net/`: `xgs::net`, 막는(blocking) HTTP GET `HttpClient`와 Qt Network로 한 `QtHttpClient`(전용 스레드 하나의 `QNetworkAccessManager`, 프록시 없음, `https`→`http`만 빼고 리다이렉트를 따름, 전체·무소식 시간 제한, 본문 한도, `std::stop_token` 멈춤). 주소는 쓴 그대로 가되 QUrl이 퍼센트 인코딩된 예약되지 않은 글자(`%7E`→`~`)를 풀고 16진 숫자를 대문자로 쓰며 경로의 점 조각(`/a/../q`→`/q`)을 지운다(`http_client.h`). 호출자 헤더 밖에 `Host`·`Connection`·`Accept-Encoding: gzip, deflate`와 고정 `Accept-Language: en`(시스템 로캘 대신)을 보낸다(`qt_http_client.h`; Kotlin은 뒤의 둘을 보내지 않는다). gzip 본문은 푼 크기로 한도를 재고, Qt의 압축 해제 안전 검사(`decompressedSafetyCheckThreshold`, 기본 10 MiB)에 걸린 본문은 Qt의 문구로 `Failed`다(Qt가 그 응답을 끝내지 않아 클라이언트가 끝낸다). 리다이렉트는 50번까지 따르고 넘으면 `Failed`(JDK 문서의 기본 한도는 5), 서버가 보낸 407은 Qt가 프록시 오류로 알려 `Failed`(Kotlin은 407 응답일 것으로 봄). 이 차이들은 Q2c 보고서의 "Kotlin과 다르게 한 것" 23·24·26번. TLS는 정적 Schannel 플러그인(`Qt6::Network`를 링크하면 들어온다)
+- `ui/`: 정적 라이브러리 `xgsui`(위젯 없는 화면 로직, 설정·플레이리스트 파일, 엔진 다리 `EngineApi`, 원격 플레이리스트)
+- `app/`: 정적 라이브러리 `xgsapp`(창 `MainWindow`, 플레이리스트 대화상자, 정보 창, 단일 인스턴스, 진짜 부품을 모으는 `AppServices`)와 실행 파일 `xGetSongs`(위 "앱")
 - `webview/`: 정적 라이브러리 `xgswebview`(네임스페이스 `xgs::webview`). WebView2와 Qt Gui는 여기에만 있다(`xgscore`는 Qt Core·Qt Network·Win32). `runtime.*`(런타임 버전, 없으면 빈 값, 상자 없음), `hidden_web_view.*`(`HiddenWebView`: 구글 가사 조회의 숨은 창, 셸 `browser_window.rs`의 규칙과 Q3 결정 10의 두 가지(권한 거절, 프로세스가 죽으면 닫고 실패); 머리 주석에 규칙과 실패 문구), `lyrics_browser.*`(`LyricsBrowser`: 창·`BrowserAgent`·채널의 에이전트 끝을 GUI 스레드에 묶는다. 만들면 채널에 붙고 없애면 뗀다). WebView2 호출은 모두 창을 만든 스레드(STA인 GUI 스레드)에서 한다
 - `tests/webview/`: 위 "웹뷰 시험"의 세 실행 파일, 고정 페이지 서버 `fixture_server.*`, 함께 쓰는 `webview_test_support.h`(보이는 창 감시, 이 폴더의 브라우저 프로세스 찾기, 런타임 없는 자식)
 - `tests/support/`: 시험이 함께 쓰는 가짜(`xgstestsupport`). `fake_http_server.*`는 Winsock으로 127.0.0.1에만 묶는 HTTP/1.1 서버(연결마다 스레드, `Connection: close`)

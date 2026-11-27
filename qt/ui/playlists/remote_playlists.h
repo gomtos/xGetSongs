@@ -71,10 +71,11 @@ public:
     explicit RemotePlaylists(QNetworkAccessManager& network, QUrl configUrl = defaultRemoteConfigUrl());
     ~RemotePlaylists() override;
 
-    /// Starts a run; ignored while one is running.
-    void fetch();
-    void cancel();
-    bool isRunning() const { return m_running; }
+    /// Starts a run; ignored while one is running. fetch, cancel and isRunning are virtual so that the widget tests can stand in
+    /// for the transfer without any network (qt/tests/app).
+    virtual void fetch();
+    virtual void cancel();
+    virtual bool isRunning() const { return m_running; }
 
 signals:
     void done(xgs::ui::RemoteOutcome outcome);
