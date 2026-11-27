@@ -117,6 +117,11 @@ std::optional<QString> existingFolderFor(const QString& path) {
 
 }  // namespace
 
+QString plainToolTip(const QString& text) {
+    if (text.isEmpty()) return QString();
+    return u"<p style='white-space:pre-wrap'>"_s + text.toHtmlEscaped() + u"</p>"_s;
+}
+
 MainWindowPrompts MainWindowPrompts::real() {
     MainWindowPrompts prompts;
     prompts.confirmInstall = [](QWidget* parent) {
@@ -364,9 +369,9 @@ void MainWindow::buildUi() {
     connect(m_optOverwrite, &QCheckBox::clicked, this, [this](bool checked) { m_holder->onOverwrite(checked); });
     connect(m_optRank, &QCheckBox::clicked, this, [this](bool checked) { m_holder->onIncludeRank(checked); });
     connect(m_optLyrics, &QCheckBox::clicked, this, [this](bool checked) { m_holder->onSearchLyricsOnline(checked); });
-    connect(m_singleRank, &QLineEdit::textEdited, this, [this] {
-        if (!composing(m_singleRank)) filterRank();
-    });
+    // No composing check here (main.ts had one): a QLineEdit's text() never holds the preedit, so filtering it while an IME
+    // composes changes nothing; what the composition commits arrives as an ordinary edit and is filtered then.
+    connect(m_singleRank, &QLineEdit::textEdited, this, &MainWindow::filterRank);
 
     m_list = new QTreeWidget(m_resolved);
     m_list->setObjectName(u"list"_s);
@@ -431,7 +436,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
         const auto* ime = static_cast<const QInputMethodEvent*>(event);
         if (ime->preeditString().isEmpty()) m_composing.remove(watched);
         else m_composing.insert(watched);
-    } else if (event->type() == QEvent::FocusOut) {
+    } else if (event->type() == QEvent::FocusOut && static_cast<const QFocusEvent*>(event)->reason() != Qt::PopupFocusReason) {
+        // A popup (the context menu, an IME candidate list) takes the focus for a moment without ending the composition.
         m_composing.remove(watched);
     }
     return QMainWindow::eventFilter(watched, event);
@@ -476,7 +482,7 @@ void MainWindow::render() {
         const QString count = resolved->kind == InputKind::Playlist ? u" · "_s + QString::number(resolved->items.size()) + u"개"_s : QString();
         const QString title = resolved->playlistTitle.value_or(u"단일 영상"_s) + count;
         setTextIfChanged(m_infoTitle, title);
-        m_infoTitle->setToolTip(title);
+        m_infoTitle->setToolTip(plainToolTip(title));
         m_truncated->setVisible(resolved->truncated);
         m_videoOnly->setVisible(resolved->alsoVideoId.has_value() && ui::canResolve(state));
     }
@@ -492,7 +498,7 @@ void MainWindow::render() {
     const std::optional<QString> label = ui::destinationLabel(state);
     m_destinationRow->setVisible(label.has_value());
     setTextIfChanged(m_destination, label.value_or(QString()));
-    m_destination->setToolTip(label.value_or(QString()));
+    m_destination->setToolTip(label ? plainToolTip(*label) : QString());
     m_openFolder->setVisible(ui::destinationPath(state).has_value());
     const bool rankShown = resolved && resolved->kind == InputKind::Video;
     m_rankField->setVisible(rankShown);
@@ -589,10 +595,10 @@ void MainWindow::patchRow(int index, const ui::ItemRow& row) {
     QString name = fileName;
     if (row.item.available && row.item.lowConfidence) name += u"\n⚠ 가수명을 채널명에서 추정했습니다"_s;
     if (item->text(kNameColumn) != name) item->setText(kNameColumn, name);
-    item->setToolTip(kNameColumn, fileName);
+    item->setToolTip(kNameColumn, plainToolTip(fileName));
     const QString status = ui::statusLabel(row.status);
     item->setText(kStatusColumn, status);
-    item->setToolTip(kStatusColumn, status);
+    item->setToolTip(kStatusColumn, plainToolTip(status));
     if (row.item.available) {
         item->setForeground(kStatusColumn, row.status.kind == ui::ItemStatus::Kind::Failed ? QBrush(QColor(0xc6, 0x28, 0x28)) : QBrush());
     }
@@ -658,7 +664,7 @@ void MainWindow::fillPlaylistMenu() {
         QString text = entry.name;
         text.replace(u'&', u"&&"_s);  // a name is not a mnemonic
         QAction* action = m_playlistMenu->addAction(text);
-        action->setToolTip(entry.pid);
+        action->setToolTip(plainToolTip(entry.pid));
         connect(action, &QAction::triggered, this, [this, pid = entry.pid] {
             // Only the input is filled; the user presses 조회 (design spec §5.2).
             if (ui::canResolve(m_holder->state())) m_holder->onInput(pid);

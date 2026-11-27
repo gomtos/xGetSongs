@@ -106,7 +106,7 @@ pwsh qt/tools/differential/run.ps1 -PerKind 100000 -Seed <아무 값>
 - 읽고 쓰는 것: 설정 `%APPDATA%\xGetSongs\settings.json`(Tauri 판과 같은 파일·형식, 모르는 키는 남긴다), 플레이리스트 `%APPDATA%\xGetSongs\playlists.json`, 앱이 설치한 yt-dlp `%APPDATA%\xGetSongs\bin`(Tauri 판이 받아 둔 것을 그대로 찾는다; 그다음 `PATH`), 내려받는 동안의 작업 폴더 `%APPDATA%\xGetSongs\work`(출력 폴더가 다른 드라이브면 그 출력 폴더 안의 `job-…`), 구글 가사용 WebView2 사용자 데이터 `%LOCALAPPDATA%\xGetSongs\qt-webview2`(Tauri 판과 따로). `APPDATA`가 없으면 `%USERPROFILE%\.xgetsongs`, `LOCALAPPDATA`가 없으면 그 앱 데이터 폴더. 값은 시작할 때 환경 변수에서 한 번 읽으므로 점검은 둘을 임시 폴더로 돌려 띄운다. 로그 파일은 아직 없다(Q5; 지금은 Qt 메시지로만 나간다).
 - 단일 인스턴스: `tauri-plugin-single-instance`의 Windows 이름 규칙(`com.xgetsongs.shell-sim` 뮤텍스, `-sic`/`-siw` 메시지 창, `WM_COPYDATA` 1542)을 그대로 써서 Tauri 판과 Qt 판이 서로를 알아본다. 두 번째 실행은 첫 창을 앞으로 가져오고 끝난다.
 - 네트워크는 사용자가 누를 때만: 조회·내려받기(yt-dlp), yt-dlp 설치(GitHub), 가사(LRCLIB, 구글), 플레이리스트 `초기화`(www.gtcsoft.kr).
-- WebView2 런타임이 없으면 구글 가사만 빠지고(Qt 메시지 한 줄) 나머지는 그대로다. 창을 닫으면 숨은 WebView2 창과 상관없이 앱이 끝나고, 엔진은 이벤트 루프가 끝난 뒤 정해진 순서로 내려간다(작업이 돌고 있으면 취소하고 기다리느라 1.5초쯤 걸릴 수 있다).
+- WebView2 런타임이 없으면 구글 가사만 빠지고(Qt 메시지 한 줄) 나머지는 그대로다. 창을 닫으면 숨은 WebView2 창과 상관없이 앱이 끝나고, 엔진은 이벤트 루프가 끝난 뒤 정해진 순서로 내려간다(구글 가사 채널을 먼저 닫아 숨은 창에서 기다리던 조회가 곧 끝나고, 그다음 작업을 취소하고 기다린다: 작업 폴더 지우기를 다시 해 보느라 1.5초쯤 걸릴 수 있다).
 - 시험: `tests/app/`의 `tst_main_window`, `tst_playlists_dialog`, `tst_single_instance`는 `offscreen` 플랫폼에서만 돈다(실행 파일이 직접 정한다; 정적 Qt에 그 플러그인을 링크한다). 가짜 엔진(`tests/ui/fake_app_api.h`)과 `QTemporaryDir`의 파일, 네트워크 없는 가짜 원격 목록, 지어낸 단일 인스턴스 id를 쓴다. TS·Kotlin 짝이 없어 `test-classes.json`에는 넣지 않는다.
 
 ## 구성

@@ -56,8 +56,9 @@ QString workRootFor(const QString& destination, const QString& workDir);
 class AppServices final {
 public:
     explicit AppServices(const AppPaths& paths);
-    /// Must run on the GUI thread, outside any callback of the parts (the app does it after its event loop has ended). Takes up to
-    /// about 1.5 s while a job is cancelled.
+    /// Must run on the GUI thread, outside any callback of the parts (the app does it after its event loop has ended). Closes the Google
+    /// channel before the jobs are cancelled, so a lookup in the hidden browser ends at once; a cancelled job can still take about
+    /// 1.5 s (its work folder is removed with retries, see DefaultDownloadService).
     ~AppServices();
     AppServices(const AppServices&) = delete;
     AppServices& operator=(const AppServices&) = delete;

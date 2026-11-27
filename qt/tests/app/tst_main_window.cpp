@@ -16,13 +16,18 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <optional>
+#include <thread>
 
 #include "about_dialog.h"
 #include "app_services.h"
 #include "app_test_support.h"
 #include "labels.h"
+#include "lyrics/google/browser_channel.h"
+#include "lyrics/google/google_lyrics_provider.h"
 #include "main_window.h"
 #include "playlist_store.h"
 #include "ui/fake_app_api.h"
@@ -343,6 +348,46 @@ private slots:
         QCOMPARE(input->text(), u"PLx"_s);
     }
 
+    void aPopupTakingTheFocusKeepsTheComposition() {
+        Rig rig;
+        rig.open();
+        QLineEdit* input = rig.find<QLineEdit>(u"input"_s);
+        rig.typeInput(u"abc"_s);
+        QInputMethodEvent composing(u"가"_s, {});
+        QApplication::sendEvent(input, &composing);
+        // A popup (the context menu, an IME candidate list) takes the focus for a moment: the syllable is still being composed.
+        QFocusEvent popup(QEvent::FocusOut, Qt::PopupFocusReason);
+        QApplication::sendEvent(input, &popup);
+        rig.window->holder().onInput(u"PLdummyplaylistid0000000000000000008"_s);
+        QCOMPARE(input->text(), u"abc"_s);
+        // Any other loss of focus ends the composition: the field shows the state again.
+        QFocusEvent away(QEvent::FocusOut, Qt::TabFocusReason);
+        QApplication::sendEvent(input, &away);
+        rig.window->holder().onInput(u"PLdummyplaylistid0000000000000000007"_s);
+        QCOMPARE(input->text(), u"PLdummyplaylistid0000000000000000007"_s);
+    }
+
+    void markupInTitlesAndNamesIsShownAsText() {
+        Rig rig;
+        rig.api.resolveResponse.playlistTitle = u"<b>x</b>"_s;
+        rig.api.resolveResponse.items[0].title = u"<i>더미</i>"_s;
+        rig.api.resolveResponse.items[0].expectedFileName.reset();
+        rig.open();
+        rig.resolvePlaylist();
+        QLabel* title = rig.find<QLabel>(u"infoTitle"_s);
+        QCOMPARE(title->text(), u"<b>x</b> · 3개"_s);
+        QCOMPARE(title->textFormat(), Qt::PlainText);
+        QCOMPARE(title->toolTip(), xgs::app::plainToolTip(u"<b>x</b> · 3개"_s));
+        QVERIFY(title->toolTip().contains(u"&lt;b&gt;x&lt;/b&gt;"_s));
+        QVERIFY(!title->toolTip().contains(u"<b>"_s));
+        QLabel* destination = rig.find<QLabel>(u"destination"_s);  // the folder name is sanitized, the tool tip escaped all the same
+        QCOMPARE(destination->toolTip(), xgs::app::plainToolTip(destination->text()));
+        const QString name = rig.find<QTreeWidget>(u"list"_s)->topLevelItem(0)->toolTip(1);
+        QVERIFY2(!name.contains(u"<i>"_s), qPrintable(name));
+        QCOMPARE(xgs::app::plainToolTip(u"a\nb"_s), u"<p style='white-space:pre-wrap'>a\nb</p>"_s);
+        QCOMPARE(xgs::app::plainToolTip(QString()), QString());
+    }
+
     void theRankBoxKeepsDigitsOnlyAndLeavesACompositionAlone() {
         Rig rig;
         rig.api.resolveResponse = video();
@@ -515,6 +560,39 @@ private slots:
         }
         QCOMPARE(visibleWindowsOfThisProcess(), windowsBefore);
         QCOMPARE(childProcessesOfThisProcess(), childrenBefore);
+    }
+
+    void closingTheGoogleProviderFirstEndsALookupAtOnce() {
+        // The first two steps of ~AppServices on a lookup that waits on the hidden browser, without WebView2 and without a window:
+        // an agent is attached to the channel but never answers. Closing the provider (the channel) and then stopping the job's
+        // lookup ends it at once; stopping it first would leave it in DrivenBrowser's reset wait for 5 s.
+        xgs::lyrics::google::BrowserChannel channel;
+        std::atomic<bool> asked = false;
+        channel.attach([&asked] { asked = true; });
+        xgs::lyrics::google::FetcherOptions options;
+        options.minInterval = std::chrono::nanoseconds(0);
+        options.searchBase = u"http://127.0.0.1:9/search"_s;  // never opened: nobody answers the load
+        xgs::lyrics::google::GoogleLyricsProvider provider(channel, nullptr, options);
+        std::stop_source stop;
+        std::atomic<bool> ended = false;
+        std::atomic<bool> foundSomething = false;
+        std::jthread lookup([&] {
+            const std::optional<QString> found = provider.find(xgs::LyricsQuery{u"더미 가수"_s, u"더미 하나"_s, std::nullopt, std::nullopt},
+                                                               stop.get_token());
+            foundSomething = found.has_value();
+            ended = true;
+        });
+        QTRY_VERIFY_WITH_TIMEOUT(asked.load(), 5000);  // the lookup now waits for the page
+        QVERIFY(!ended.load());
+        const auto start = std::chrono::steady_clock::now();
+        provider.close();
+        stop.request_stop();
+        lookup.join();
+        const auto took = std::chrono::steady_clock::now() - start;
+        QVERIFY(ended.load());
+        QVERIFY(!foundSomething.load());
+        // Generous against a slow machine, and still far below the 5 s reset wait it guards against.
+        QVERIFY2(took < std::chrono::seconds(2), qPrintable(QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(took).count())));
     }
 
     void thePathsFollowTheEnvironmentLikeTheTauriApp() {

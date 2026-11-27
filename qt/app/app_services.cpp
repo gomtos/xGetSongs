@@ -190,14 +190,18 @@ AppServices::~AppServices() {
     Parts& p = *m_parts;
     p.remote.reset();
     p.network.reset();
+    // Closing the Google provider closes the channel first (Kotlin: on the end of the server's scope), so a lookup that waits on the
+    // hidden browser ends at once with `closed`: otherwise a job stopped in the middle of one would sit in DrivenBrowser's reset
+    // wait (5 s, which a stop does not end) while the bridge joins it below. Closing is not destroying: the provider, the hidden
+    // browser and the channel still go in that order further down.
+    if (p.google) p.google->close();
     // Stops and waits for everything the bridge started: each job handle cancels and joins its job, and no answer is delivered.
     p.api.reset();
     p.downloads.reset();
     p.downloader.reset();
     p.lyrics.reset();
-    // Nothing looks lyrics up any more. Closing the provider closes the channel (Kotlin: on the end of the server's scope); then
-    // the hidden browser goes (its window and browser processes with it), then the channel.
-    if (p.google) p.google->close();
+    // Nothing looks lyrics up any more: the provider, then the hidden browser (its window and browser processes with it), then the
+    // channel.
     p.google.reset();
     p.lrclib.reset();
     p.browser.reset();

@@ -1,10 +1,15 @@
 #include <QtTest>
 
+#include <QThread>
 #include <QUuid>
 
 #include <windows.h>
 
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <optional>
+#include <thread>
 
 #include "app_test_support.h"
 #include "single_instance.h"
@@ -86,6 +91,71 @@ private slots:
         SendMessageTimeoutW(window, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&other), SMTO_NORMAL, 10000, &result);
         QTest::qWait(50);
         QCOMPARE(told, 1);
+    }
+
+    void aSendAcrossThreadsBringsTheCallbackOnTheFirstInstancesThread() {
+        // The second copy runs on another thread (as another process would): its SendMessageTimeoutW waits until this thread
+        // takes the message, and the callback runs here.
+        const QString id = testId();
+        SingleInstance first(id);
+        QThread* calledOn = nullptr;
+        int told = 0;
+        first.onSecondLaunch([&] {
+            told += 1;
+            calledOn = QThread::currentThread();
+        });
+        std::atomic<int> secondWasFirst = -1;
+        std::jthread second([&] {
+            SingleInstance instance(id);
+            secondWasFirst = instance.isFirst() ? 1 : 0;
+        });
+        // Generous: the second copy waits for this thread's event loop (up to its own 10 s).
+        QTRY_COMPARE_WITH_TIMEOUT(secondWasFirst.load(), 0, 10000);
+        QTRY_COMPARE(told, 1);
+        QCOMPARE(calledOn, QThread::currentThread());
+        second.join();
+    }
+
+    void aLaunchWhileTheFirstShutsDownBecomesFirst() {
+        // The first copy no longer pumps messages (it is taking its engine down) and is then destroyed: the second copy, on
+        // another thread, gets no answer, waits on the mutex, and becomes the first once it is released.
+        const QString id = testId();
+        auto first = std::make_unique<SingleInstance>(id);
+        QVERIFY(first->isFirst());
+        std::atomic<int> secondWasFirst = -1;
+        std::atomic<bool> windowFound = false;
+        std::atomic<bool> release = false;
+        std::jthread second([&] {
+            SingleInstance instance(id);
+            secondWasFirst = instance.isFirst() ? 1 : 0;
+            windowFound = FindWindowW(wide(id + u"-sic"_s).c_str(), wide(id + u"-siw"_s).c_str()) != nullptr;
+            while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));  // no message pumping meanwhile
+        QCOMPARE(secondWasFirst.load(), -1);
+        first.reset();
+        QTRY_COMPARE_WITH_TIMEOUT(secondWasFirst.load(), 1, 10000);
+        QVERIFY(windowFound.load());
+        release = true;
+        second.join();
+    }
+
+    void aLaunchAfterTheFirstStoppedListeningWaitsAndBecomesFirst() {
+        // The app's own shutdown: stopListening right after the event loop, the destructor a little later.
+        const QString id = testId();
+        auto first = std::make_unique<SingleInstance>(id);
+        first->stopListening();
+        QVERIFY(FindWindowW(wide(id + u"-sic"_s).c_str(), wide(id + u"-siw"_s).c_str()) == nullptr);
+        std::atomic<int> secondWasFirst = -1;
+        std::jthread second([&] {
+            SingleInstance instance(id);
+            secondWasFirst = instance.isFirst() ? 1 : 0;
+        });
+        QTest::qWait(300);
+        QCOMPARE(secondWasFirst.load(), -1);
+        first.reset();
+        QTRY_COMPARE_WITH_TIMEOUT(secondWasFirst.load(), 1, 10000);
+        second.join();
     }
 
     void anInstanceAfterTheFirstEndedIsFirst() {

@@ -34,6 +34,10 @@ class QVBoxLayout;
 // `플레이리스트 ▾` button left of the input (design spec §5.2) and the `정보` button at the top right of the tools card (§6).
 namespace xgs::app {
 
+/// text as a tool tip that is always shown as plain text (a title, a path or a file name may look like markup): escaped inside a
+/// paragraph that keeps the line breaks. Empty for an empty text.
+QString plainToolTip(const QString& text);
+
 /// What the window asks of the desktop; the tests answer without dialogs.
 struct MainWindowPrompts {
     /// The yt-dlp install question (index.html's install-dialog): true to download.

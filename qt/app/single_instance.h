@@ -12,8 +12,11 @@
 //  - the first copy keeps a hidden message window of class `<id>-sic` named `<id>-siw` (found with FindWindowW, so it is a
 //    top-level window, never shown: unlike the plugin's it does not get WS_VISIBLE, which only its own WM_PAINT needed);
 //  - a second copy allows the first to come to the front (AllowSetForegroundWindow), sends it WM_COPYDATA with dwData 1542 and
-//    `cwd|arg0|arg1…` in UTF-8 with a NUL (SendMessageTimeoutW, 10 s), and ends.
-// The id of the product is the Tauri app's identifier; the tests give a made-up one.
+//    `cwd|arg0|arg1…` in UTF-8 with a NUL (SendMessageTimeoutW, 10 s), and ends when the first copy took it.
+// Unlike the plugin, a copy that finds no window to tell (the first copy is starting, or shutting down and no longer listening)
+// or whose message is not taken waits on the mutex for up to 10 s: when the first copy ends meanwhile, this one becomes the
+// first; otherwise it ends. (The plugin runs as a second copy when it finds no window.) The id of the product is the Tauri app's
+// identifier; the tests give a made-up one.
 namespace xgs::app {
 
 class SingleInstance final : public QObject {
@@ -23,7 +26,9 @@ public:
     /// no version is added to it).
     static QString productId();
 
-    /// Takes the mutex of id, or tells the copy that holds it. Made on the GUI thread (the message window belongs to it).
+    /// Takes the mutex of id, or tells the copy that holds it (waiting as described above). Blocks for up to about 10 s while
+    /// another copy shuts down. Made on the GUI thread, and destroyed on the thread that made it (the message window and the
+    /// owned mutex belong to that thread).
     explicit SingleInstance(QString id, QObject* parent = nullptr);
     ~SingleInstance() override;
     SingleInstance(const SingleInstance&) = delete;
@@ -35,11 +40,16 @@ public:
     /// empty function does nothing.
     void onSecondLaunch(std::function<void()> callback);
 
+    /// The first copy is shutting down: the message window goes (and the callback with it), the mutex stays until the
+    /// destructor. A copy started from now on finds no window, waits on the mutex and becomes the first once this one ends.
+    void stopListening();
+
     /// For the message window only: a second copy has said that it started. Runs the callback a moment later (queued), so the
-    /// second copy's SendMessageTimeoutW is answered first.
-    void secondLaunchReported();
+    /// second copy's SendMessageTimeoutW is answered first. False once the copy no longer listens.
+    bool secondLaunchReported();
 
 private:
+    void becomeFirst();
     void tellTheFirst();
 
     QString m_id;

@@ -3,6 +3,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QPushButton>
 #include <QTemporaryDir>
@@ -250,6 +251,15 @@ private slots:
         idle.open(two);
         idle.dialog->reject();
         QCOMPARE(idle.remote.cancelCalls, 0);
+    }
+
+    void theDeleteQuestionShowsTheNameAsPlainText() {
+        const std::unique_ptr<QMessageBox> box = xgs::app::deleteQuestion(nullptr, u"<b>x</b>"_s);
+        QCOMPARE(box->textFormat(), Qt::PlainText);
+        QVERIFY(box->text().contains(u"<b>x</b>"_s));
+        QVERIFY(box->findChild<QPushButton*>(u"yes"_s));
+        QCOMPARE(box->findChild<QPushButton*>(u"yes"_s)->text(), u"삭제"_s);
+        QCOMPARE(box->defaultButton()->text(), u"취소"_s);
     }
 
     void theEntryDialogSaysWhyItRefuses() {

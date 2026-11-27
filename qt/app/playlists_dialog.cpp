@@ -3,7 +3,6 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
-#include <QLoggingCategory>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QStringList>
@@ -13,8 +12,6 @@
 #include "playlist_merge.h"
 
 using namespace Qt::StringLiterals;
-
-Q_LOGGING_CATEGORY(lcPlaylists, "xgs.playlists")
 
 namespace xgs::app {
 
@@ -33,6 +30,17 @@ QString saveFailedText() {
 
 }  // namespace
 
+std::unique_ptr<QMessageBox> deleteQuestion(QWidget* parent, const QString& name) {
+    auto box = std::make_unique<QMessageBox>(QMessageBox::Question, u"삭제"_s, u"‘"_s + name + u"’을(를) 목록에서 지울까요?"_s,
+                                             QMessageBox::NoButton, parent);
+    box->setTextFormat(Qt::PlainText);  // the name is the user's or the remote list's text, never markup
+    QPushButton* yes = box->addButton(u"삭제"_s, QMessageBox::AcceptRole);
+    QPushButton* no = box->addButton(u"취소"_s, QMessageBox::RejectRole);
+    yes->setObjectName(u"yes"_s);
+    box->setDefaultButton(no);
+    return box;
+}
+
 PlaylistsDialogPrompts PlaylistsDialogPrompts::real() {
     PlaylistsDialogPrompts prompts;
     prompts.editEntry = [](QWidget* parent, const QString& title, const ui::Playlist& initial, const QList<ui::Playlist>& current,
@@ -42,12 +50,9 @@ PlaylistsDialogPrompts PlaylistsDialogPrompts::real() {
         return dialog.entry();
     };
     prompts.confirmDelete = [](QWidget* parent, const QString& name) {
-        QMessageBox box(QMessageBox::Question, u"삭제"_s, u"‘"_s + name + u"’을(를) 목록에서 지울까요?"_s, QMessageBox::NoButton, parent);
-        QPushButton* yes = box.addButton(u"삭제"_s, QMessageBox::AcceptRole);
-        QPushButton* no = box.addButton(u"취소"_s, QMessageBox::RejectRole);
-        box.setDefaultButton(no);
-        box.exec();
-        return box.clickedButton() == yes;
+        const std::unique_ptr<QMessageBox> box = deleteQuestion(parent, name);
+        box->exec();
+        return box->clickedButton() == box->findChild<QPushButton*>(u"yes"_s);
     };
     return prompts;
 }
@@ -133,7 +138,7 @@ void PlaylistsDialog::showList(int current) {
     m_view->clear();
     for (const ui::Playlist& entry : m_list) {
         auto* item = new QListWidgetItem(entry.name, m_view);
-        item->setToolTip(entry.pid);
+        item->setToolTip(u"<p style='white-space:pre-wrap'>"_s + entry.pid.toHtmlEscaped() + u"</p>"_s);
     }
     m_view->setCurrentRow(current);
     updateButtons();
@@ -207,7 +212,6 @@ void PlaylistsDialog::reset() {
 void PlaylistsDialog::merged(const ui::RemoteOutcome& outcome) {
     if (!m_fetching) return;
     m_fetching = false;
-    if (outcome.dropped > 0) qCInfo(lcPlaylists) << "원격 목록에서 버린 항목" << outcome.dropped << "개";
     if (outcome.configFailed) {
         m_status->setText(u"원격 설정을 받지 못했습니다. 목록은 그대로입니다."_s);
         updateButtons();

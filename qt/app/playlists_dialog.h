@@ -5,12 +5,14 @@
 #include <QString>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "playlist_store.h"
 #include "remote_playlists.h"
 
 class QLabel;
+class QMessageBox;
 class QListWidget;
 class QPushButton;
 
@@ -31,6 +33,9 @@ struct PlaylistsDialogPrompts {
     /// The real dialogs (PlaylistEntryDialog and a question box).
     static PlaylistsDialogPrompts real();
 };
+
+/// The question before an entry is deleted: `삭제` / `취소`, the name shown as plain text. The 삭제 button is the child `yes`.
+std::unique_ptr<QMessageBox> deleteQuestion(QWidget* parent, const QString& name);
 
 class PlaylistsDialog final : public QDialog {
     Q_OBJECT

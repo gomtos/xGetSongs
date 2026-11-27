@@ -35,9 +35,10 @@ int main(int argc, char* argv[]) {
     window->show();
     const int code = app.exec();
 
-    // The screen first (the holder), then the engine (EngineApi stops and waits for what runs, up to about 1.5 s for a job), outside
-    // every callback of theirs.
-    single.onSecondLaunch({});
+    // A copy started from now on finds no window to tell: it waits until this one has ended and then runs (SingleInstance).
+    single.stopListening();
+    // The screen first (the holder), then the engine (the Google channel is closed first, then EngineApi stops and waits for what
+    // runs, up to about 1.5 s for a job), outside every callback of theirs.
     window.reset();
     services.reset();
     return code;
