@@ -17,6 +17,7 @@
 #include <thread>
 #include <variant>
 
+#include "diag/job_log.h"
 #include "engine_api.h"
 #include "fake_app_api.h"
 #include "job/download_concurrency.h"
@@ -24,6 +25,7 @@
 #include "job/job_events.h"
 #include "output/local_folder_sink.h"
 #include "paths/paths.h"
+#include "support/diag_support.h"
 #include "support/fake_process_runner.h"
 #include "support/job_fakes.h"
 #include "support/test_tools.h"
@@ -121,7 +123,7 @@ public:
           }),
           toolManager(tools, runner, binDir(), [this](const QString& url, std::stop_token stop) { return onFetch(url, stop); }),
           resolver(runner, tools) {
-        api = std::make_unique<EngineApi>(runner, toolManager, resolver, downloads, dir.filePath(u"work"_s));
+        api = std::make_unique<EngineApi>(toolManager, resolver, downloads, jobLog.sink());
     }
 
     ~Engine() { api.reset(); }
@@ -145,8 +147,18 @@ public:
     xgs::tools::ToolManager toolManager;
     xgs::ytdlp::YtDlpResolver resolver;
     ScriptedDownloadService downloads;
+    xgs::diag::test::LogCapture jobLog;
     std::unique_ptr<EngineApi> api;
+
+    /// The job lines (diag::JobLog::LOGGER_NAME) so far.
+    std::vector<xgs::diag::test::LogRecord> jobs() const { return jobLog.events(xgs::diag::JobLog::LOGGER_NAME); }
 };
+
+/// The id in a start line (`... 작업 시작: id=<id>, ...`).
+QString idOf(const QString& startLine) {
+    const qsizetype from = startLine.indexOf(u"id="_s) + 3;
+    return startLine.mid(from, startLine.indexOf(u',', from) - from);
+}
 
 /// A request for the two sample items into a fresh folder below dir.
 JobRequest requestInto(const QTemporaryDir& dir, bool isPlaylist = true) {
@@ -517,6 +529,114 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(answers, 2, kLimitMs);
 
         QCOMPARE(peak.load(), 1);
+    }
+
+    // ---- the job log (the route tests of Kotlin's JobLogTest, through the bridge that stands where the routes stood) -------
+
+    void aJobLogsItsStartItsItemsAndItsSummary() {
+        Engine engine;
+        engine.downloads.script = [](JobEvents& events, std::stop_token) {
+            events.push(xgs::ItemStarted{1, u"vid00000001"_s, u"TITLE-MARKER-ONE.m4a"_s});
+            events.push(xgs::Progress{1, xgs::Stage::Downloading, 50.0});
+            events.push(xgs::ItemDone{1, u"TITLE-MARKER-ONE.m4a"_s, xgs::LyricsOutcome::Online});
+            events.push(xgs::ItemFailed{3, u"연결이 끊어졌습니다"_s});
+            events.push(JobDone{JobStatus::Completed, JobSummary{1, 0, 1}});
+        };
+        JobRequest request = requestInto(engine.dir);
+        request.options.overwrite = true;
+        Seen seen;
+        engine.api->startJob(request, recorder(seen));
+        QTRY_VERIFY_WITH_TIMEOUT(seen.ended, kLimitMs);
+
+        const auto records = engine.jobs();
+        QVERIFY(!records.empty());
+        const auto& start = records.front();
+        const QString jobId = idOf(start.message);
+        QCOMPARE(jobId.size(), 36);   // a UUID, like the server's registry
+        const QString tag = u"["_s + jobId.left(8) + u"]"_s;
+        QCOMPARE(start.level, xgs::diag::Level::Info);
+        const QString expectedStart = tag + u" 작업 시작: id="_s + jobId + u", 종류=재생목록, 항목=2개, overwrite=true, includeRank=true, concurrency="_s +
+                                      QString::number(xgs::job::automaticConcurrency()) + u", searchLyricsOnline=true, outputDir="_s +
+                                      *request.options.outputDir;
+        QVERIFY2(start.message.startsWith(expectedStart), qPrintable(start.message));
+        QHash<QString, xgs::diag::Level> byText;
+        for (const auto& record : records) byText.insert(record.message, record.level);
+        QCOMPARE(byText.value(tag + u" 항목 시작: 순위 1, 영상 vid00000001"_s, xgs::diag::Level::Error), xgs::diag::Level::Debug);
+        QCOMPARE(byText.value(tag + u" 항목 완료: 순위 1, 가사 ONLINE"_s, xgs::diag::Level::Error), xgs::diag::Level::Info);
+        QCOMPARE(byText.value(tag + u" 항목 실패: 순위 3, 사유: 연결이 끊어졌습니다"_s, xgs::diag::Level::Error), xgs::diag::Level::Warn);
+        QCOMPARE(byText.value(tag + u" 작업 종료: 상태=COMPLETED, 성공 1, 건너뜀 0, 실패 1"_s, xgs::diag::Level::Error), xgs::diag::Level::Info);
+        QVERIFY2(records.size() == 5, "start, started, done, failed, summary: no line for the progress event");
+        QCOMPARE(records.back().message, tag + u" 작업 종료: 상태=COMPLETED, 성공 1, 건너뜀 0, 실패 1"_s);
+    }
+
+    void aSingleVideoIsLoggedAsAVideo() {
+        Engine engine;
+        engine.downloads.script = [](JobEvents& events, std::stop_token stop) {
+            waitForStop(stop);
+            events.push(JobDone{JobStatus::Cancelled, JobSummary{}});
+        };
+        JobRequest request = requestInto(engine.dir, false);
+        request.items = {item(1)};
+        request.options.singleRank = 42;
+        Seen seen;
+        engine.api->startJob(request, recorder(seen));
+
+        const auto records = engine.jobs();
+        QCOMPARE(records.size(), size_t(1));
+        const QString start = records.front().message;
+        QVERIFY2(start.contains(u"종류=영상"_s) && start.contains(u"항목=1개"_s), qPrintable(start));
+    }
+
+    void cancellingAJobIsLogged() {
+        Engine engine;
+        engine.downloads.script = [](JobEvents& events, std::stop_token stop) {
+            waitForStop(stop);
+            events.push(JobDone{JobStatus::Cancelled, JobSummary{}});
+        };
+        Seen seen;
+        engine.api->startJob(requestInto(engine.dir), recorder(seen));
+        QTRY_COMPARE_WITH_TIMEOUT(seen.log, QStringList{u"started"_s}, kLimitMs);
+        engine.api->cancelJob();
+
+        const auto records = engine.jobs();
+        QVERIFY(records.size() >= 2);
+        const QString tag = u"["_s + idOf(records.front().message).left(8) + u"]"_s;
+        // The line of the cancel comes right after the start, before the job's last event (which the cancel brings about).
+        QCOMPARE(records.at(1).level, xgs::diag::Level::Info);
+        QCOMPARE(records.at(1).message, tag + u" 취소 요청을 받음"_s);
+        QTRY_VERIFY_WITH_TIMEOUT(seen.ended, kLimitMs);
+    }
+
+    void cancellingAnUnknownJobLogsNothingAboutAJob() {
+        Engine engine;
+        engine.api->cancelJob();
+
+        QCOMPARE(engine.jobs().size(), size_t(0));
+    }
+
+    void aStopIsNoDroppedEventStreamButAnEarlyEndIs() {
+        // Kotlin logs eventsDisconnected when a stream ends without the job being done, unless the server is going down.
+        Engine engine;
+        engine.downloads.script = [](JobEvents& events, std::stop_token stop) {
+            waitForStop(stop);
+            events.push(JobDone{JobStatus::Cancelled, JobSummary{}});
+        };
+        Seen seen;
+        engine.api->startJob(requestInto(engine.dir), recorder(seen));
+        QTRY_COMPARE_WITH_TIMEOUT(seen.log, QStringList{u"started"_s}, kLimitMs);
+        engine.api->stop();
+        for (const auto& record : engine.jobs()) QVERIFY2(!record.message.contains(u"이벤트 연결이 끊어짐"_s), qPrintable(record.message));
+
+        Engine early;
+        early.downloads.script = [](JobEvents&, std::stop_token) {};   // the queue closes without a JobDone
+        Seen cut;
+        early.api->startJob(requestInto(early.dir), recorder(cut));
+        QTRY_VERIFY_WITH_TIMEOUT(cut.ended, kLimitMs);
+        const auto records = early.jobs();
+        QVERIFY(!records.empty());
+        const QString jobId = idOf(records.front().message);
+        QCOMPARE(records.back().level, xgs::diag::Level::Warn);
+        QCOMPARE(records.back().message, u"["_s + jobId.left(8) + u"] 이벤트 연결이 끊어짐 (작업 "_s + jobId.left(8) + u")"_s);
     }
 };
 

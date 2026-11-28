@@ -5,6 +5,8 @@
 #include <memory>
 #include <optional>
 
+#include "diag/log_sink.h"
+
 class QNetworkAccessManager;
 
 namespace xgs::ui {
@@ -47,6 +49,12 @@ struct AppPaths {
 /// it and removes it at the end).
 QString workRootFor(const QString& destination, const QString& workDir);
 
+/// Removes what an earlier run left in workDir (the Kotlin server's `workDir.toFile().deleteRecursively()` in createServices):
+/// everything inside it, never following a link or junction out of it (the link itself goes, its target stays). What cannot be
+/// removed stays and is one WARN line (`xgs.app`) with the count, never a failure; nothing is said when the folder is empty or
+/// missing. Call it only after the single-instance check (a running first copy may be using the folder).
+void clearStaleWork(const QString& workDir, const diag::LogSink& log);
+
 /// Makes the real parts on the GUI thread and takes them apart in the order the engine and the Google lookup need (the hand-over
 /// lists of the Q2d and Q3 reports): the EngineApi (which stops and waits for everything that runs), the download service, the
 /// downloader, the lyrics providers (LRCLIB, then Google; the description comes first inside the downloader), the hidden browser
@@ -55,7 +63,9 @@ QString workRootFor(const QString& destination, const QString& workDir);
 /// Google. Without the WebView2 runtime there is no Google lookup (one log line), and everything else works.
 class AppServices final {
 public:
-    explicit AppServices(const AppPaths& paths);
+    /// log gets the job lines of diag::JobLog and the line of clearStaleWork (empty: nothing is logged). The work folder of the
+    /// last run is cleared first (clearStaleWork).
+    explicit AppServices(const AppPaths& paths, diag::LogSink log = {});
     /// Must run on the GUI thread, outside any callback of the parts (the app does it after its event loop has ended). Closes the Google
     /// channel before the jobs are cancelled, so a lookup in the hidden browser ends at once; a cancelled job can still take about
     /// 1.5 s (its work folder is removed with retries, see DefaultDownloadService).
@@ -67,6 +77,8 @@ public:
     /// The transfer of the remote playlists (the 초기화 of the playlists dialog), on the GUI thread's network access manager.
     ui::RemotePlaylists& remotePlaylists();
     bool googleLyrics() const;
+    /// The jobs the bridge holds (running ones and finished ones whose end has not been delivered yet), for the exit record.
+    int runningJobs() const;
 
 private:
     struct Parts;

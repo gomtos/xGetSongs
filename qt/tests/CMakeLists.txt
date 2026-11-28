@@ -137,6 +137,21 @@ foreach(test tst_main_window tst_playlists_dialog tst_single_instance)
 endforeach()
 target_compile_definitions(tst_main_window PRIVATE XGS_APP_VERSION="${PROJECT_VERSION}")
 
+# The diagnostics wired into the process (qt/app): the log, the records, the hang watch, the work folder, and the crash dump through
+# crash_probe (a console exe that crashes on purpose with the app's crash handlers; no window, no error box). The hang tests stall the
+# GUI thread for a second or two; the probe's dump takes well under a second.
+add_executable(crash_probe support/crash_probe.cpp)
+target_link_libraries(crash_probe PRIVATE xgscrash)
+xgs_target_defaults(crash_probe)
+target_compile_options(crash_probe PRIVATE /wd4702)   # Qt's literal-length loop, as in xgs_add_test
+xgs_add_test(tst_diagnostics app/tst_diagnostics.cpp app/app_test_support.h support/diag_support.h)
+target_link_libraries(tst_diagnostics PRIVATE xgsapp)
+target_include_directories(tst_diagnostics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/app)
+qt_import_plugins(tst_diagnostics INCLUDE Qt6::QOffscreenIntegrationPlugin)
+target_compile_definitions(tst_diagnostics PRIVATE XGS_CRASH_PROBE="$<TARGET_FILE:crash_probe>")
+add_dependencies(tst_diagnostics crash_probe)
+set_tests_properties(tst_diagnostics PROPERTIES TIMEOUT 180)
+
 # The diagnostics logic (xgscore, qt/core/diag): the log file, the log folder, the marker of the last run, the exit record, the hang
 # detector and the job log. The ports of the Kotlin diagnostics tests (see qt/tools/test-classes.json for what is left out and why)
 # and tst_file_logger (no Kotlin pair: logback does that in the Kotlin version). Nothing here touches the real %APPDATA%.

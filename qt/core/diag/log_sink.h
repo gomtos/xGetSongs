@@ -29,5 +29,8 @@ QString currentExceptionName();
 /// The name of the calling thread for the `[thread]` part of a line: what setCurrentThreadName gave it, else `t<number>`.
 QString currentThreadName();
 void setCurrentThreadName(const QString& name);
+/// currentThreadName as UTF-8 into out (at most capacity - 1 bytes and a terminating zero; a name that does not fit is cut at a
+/// character), without touching the heap: for a crash handler. Returns the number of bytes without the zero.
+int currentThreadNameUtf8(char* out, int capacity) noexcept;
 
 }  // namespace xgs::diag

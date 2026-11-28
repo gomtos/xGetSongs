@@ -382,14 +382,12 @@
   },
   {
     "kotlin": "server/src/test/kotlin/com/xgetsongs/server/JobLogTest.kt",
-    "exe": "tst_job_log",
-    "added": [],
-    "omitted": [
-      {"name": "aJobLogsItsStartItsItemsAndItsSummary", "reason": "goes through the HTTP routes: the Qt app has none; the wiring of JobLog into EngineApi (and its test) is Q5 Task 2"},
-      {"name": "aSingleVideoIsLoggedAsAVideo", "reason": "through the HTTP routes (see aJobLogsItsStartItsItemsAndItsSummary)"},
-      {"name": "cancellingAJobIsLogged", "reason": "through the HTTP routes (see aJobLogsItsStartItsItemsAndItsSummary)"},
-      {"name": "cancellingAnUnknownJobLogsNothingAboutAJob", "reason": "through the HTTP routes (see aJobLogsItsStartItsItemsAndItsSummary)"}
-    ]
+    "exe": ["tst_job_log", "tst_engine_api"],
+    "added": ["aStopIsNoDroppedEventStreamButAnEarlyEndIs",
+              "eventsArriveOnTheCallingThreadInOrder", "anAnswerAfterStopIsDropped", "toolInstallIsRefusedWhileAJobRuns",
+              "closingWhileAJobRunsEndsEverything", "aCancelRightAfterTheLastItemStillEndsWithJobDone",
+              "destroyingTheApiWhileAJobRunsEndsEverything", "theDownloadRequestIsBuiltLikeTheServerBuiltIt",
+              "aRequestTheServerWouldRefuseIsRefusedWithItsMessage", "resolveAndToolsAnswerOnTheCallingThread", "toolInstallsRunOneAtATime"]
   },
   {
     "kotlin": "server/src/test/kotlin/com/xgetsongs/server/sidecar/SidecarLoggingTest.kt",

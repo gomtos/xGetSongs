@@ -1,12 +1,15 @@
 #include "engine_api.h"
 
 #include <QFileInfo>
+#include <QHash>
 #include <QMetaObject>
+#include <QUuid>
 
 #include <exception>
 #include <variant>
 
 #include "app_state_holder.h"
+#include "diag/job_log.h"
 #include "filename/filename_formatter.h"
 #include "job/download_concurrency.h"
 #include "paths/paths.h"
@@ -44,15 +47,29 @@ QString exceptionText(std::exception_ptr error) {
 /// One job: the sink it saves into, its handle, and the thread that reads its events. The reader is declared last so that it is
 /// joined before the handle (which cancels and joins the job) and the sink (which the job uses) go.
 struct EngineApi::RunningJob {
+    QString jobId;
     JobCallbacks callbacks;
     std::unique_ptr<output::LocalFolderSink> sink;
     std::unique_ptr<job::JobHandle> handle;
     std::jthread reader;
 };
 
-EngineApi::EngineApi(process::ProcessRunner& runner, tools::ToolManager& tools, ytdlp::YtDlpResolver& resolver,
-                     job::DownloadService& downloads, QString tempRoot, QObject* parent)
-    : QObject(parent), m_runner(runner), m_tools(tools), m_resolver(resolver), m_downloads(downloads), m_tempRoot(std::move(tempRoot)) {}
+EngineApi::EngineApi(tools::ToolManager& tools, ytdlp::YtDlpResolver& resolver, job::DownloadService& downloads, diag::LogSink jobLog,
+                     QObject* parent)
+    : QObject(parent), m_tools(tools), m_resolver(resolver), m_downloads(downloads), m_jobLog(std::move(jobLog)) {}
+
+int EngineApi::jobCount() const {
+    return static_cast<int>(m_jobs.size());
+}
+
+void EngineApi::logJob(diag::Level level, const QString& jobId, const QString& text) const {
+    if (!m_jobLog) return;
+    try {
+        m_jobLog(level, diag::JobLog::LOGGER_NAME, u"["_s + diag::JobLog::shortId(jobId) + u"] "_s + text);
+    } catch (...) {
+        // A line that cannot be written is lost; the job goes on.
+    }
+}
 
 EngineApi::~EngineApi() {
     stop();
@@ -70,6 +87,7 @@ template <class T>
 void EngineApi::runWorker(std::function<T(std::stop_token)> work, std::function<void(T)> deliver) {
     const std::uint64_t id = m_nextId++;
     std::jthread worker([this, id, work = std::move(work), deliver = std::move(deliver), stop = m_stop.get_token()] {
+        diag::setCurrentThreadName(u"engine-worker"_s);
         // Nothing may leave the thread: a failure of the work is its answer, and a failure to post the answer (memory) leaves the
         // worker to stop(), which joins it.
         try {
@@ -188,12 +206,19 @@ void EngineApi::startJob(JobRequest request, JobCallbacks callbacks) {
     }
 
     auto running = std::make_unique<RunningJob>();
+    running->jobId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     running->callbacks = std::move(callbacks);
     running->sink = std::move(sink);
     // The engine decides how many items run at once: it is the machine that does the work.
-    job::DownloadRequest download{request.items,  running->sink.get(), options.overwrite,          job::automaticConcurrency(),
+    const int concurrency = job::automaticConcurrency();
+    job::DownloadRequest download{request.items,  running->sink.get(), options.overwrite,          concurrency,
                                   album,          options.includeRank, options.searchLyricsOnline, albumOverride};
     running->handle = m_downloads.start(std::move(download), std::stop_source());
+    const QString jobId = running->jobId;
+    // Before the reader starts, so the start line comes before the lines of the job's events (as the server's did).
+    logJob(diag::Level::Info, jobId,
+           diag::JobLog::started(jobId, request.isPlaylist ? InputKind::Playlist : InputKind::Video, static_cast<int>(request.items.size()),
+                                 options, concurrency));
     const std::uint64_t id = m_nextId++;
     job::JobHandle* const handle = running->handle.get();
     // Kept before its reader starts: if the reader cannot be started, taking the job out again cancels and joins it (the handle's
@@ -203,8 +228,12 @@ void EngineApi::startJob(JobRequest request, JobCallbacks callbacks) {
         // The job's one reader: it says the job started, hands over every event up to the JobDone in order, waits for the job's
         // threads, and says the events are over. Nothing may leave the thread (a post that fails for lack of memory ends it;
         // the job then stays until stop()).
-        job.reader = std::jthread([this, id, handle] {
+        job.reader = std::jthread([this, id, handle, jobId, stop = m_stop.get_token()] {
+            diag::setCurrentThreadName(u"job-reader-"_s + diag::JobLog::shortId(jobId));
             try {
+                // The file name each rank was started with: the reasons of its later events are stripped of it.
+                QHash<int, QString> fileNames;
+                bool done = false;
                 post([this, id] {
                     if (m_stopped) return;
                     const auto it = m_jobs.find(id);
@@ -216,6 +245,9 @@ void EngineApi::startJob(JobRequest request, JobCallbacks callbacks) {
                     std::optional<JobEvent> event = handle->nextEvent();
                     if (!event) break;
                     const bool last = std::holds_alternative<JobDone>(*event);
+                    if (const auto* started = std::get_if<ItemStarted>(&*event)) fileNames.insert(started->rank, started->fileName);
+                    if (const auto line = diag::JobLog::describe(*event, fileNames)) logJob(line->level, jobId, line->text);
+                    done = done || last;
                     post([this, id, event = std::move(*event)] {
                         if (m_stopped) return;
                         const auto it = m_jobs.find(id);
@@ -225,6 +257,8 @@ void EngineApi::startJob(JobRequest request, JobCallbacks callbacks) {
                     });
                     if (last) break;
                 }
+                // A stream that ends because the bridge is stopping is not a dropped one.
+                if (!done && !stop.stop_requested()) logJob(diag::Level::Warn, jobId, diag::JobLog::eventsDisconnected(jobId));
                 handle->join();
                 post([this, id] { finishJob(id); });
             } catch (...) {
@@ -249,7 +283,10 @@ void EngineApi::finishJob(std::uint64_t id) {
 void EngineApi::cancelJob() {
     if (m_stopped) return;
     const auto it = m_jobs.find(m_lastJob);
-    if (it != m_jobs.end()) it->second->handle->cancel();
+    if (it == m_jobs.end()) return;
+    // Said before the cancel takes effect, so the line comes before the job's last event (the server said it right after).
+    logJob(diag::Level::Info, it->second->jobId, diag::JobLog::CANCEL_REQUESTED);
+    it->second->handle->cancel();
 }
 
 void EngineApi::stop() {

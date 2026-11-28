@@ -42,6 +42,10 @@ public:
     /// throws.
     void write(Level level, const QString& threadName, const QString& loggerName, const QString& message) noexcept;
 
+    /// Appends bytes (a whole line, UTF-8 with its line end) to the active file with one WriteFile, without the lock, without
+    /// rolling and without touching the heap: for a crash handler, whose thread may hold the lock. false when no file is open or
+    /// the write fails. Any thread; a line of write() and this one do not mix (both are appends of one WriteFile).
+    bool writeRaw(const char* bytes, unsigned long size) const noexcept;
     /// Closes the file; later writes are dropped. Never throws.
     void close() noexcept;
 

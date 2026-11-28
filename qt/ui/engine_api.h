@@ -12,9 +12,9 @@
 #include <thread>
 
 #include "app_api.h"
+#include "diag/log_sink.h"
 #include "job/download_service.h"
 #include "output/local_folder_sink.h"
-#include "process/process_runner.h"
 #include "tools/tool_manager.h"
 #include "ytdlp/ytdlp_resolver.h"
 
@@ -29,15 +29,20 @@
 //  - after stop() no answer is delivered (a ToolsStatus obtained after a stop looks like "no tools");
 //  - teardown: stop() (or the destructor) cancels and waits for every job handle and thread; the EngineApi must go before the
 //    engine objects it references (service, downloader, providers and runner, HTTP client), which go in that order.
+//
+// The job log (Kotlin: the `jobLog` lines of Application.kt, words from diag::JobLog) goes to jobLog under diag::JobLog::LOGGER_NAME,
+// each line tagged `[<short id>]`: the start (on the GUI thread, once the job runs), each event that JobLog::describe logs (on the
+// job's reader thread, as it takes them), a cancel of a job the bridge holds, and an event stream that ended without a JobDone
+// while the bridge was not stopping. Every job gets a random id (a UUID, as the server's registry gave).
 namespace xgs::ui {
 
 class EngineApi final : public QObject, public AppApi {
     Q_OBJECT
 public:
-    /// Every engine object is referenced, not owned, and must outlive the EngineApi. runner and tempRoot (the work folder of the
-    /// download service) are not used by the bridge itself; they are taken so that the app hands the bridge the whole engine.
-    EngineApi(process::ProcessRunner& runner, tools::ToolManager& tools, ytdlp::YtDlpResolver& resolver, job::DownloadService& downloads,
-              QString tempRoot, QObject* parent = nullptr);
+    /// Every engine object is referenced, not owned, and must outlive the EngineApi. jobLog (any thread; empty: no job log) gets
+    /// the job lines.
+    EngineApi(tools::ToolManager& tools, ytdlp::YtDlpResolver& resolver, job::DownloadService& downloads, diag::LogSink jobLog = {},
+              QObject* parent = nullptr);
     /// stop().
     ~EngineApi() override;
 
@@ -54,6 +59,9 @@ public:
     void startJob(JobRequest request, JobCallbacks callbacks) override;
     void cancelJob() override;
     void stop() override;
+    /// The jobs the bridge holds (running ones and finished ones whose end has not been delivered yet): the server's
+    /// `runningJobs` for the exit record. GUI thread.
+    int jobCount() const;
 
 private:
     struct RunningJob;
@@ -66,12 +74,12 @@ private:
     void toolAction(std::function<void(Outcome<QString>)> done, std::function<Outcome<QString>(std::stop_token)> action);
     bool aJobRuns() const;
     void finishJob(std::uint64_t id);
+    void logJob(diag::Level level, const QString& jobId, const QString& text) const;
 
-    process::ProcessRunner& m_runner;
     tools::ToolManager& m_tools;
     ytdlp::YtDlpResolver& m_resolver;
     job::DownloadService& m_downloads;
-    QString m_tempRoot;
+    const diag::LogSink m_jobLog;
 
     // GUI thread only
     bool m_stopped = false;

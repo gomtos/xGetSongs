@@ -6,6 +6,8 @@
 
 #include <utility>
 
+#include <windows.h>
+
 #include "engine_api.h"
 #include "job/default_download_service.h"
 #include "job/item_downloader.h"
@@ -80,8 +82,8 @@ private:
     QString m_workDir;
 };
 
-/// The lines of the Google lookup (counts and result names, never a song or lyrics) for the app's log. The log file is Q5's;
-/// until then they go to Qt's message handler.
+/// The lines of the Google lookup (counts and result names, never a song or lyrics) for the app's log, through Qt's message
+/// handler (which the diagnostics send to the log file).
 class GoogleLog final : public lyrics::google::GoogleLyricsLog {
 public:
     void info(const QString& message) override { qCInfo(lcGoogle).noquote() << message; }
@@ -154,8 +156,55 @@ struct AppServices::Parts {
     std::unique_ptr<ui::RemotePlaylists> remote;
 };
 
-AppServices::AppServices(const AppPaths& paths) : m_parts(std::make_unique<Parts>()) {
+namespace {
+
+/// Removes what is inside dir (not dir itself) and returns how many entries could not be removed. A link or junction is removed
+/// as an entry of its own and never entered, so nothing outside dir is touched.
+int removeContents(const QString& dir) {
+    int left = 0;
+    WIN32_FIND_DATAW found{};
+    const QString pattern = dir + u"\\*"_s;
+    const HANDLE search = FindFirstFileW(reinterpret_cast<const wchar_t*>(pattern.utf16()), &found);
+    if (search == INVALID_HANDLE_VALUE) return 0;   // missing or unreadable: nothing to do
+    do {
+        const QString name = QString::fromWCharArray(found.cFileName);
+        if (name == u"."_s || name == u".."_s) continue;
+        const QString path = dir + u'\\' + name;
+        const wchar_t* const native = reinterpret_cast<const wchar_t*>(path.utf16());
+        const DWORD attributes = found.dwFileAttributes;
+        if (attributes & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(native, attributes & ~DWORD(FILE_ATTRIBUTE_READONLY));
+        const bool directory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        const bool link = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+        if (directory && !link) left += removeContents(path);
+        const bool removed = directory ? RemoveDirectoryW(native) != FALSE : DeleteFileW(native) != FALSE;
+        if (!removed) left += 1;
+    } while (FindNextFileW(search, &found));
+    FindClose(search);
+    return left;
+}
+
+}  // namespace
+
+void clearStaleWork(const QString& workDir, const diag::LogSink& log) {
+    try {
+        QString dir = QDir::toNativeSeparators(workDir);
+        while (dir.size() > 3 && dir.endsWith(u'\\')) dir.chop(1);
+        const DWORD attributes = GetFileAttributesW(reinterpret_cast<const wchar_t*>(dir.utf16()));
+        // The folder itself must be a real folder: a work folder that is a link is not followed either.
+        if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY) || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return;
+        const int left = removeContents(dir);
+        if (left > 0 && log) {
+            log(diag::Level::Warn, u"xgs.app"_s, u"지난 실행의 작업 파일을 다 지우지 못함 ("_s + QString::number(left) + u"개 남음)"_s);
+        }
+    } catch (...) {
+        // Leftovers only take space; the app starts anyway.
+    }
+}
+
+AppServices::AppServices(const AppPaths& paths, diag::LogSink log) : m_parts(std::make_unique<Parts>()) {
     Parts& p = *m_parts;
+    // Leftover work files of an earlier run (Kotlin: createServices).
+    clearStaleWork(paths.workDir(), log);
     // One HTTP client for LRCLIB and the yt-dlp download (the Q2c hand-over).
     p.http = std::make_unique<net::QtHttpClient>();
     p.runner = std::make_unique<process::SystemProcessRunner>();
@@ -180,7 +229,7 @@ AppServices::AppServices(const AppPaths& paths) : m_parts(std::make_unique<Parts
     p.lyrics = std::make_unique<lyrics::FallbackLyricsProvider>(std::move(providers));
     p.downloader = std::make_unique<job::ItemDownloader>(*p.runner, *p.locator, *p.resolver, *p.lyrics);
     p.downloads = std::make_unique<SameDriveDownloadService>(*p.downloader, paths.workDir());
-    p.api = std::make_unique<ui::EngineApi>(*p.runner, *p.tools, *p.resolver, *p.downloads, paths.workDir());
+    p.api = std::make_unique<ui::EngineApi>(*p.tools, *p.resolver, *p.downloads, log);
 
     p.network = std::make_unique<QNetworkAccessManager>();
     p.remote = std::make_unique<ui::RemotePlaylists>(*p.network);
@@ -220,6 +269,10 @@ ui::AppApi& AppServices::api() {
 
 ui::RemotePlaylists& AppServices::remotePlaylists() {
     return *m_parts->remote;
+}
+
+int AppServices::runningJobs() const {
+    return m_parts->api ? m_parts->api->jobCount() : 0;
 }
 
 bool AppServices::googleLyrics() const {

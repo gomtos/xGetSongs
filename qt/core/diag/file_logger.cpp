@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -102,6 +103,8 @@ struct FileLogger::Impl {
     bool dirSet = false;
     QString activePath;
     HANDLE handle = INVALID_HANDLE_VALUE;
+    // handle, for writeRaw without the lock: cleared before the handle is closed, set once it is open.
+    std::atomic<HANDLE> rawHandle{INVALID_HANDLE_VALUE};
     qint64 size = 0;                   // the length of the active file
     QDate periodDate;                  // the date of the lines in the active file
     qint64 nextOpenAttemptMs = 0;      // wall-clock milliseconds
@@ -110,6 +113,7 @@ struct FileLogger::Impl {
     QDateTime now() const { return clock ? clock() : QDateTime::currentDateTime(); }
 
     void closeHandle() {
+        rawHandle.store(INVALID_HANDLE_VALUE);
         if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
         handle = INVALID_HANDLE_VALUE;
     }
@@ -123,6 +127,7 @@ struct FileLogger::Impl {
         if (handle == INVALID_HANDLE_VALUE) return false;
         LARGE_INTEGER length{};
         size = GetFileSizeEx(handle, &length) ? length.QuadPart : 0;
+        rawHandle.store(handle);
         return true;
     }
 
@@ -274,6 +279,13 @@ void FileLogger::write(Level level, const QString& threadName, const QString& lo
     } catch (...) {
         // Logging never throws: a line that cannot be written is lost.
     }
+}
+
+bool FileLogger::writeRaw(const char* bytes, unsigned long size) const noexcept {
+    const HANDLE handle = m_impl->rawHandle.load();
+    if (handle == INVALID_HANDLE_VALUE || bytes == nullptr) return false;
+    DWORD written = 0;
+    return WriteFile(handle, bytes, size, &written, nullptr) && written == size;
 }
 
 void FileLogger::close() noexcept {

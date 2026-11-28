@@ -583,6 +583,92 @@ private slots:
         }
         QCOMPARE(seen.size(), Threads * PerThread);
     }
+
+    // ---- the crash path (Q5 Task 2: what a crash handler may use) -----------------------------
+
+    void aRawWriteAppendsToTheActiveFileAfterTheLines() {
+        FileLogger logger(clock());
+        QVERIFY(logger.open(m_dir));
+        logger.write(Level::Info, u"main"_s, u"xgs.test"_s, u"before"_s);
+
+        const QByteArray raw("raw line\r\n");
+        QVERIFY(logger.writeRaw(raw.constData(), static_cast<unsigned long>(raw.size())));
+        logger.write(Level::Info, u"main"_s, u"xgs.test"_s, u"after"_s);
+        logger.close();
+
+        QCOMPARE(linesOf(active()),
+                 (QStringList{u"2026-10-07 21:03:11.123 INFO  [main] xgs.test - before"_s, u"raw line"_s,
+                              u"2026-10-07 21:03:11.123 INFO  [main] xgs.test - after"_s}));
+    }
+
+    void aRawWriteWithoutAnOpenFileFailsQuietly() {
+        FileLogger never(clock());
+        QVERIFY(!never.writeRaw("x\r\n", 3));
+
+        FileLogger closed(clock());
+        QVERIFY(closed.open(m_dir));
+        closed.close();
+        QVERIFY(!closed.writeRaw("x\r\n", 3));
+        QCOMPARE(readBytes(active()), QByteArray());
+    }
+
+    void aRawWriteGoesOnWhileAnotherThreadHoldsTheLock() {
+        // A crash handler runs while any thread may be inside write(): a clock that blocks keeps write() inside the lock.
+        std::atomic<bool> block{false};
+        std::atomic<bool> inside{false};
+        std::atomic<bool> release{false};
+        FileLogger logger([&] {
+            if (block.load()) {
+                inside = true;
+                while (!release.load()) std::this_thread::yield();
+            }
+            return m_now;
+        });
+        QVERIFY(logger.open(m_dir));
+        block = true;
+        // A failing check returns from here: the writer is let go first, so its join does not hang the test.
+        std::jthread writer([&] { logger.write(Level::Info, u"t"_s, u"xgs.test"_s, u"held"_s); });
+        const auto letGo = qScopeGuard([&] { release = true; });   // after the writer: it runs before the join
+        while (!inside.load()) std::this_thread::yield();
+
+        QVERIFY(logger.writeRaw("raw\r\n", 5));
+        release = true;
+        writer.join();
+        logger.close();
+
+        QCOMPARE(linesOf(active()), (QStringList{u"raw"_s, u"2026-10-07 21:03:11.123 INFO  [t] xgs.test - held"_s}));
+    }
+
+    void theThreadNameComesAsUtf8AndIsCutAtACharacter() {
+        // Taken on the threads, compared here (Qt Test's checks belong to the test's thread).
+        QByteArray whole;
+        QByteArray cut;
+        bool terminated = false;
+        std::jthread named([&] {
+            xgs::diag::setCurrentThreadName(u"작업-1"_s);
+            char buffer[64];
+            const int size = xgs::diag::currentThreadNameUtf8(buffer, sizeof buffer);
+            whole = QByteArray(buffer, size);
+            char room[5];   // one Hangul syllable (3 bytes) fits, the next one does not
+            const int part = xgs::diag::currentThreadNameUtf8(room, sizeof room);
+            cut = QByteArray(room, part);
+            terminated = buffer[size] == '\0' && room[part] == '\0';
+        });
+        named.join();
+        QByteArray plain;
+        DWORD plainId = 0;
+        std::jthread unnamed([&] {
+            char buffer[32];
+            plain = QByteArray(buffer, xgs::diag::currentThreadNameUtf8(buffer, sizeof buffer));
+            plainId = GetCurrentThreadId();
+        });
+        unnamed.join();
+
+        QCOMPARE(whole, u"작업-1"_s.toUtf8());
+        QCOMPARE(cut, u"작"_s.toUtf8());
+        QVERIFY(terminated);
+        QCOMPARE(QString::fromUtf8(plain), u"t"_s + QString::number(plainId));
+    }
 };
 
 QTEST_GUILESS_MAIN(FileLoggerTest)
