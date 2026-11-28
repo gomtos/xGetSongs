@@ -32,6 +32,16 @@ add_library(xgscore STATIC
     lyrics/google/lyrics_fetcher.h lyrics/google/lyrics_fetcher.cpp
     lyrics/google/google_lyrics_provider.h lyrics/google/google_lyrics_provider.cpp
     log/log_redaction.h log/log_redaction.cpp
+    diag/log_sink.h diag/log_sink.cpp
+    diag/instant.h diag/instant.cpp
+    diag/file_logger.h diag/file_logger.cpp
+    diag/log_directory.h diag/log_directory.cpp
+    diag/run_marker.h diag/run_marker.cpp
+    diag/exit_record.h diag/exit_record.cpp
+    diag/hang_detector.h diag/hang_detector.cpp
+    diag/startup_record.h diag/startup_record.cpp
+    diag/job_log.h diag/job_log.cpp
+    diag/run_record.h diag/run_record.cpp
     model/models.h
     json/json.h json/json.cpp
     ytdlp/error_classifier.h ytdlp/error_classifier.cpp

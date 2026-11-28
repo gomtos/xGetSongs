@@ -136,3 +136,15 @@ foreach(test tst_main_window tst_playlists_dialog tst_single_instance)
     set_tests_properties(${test} PROPERTIES TIMEOUT 120)
 endforeach()
 target_compile_definitions(tst_main_window PRIVATE XGS_APP_VERSION="${PROJECT_VERSION}")
+
+# The diagnostics logic (xgscore, qt/core/diag): the log file, the log folder, the marker of the last run, the exit record, the hang
+# detector and the job log. The ports of the Kotlin diagnostics tests (see qt/tools/test-classes.json for what is left out and why)
+# and tst_file_logger (no Kotlin pair: logback does that in the Kotlin version). Nothing here touches the real %APPDATA%.
+foreach(test tst_file_logger tst_log_directory tst_sidecar_logging tst_startup_record tst_run_marker tst_run_record
+        tst_exit_record tst_hang_detector tst_hang_watchdog tst_job_log)
+    xgs_add_test(${test} ${test}.cpp)
+    target_include_directories(${test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endforeach()
+# The logger tests write many lines from several threads and hold files open; this ends a hang that is left well before Qt Test's
+# 300 s watchdog.
+set_tests_properties(tst_file_logger tst_run_record PROPERTIES TIMEOUT 120)

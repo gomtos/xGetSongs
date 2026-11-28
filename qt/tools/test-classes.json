@@ -304,4 +304,99 @@
       }
     ]
   }
+  ,
+  {
+    "kotlin": "diagnostics/src/test/kotlin/com/xgetsongs/diagnostics/DiagnosticsTest.kt",
+    "exe": ["tst_log_directory", "tst_startup_record", "tst_run_record"],
+    "added": [
+      "aTrailingSeparatorDoesNotDoubleTheBackslash", "noCandidateGivesNoFolderAndThrowsNothing", "theDefaultReportGoesToStderrAndNeverThrows",
+      "theLinesAreTheKotlinOnesWithQtOsAndProcessorLinesInsteadOfJavaAndHeap",
+      "startPreparesTheFolderAndLogsTheStartupRecord", "theStartDoesNotThrowWhenTheLogFolderCannotBeMade"
+    ],
+    "omitted": [
+      {"name": "theStartupRecordAsksForNothingBeyondTheListedProperties", "reason": "Java system properties: the Qt record takes plain values, there is nothing to ask for"},
+      {"name": "theLogsGoToALogFolderNextToTheApplicationThenTheAppDataFolderThenTemp", "reason": "the Qt candidates have no folder next to the application (appData\\logs, then the temp folder; the shell passes no --log-dir)"},
+      {"name": "theApplicationFolderIsWhereTheNativeLauncherIs", "reason": "applicationDirectory reads the jpackage property and the code source of the JVM: JVM only, and the Qt candidates have no application folder"},
+      {"name": "theApplicationFolderIsTheFolderOfTheJarWhenThereIsNoNativeLauncher", "reason": "applicationDirectory: JVM only (see theApplicationFolderIsWhereTheNativeLauncherIs)"},
+      {"name": "theApplicationFolderIsTheClassesFolderItselfWhenRunFromClasses", "reason": "applicationDirectory: JVM only (see theApplicationFolderIsWhereTheNativeLauncherIs)"},
+      {"name": "runFromASourceCheckoutTheApplicationFolderIsTheProjectRoot", "reason": "applicationDirectory: JVM only (see theApplicationFolderIsWhereTheNativeLauncherIs)"},
+      {"name": "theNativeLauncherWinsOverAProjectRootAbove", "reason": "applicationDirectory: JVM only (see theApplicationFolderIsWhereTheNativeLauncherIs)"},
+      {"name": "theApplicationFolderIsUnknownWhenNothingTellsIt", "reason": "applicationDirectory: JVM only (see theApplicationFolderIsWhereTheNativeLauncherIs)"},
+      {"name": "anUncaughtExceptionIsLoggedWithTheThreadNameAndPassedOn", "reason": "Thread.setDefaultUncaughtExceptionHandler and the stack text of a Throwable are JVM only; a crash in Qt is the exception filter and minidump of qt/app (Q5 Task 2)"},
+      {"name": "theMessageOfAnUncaughtExceptionLosesItsPaths", "reason": "stack text of a Throwable: JVM only (see anUncaughtExceptionIsLoggedWithTheThreadNameAndPassedOn)"},
+      {"name": "anExceptionWithoutAMessageIsJustItsClassName", "reason": "stack text of a Throwable: JVM only (see anUncaughtExceptionIsLoggedWithTheThreadNameAndPassedOn)"},
+      {"name": "aVeryDeepStackIsCutAndACauseCycleDoesNotLoopForever", "reason": "stack text of a Throwable: JVM only (see anUncaughtExceptionIsLoggedWithTheThreadNameAndPassedOn)"},
+      {"name": "theCallbackIsToldAboutEveryUncaughtException", "reason": "UncaughtLogger is the handler of the JVM; the Qt counterpart is RunRecord::noteUncaught, called by the exception filter of qt/app"},
+      {"name": "anUncaughtExceptionWithoutAPreviousHandlerIsJustLogged", "reason": "UncaughtLogger: JVM only (see theCallbackIsToldAboutEveryUncaughtException)"},
+      {"name": "aThrowingPreviousHandlerDoesNotLeakOutOfTheHandler", "reason": "UncaughtLogger: JVM only (see theCallbackIsToldAboutEveryUncaughtException)"},
+      {"name": "anErrorWhileWritingOutTheExceptionStillLogsAMinimalLineAndPassesItOn", "reason": "UncaughtLogger: JVM only (see theCallbackIsToldAboutEveryUncaughtException)"},
+      {"name": "anExceptionWhoseMessageThrowsAnErrorIsStillLoggedAndPassedOn", "reason": "UncaughtLogger: JVM only (see theCallbackIsToldAboutEveryUncaughtException)"},
+      {"name": "errorsFromTheCallbackAndFromThePreviousHandlerStayInsideTheHandler", "reason": "UncaughtLogger: JVM only (see theCallbackIsToldAboutEveryUncaughtException)"},
+      {"name": "startPreparesTheFolderLogsTheStartupRecordAndHooksTheExceptionHandler", "reason": "hooks Thread.setDefaultUncaughtExceptionHandler (JVM only); the folder and startup record part is the added startPreparesTheFolderAndLogsTheStartupRecord"},
+      {"name": "stopEndsTheWatchdogThread", "reason": "the watchdog thread belongs to qt/app (Q5 Task 2), which tests it there"}
+    ]
+  },
+  {
+    "kotlin": "diagnostics/src/test/kotlin/com/xgetsongs/diagnostics/ExitLoggerTest.kt",
+    "exe": "tst_exit_record",
+    "added": ["theJobCountSourceCanBeReplacedLaterAndIsMinusOneUntilThen", "theTextIsTheDescriptionOfTheRecordsOwnUserFlag", "withoutAMemorySourceTheRecordHasNoHeapFigure"],
+    "omitted": [
+      {"name": "registeringAddsExactlyOneHookThatRunsTheLoggingBody", "reason": "registers a Java shutdown hook thread: JVM only; the Qt app calls ExitRecord::logExit from the ends of the process"}
+    ]
+  },
+  {
+    "kotlin": "diagnostics/src/test/kotlin/com/xgetsongs/diagnostics/HangDetectorTest.kt",
+    "exe": "tst_hang_detector",
+    "added": []
+  },
+  {
+    "kotlin": "diagnostics/src/test/kotlin/com/xgetsongs/diagnostics/RunMarkerTest.kt",
+    "exe": "tst_run_marker",
+    "added": []
+  },
+  {
+    "kotlin": "diagnostics/src/test/kotlin/com/xgetsongs/diagnostics/HangWatchdogTest.kt",
+    "exe": "tst_hang_watchdog",
+    "added": [
+      "aFrozenThreadIsReportedOnceAndOnlyOneHeartbeatWaits", "theRecoveryIsReportedOnceWithTheWholeSilentTime",
+      "aHungCallbackThatThrowsDoesNotKillTheTickOrTheLaterReports", "aHeartbeatThatRunsAfterTheWatchdogIsGoneDoesNothing"
+    ],
+    "omitted": [
+      {"name": "aFrozenThreadGetsOneDumpFileAndOneErrorRecord", "reason": "the thread dump text and the hang-*.txt files do not exist in Qt (a minidump is written by qt/app, Q5 Task 2); the decision part is the added aFrozenThreadIsReportedOnceAndOnlyOneHeartbeatWaits"},
+      {"name": "theLogSaysWhenTheThreadAnswersAgain", "reason": "the hang and recovery lines are written by qt/app (Q5 Task 2); the decision part is the added theRecoveryIsReportedOnceWithTheWholeSilentTime"},
+      {"name": "aLastingHangAppendsAnotherSectionToTheSameFileEveryThirtySeconds", "reason": "dump file sections: no dump files in Qt (the repeat timing itself is tested by theRepeatsOfALongHangBackOff and HangDetectorTest)"},
+      {"name": "aNewHangAfterARecoveryGetsANewFile", "reason": "dump files: none in Qt"},
+      {"name": "onlyTheNewestTwentyDumpFilesAreKept", "reason": "dump files: none in Qt"},
+      {"name": "theNumberOfKeptFilesCanBeChosen", "reason": "dump files: none in Qt"},
+      {"name": "aFolderThatCannotBeWrittenStillGetsTheDumpInTheLog", "reason": "dump files: none in Qt"},
+      {"name": "aDumpThatCannotBeMadeStillLogsTheHangAndDoesNotKillTheTick", "reason": "the dump is the minidump of qt/app; the tick surviving a failing callback is the added aHungCallbackThatThrowsDoesNotKillTheTickOrTheLaterReports"},
+      {"name": "theThreadIsADaemonAndStopEndsIt", "reason": "the watchdog thread belongs to qt/app (Q5 Task 2), which tests it there"},
+      {"name": "startingTwiceIsRejectedAndStoppingWithoutAStartIsFine", "reason": "the watchdog thread belongs to qt/app (Q5 Task 2)"},
+      {"name": "aDumpThatFailsWithAnErrorDoesNotStopTheLaterTicks", "reason": "see aDumpThatCannotBeMadeStillLogsTheHangAndDoesNotKillTheTick (the added test covers a callback that throws and the later ticks)"},
+      {"name": "theThreadKeepsRunningAfterErrors", "reason": "the watchdog thread belongs to qt/app (Q5 Task 2)"},
+      {"name": "theDumpFileStopsGrowingAtTheSizeLimitWithOneNoticeAndTheLogGetsOneLines", "reason": "dump files: none in Qt"},
+      {"name": "theLimitIsInBytesNotCharacters", "reason": "dump files: none in Qt"},
+      {"name": "aFirstDumpBiggerThanTheLimitIsStillWritten", "reason": "dump files: none in Qt"},
+      {"name": "aNewHangAfterARecoveryHasAFreshFileAndAFreshLimit", "reason": "dump files: none in Qt"}
+    ]
+  },
+  {
+    "kotlin": "server/src/test/kotlin/com/xgetsongs/server/JobLogTest.kt",
+    "exe": "tst_job_log",
+    "added": [],
+    "omitted": [
+      {"name": "aJobLogsItsStartItsItemsAndItsSummary", "reason": "goes through the HTTP routes: the Qt app has none; the wiring of JobLog into EngineApi (and its test) is Q5 Task 2"},
+      {"name": "aSingleVideoIsLoggedAsAVideo", "reason": "through the HTTP routes (see aJobLogsItsStartItsItemsAndItsSummary)"},
+      {"name": "cancellingAJobIsLogged", "reason": "through the HTTP routes (see aJobLogsItsStartItsItemsAndItsSummary)"},
+      {"name": "cancellingAnUnknownJobLogsNothingAboutAJob", "reason": "through the HTTP routes (see aJobLogsItsStartItsItemsAndItsSummary)"}
+    ]
+  },
+  {
+    "kotlin": "server/src/test/kotlin/com/xgetsongs/server/sidecar/SidecarLoggingTest.kt",
+    "exe": "tst_sidecar_logging",
+    "added": [],
+    "omitted": [
+      {"name": "theFolderTheShellAskedForComesFirstThenTheAppDataFolderThenTheTempFolder", "reason": "the Tauri shell passes no --log-dir, so the Qt candidates have no folder from the shell"}
+    ]
+  }
 ]
