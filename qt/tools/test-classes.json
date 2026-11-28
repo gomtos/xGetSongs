@@ -383,7 +383,7 @@
   {
     "kotlin": "server/src/test/kotlin/com/xgetsongs/server/JobLogTest.kt",
     "exe": ["tst_job_log", "tst_engine_api"],
-    "added": ["aStopIsNoDroppedEventStreamButAnEarlyEndIs",
+    "added": ["aStopIsNoDroppedEventStreamButAnEarlyEndIs", "aFailureReasonLosesTheFileNameItsItemStartedWith",
               "eventsArriveOnTheCallingThreadInOrder", "anAnswerAfterStopIsDropped", "toolInstallIsRefusedWhileAJobRuns",
               "closingWhileAJobRunsEndsEverything", "aCancelRightAfterTheLastItemStillEndsWithJobDone",
               "destroyingTheApiWhileAJobRunsEndsEverything", "theDownloadRequestIsBuiltLikeTheServerBuiltIt",

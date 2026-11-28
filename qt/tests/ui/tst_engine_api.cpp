@@ -569,6 +569,39 @@ private slots:
         QCOMPARE(records.back().message, tag + u" 작업 종료: 상태=COMPLETED, 성공 1, 건너뜀 0, 실패 1"_s);
     }
 
+    void aFailureReasonLosesTheFileNameItsItemStartedWith() {
+        // Kotlin's noLogLineHoldsATitleAFileNameOrTheToken went through the routes, whose reader kept the rank -> file name map;
+        // here the bridge's reader keeps it. The bare name (no path around it) is only caught through that map.
+        Engine engine;
+        engine.downloads.script = [](JobEvents& events, std::stop_token) {
+            events.push(xgs::ItemStarted{1, u"vid00000001"_s, u"TITLE-MARKER-ONE.m4a"_s});
+            events.push(xgs::ItemDone{1, u"TITLE-MARKER-ONE.m4a"_s, xgs::LyricsOutcome::Description});
+            events.push(xgs::ItemStarted{3, u"vid00000003"_s, u"TITLE-MARKER-THREE.m4a"_s});
+            events.push(xgs::ItemFailed{3, u"FileSystemException: C:\\Users\\Some User\\Music\\TITLE-MARKER-THREE.m4a -> "
+                                           u"D:\\Out\\TITLE-MARKER-THREE.m4a: Access is denied while writing title-marker-three.m4a"_s});
+            events.push(JobDone{JobStatus::Completed, JobSummary{1, 0, 1}});
+        };
+        Seen seen;
+        engine.api->startJob(requestInto(engine.dir), recorder(seen));
+        QTRY_VERIFY_WITH_TIMEOUT(seen.ended, kLimitMs);
+
+        const auto records = engine.jobs();
+        QVERIFY(!records.empty());
+        QStringList everything;
+        for (const auto& record : records) everything << record.message;
+        const QString all = everything.join(u'\n');
+        QVERIFY2(!all.contains(u"TITLE-MARKER"_s), qPrintable(all));
+        QVERIFY2(!all.contains(u"title-marker"_s), qPrintable(all));
+        QVERIFY2(!all.contains(u"Some User"_s), qPrintable(all));
+        QStringList warned;
+        for (const auto& record : records) {
+            if (record.level == xgs::diag::Level::Warn) warned << record.message;
+        }
+        QCOMPARE(warned.size(), 1);
+        QVERIFY2(warned.first().endsWith(u"항목 실패: 순위 3, 사유: FileSystemException: <경로> -> <경로>: Access is denied while writing <파일명>"_s),
+                 qPrintable(warned.first()));
+    }
+
     void aSingleVideoIsLoggedAsAVideo() {
         Engine engine;
         engine.downloads.script = [](JobEvents& events, std::stop_token stop) {

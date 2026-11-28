@@ -21,9 +21,9 @@ class FileLogger;
 // logger's. So everything is prepared when the handlers are installed: the dump file is opened, the dump is written by a thread of
 // its own that only waits (so a stack overflow still has a stack to write it with), and the line goes to the log by one WriteFile on
 // the logger's file handle (FileLogger::writeRaw), formatted into a static buffer. The crashed thread only fills in a few numbers,
-// wakes the writer, waits for it (at most 60 s) and ends the process. After the dump the process ends at once with the exception's
-// code (the SEH filter returns EXCEPTION_EXECUTE_HANDLER; the other paths call TerminateProcess): Windows' error reporting is not
-// asked, so no error box appears and no report is sent anywhere.
+// wakes the writer, waits for it (at most 60 s) and ends the process. After the dump every path, the SEH filter included, ends the
+// process at once with TerminateProcess and the exception's code (the filter never returns): Windows' error reporting is not asked,
+// so no error box appears and no report is sent anywhere.
 namespace xgs::app {
 
 /// The dump file names, in the log folder. They do not match the names FileLogger rolls or deletes (`xgetsongs.log`,

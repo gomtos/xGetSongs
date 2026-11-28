@@ -6,6 +6,7 @@
 #include <QMetaObject>
 #include <QObject>
 #include <QSysInfo>
+#include <QTimer>
 
 #include <windows.h>
 
@@ -37,7 +38,7 @@ const QString HangLoggerName = QString::fromUtf16(diag::HangWatchdog::LoggerName
 // ---- Qt's messages -------------------------------------------------------------------------------------------------------------
 
 std::atomic<diag::FileLogger*> g_messageLogger{nullptr};
-QtMessageHandler g_previousHandler = nullptr;
+std::atomic<QtMessageHandler> g_previousHandler{nullptr};   // read on any thread, written on the GUI thread
 
 diag::Level levelOf(QtMsgType type) {
     switch (type) {
@@ -65,7 +66,7 @@ void onQtMessage(QtMsgType type, const QMessageLogContext& context, const QStrin
             // A message that cannot be written is lost; the app goes on.
         }
     }
-    if (g_previousHandler != nullptr) g_previousHandler(type, context, message);
+    if (const QtMessageHandler previous = g_previousHandler.load()) previous(type, context, message);
 }
 
 /// The Windows messages of the end of the session, from every top-level Qt window.
@@ -114,51 +115,15 @@ struct Diagnostics::State {
     std::atomic<unsigned long> watchThreadId{0};
 };
 
-std::unique_ptr<Diagnostics> Diagnostics::start(const AppPaths& paths, DiagnosticsOptions options) noexcept {
-    std::unique_ptr<Diagnostics> diagnostics;
+namespace {
+
+/// Makes the watchdog (its clock starts now, so the time before counts for nothing) and its thread: a beat posted to the GUI thread
+/// once a second (HangWatchdog: only when the last one has run). On the GUI thread; nothing when the watch was stopped already
+/// (no Watch) or runs.
+void beginWatch(Diagnostics::State& s) noexcept {
     try {
-        auto state = std::make_unique<State>();
-        State& s = *state;
-        s.options = std::move(options);
-        diagnostics.reset(new Diagnostics(std::move(state)));
-        diag::setCurrentThreadName(u"main"_s);
-
-        const QString temp = s.options.tempDir.isEmpty() ? QDir::tempPath() : s.options.tempDir;
-        s.logDir = diag::chooseLogDirectory(diag::logDirectoryCandidates(paths.appData, QDir::toNativeSeparators(temp)));
-        s.logger = new diag::FileLogger();
-        s.logger->open(s.logDir);
-        diag::FileLogger* const logger = s.logger;
-        s.sink = [logger](diag::Level level, const QString& name, const QString& message) {
-            logger->write(level, diag::currentThreadName(), name, message);
-        };
-
-        if (s.options.messageHandler) {
-            g_messageLogger.store(logger);
-            g_previousHandler = qInstallMessageHandler(onQtMessage);
-            s.messageHandler = true;
-        }
-        if (s.options.crashHandler) s.crash = std::make_unique<CrashHandler>(s.logDir, logger);
-
-        diag::StartupInfo info;
-        const QString version = QCoreApplication::applicationVersion();
-        if (!version.isEmpty()) info.appVersion = version;
-        info.qtVersion = QString::fromLatin1(qVersion());
-        info.osName = QSysInfo::prettyProductName();
-        info.osVersion = QSysInfo::kernelVersion();
-        info.osArchitecture = QSysInfo::currentCpuArchitecture();
-        info.processors = static_cast<int>(std::thread::hardware_concurrency());
-        info.workingDir = QDir::toNativeSeparators(QDir::currentPath());
-        info.logDir = s.logDir;
-        s.record = std::make_unique<diag::RunRecord>(s.logDir, s.sink, s.processes, diag::startupRecord(info));
-
-        if (QCoreApplication::instance() != nullptr) {
-            s.filter = std::make_unique<SessionFilter>(*diagnostics);
-            QCoreApplication::instance()->installNativeEventFilter(s.filter.get());
-        }
-
-        // The hang watch: a beat posted to the GUI thread once a second (HangWatchdog: only when the last one has run).
-        auto watch = std::make_shared<Watch>();
-        watch->target = new QObject();
+        const std::shared_ptr<Watch> watch = s.watch;
+        if (!watch || watch->dog || s.watchThread.joinable()) return;
         QObject* const target = watch->target;
         const QString dumpPath = s.logDir + u'\\' + HangDumpFileName;
         const diag::LogSink sink = s.sink;
@@ -181,7 +146,6 @@ std::unique_ptr<Diagnostics> Diagnostics::start(const AppPaths& paths, Diagnosti
         watch->dog->setOnRecovered([sink](const diag::Recovered& recovered) {
             sink(diag::Level::Warn, HangLoggerName, u"화면 스레드 응답 회복 (총 "_s + QString::number(recovered.totalMs / 1'000) + u"초)"_s);
         });
-        s.watch = watch;
         const auto interval = std::chrono::milliseconds(s.options.hangIntervalMs);
         s.watchThread = std::jthread([watch, interval](std::stop_token stop) {
             diag::setCurrentThreadName(u"xgs-hang-watchdog"_s);
@@ -195,6 +159,66 @@ std::unique_ptr<Diagnostics> Diagnostics::start(const AppPaths& paths, Diagnosti
         });
         s.watchThreadId = GetThreadId(s.watchThread.native_handle());
     } catch (...) {
+        // No hang watch; the app runs without one.
+    }
+}
+
+}  // namespace
+
+std::unique_ptr<Diagnostics> Diagnostics::start(const AppPaths& paths, DiagnosticsOptions options) noexcept {
+    std::unique_ptr<Diagnostics> diagnostics;
+    try {
+        auto state = std::make_unique<State>();
+        State& s = *state;
+        s.options = std::move(options);
+        diagnostics.reset(new Diagnostics(std::move(state)));
+        diag::setCurrentThreadName(u"main"_s);
+
+        const QString temp = s.options.tempDir.isEmpty() ? QDir::tempPath() : s.options.tempDir;
+        s.logDir = diag::chooseLogDirectory(diag::logDirectoryCandidates(paths.appData, QDir::toNativeSeparators(temp)));
+        s.logger = new diag::FileLogger();
+        s.logger->open(s.logDir);
+        diag::FileLogger* const logger = s.logger;
+        s.sink = [logger](diag::Level level, const QString& name, const QString& message) {
+            logger->write(level, diag::currentThreadName(), name, message);
+        };
+
+        if (s.options.messageHandler) {
+            g_messageLogger.store(logger);
+            g_previousHandler.store(qInstallMessageHandler(onQtMessage));
+            s.messageHandler = true;
+        }
+        if (s.options.crashHandler) s.crash = std::make_unique<CrashHandler>(s.logDir, logger);
+
+        diag::StartupInfo info;
+        const QString version = QCoreApplication::applicationVersion();
+        if (!version.isEmpty()) info.appVersion = version;
+        info.qtVersion = QString::fromLatin1(qVersion());
+        info.osName = QSysInfo::prettyProductName();
+        info.osVersion = QSysInfo::kernelVersion();
+        info.osArchitecture = QSysInfo::currentCpuArchitecture();
+        info.processors = static_cast<int>(std::thread::hardware_concurrency());
+        info.workingDir = QDir::toNativeSeparators(QDir::currentPath());
+        info.logDir = s.logDir;
+        s.record = std::make_unique<diag::RunRecord>(s.logDir, s.sink, s.processes, diag::startupRecord(info));
+
+        if (QCoreApplication::instance() != nullptr) {
+            s.filter = std::make_unique<SessionFilter>(*diagnostics);
+            QCoreApplication::instance()->installNativeEventFilter(s.filter.get());
+        }
+
+        // The hang watch begins when the event loop runs (a zero timer, which only an event loop fires): main's work before
+        // app.exec() (the work folder, the window) is not a hang. Without an application it begins at once.
+        auto watch = std::make_shared<Watch>();
+        watch->target = new QObject();
+        s.watch = watch;
+        State* const raw = &s;
+        if (QCoreApplication::instance() != nullptr) {
+            QTimer::singleShot(0, watch->target, [raw] { beginWatch(*raw); });
+        } else {
+            beginWatch(s);
+        }
+    } catch (...) {
         // What was made so far stays (a log without a hang watch, say); the app runs either way.
     }
     return diagnostics;
@@ -207,7 +231,7 @@ Diagnostics::~Diagnostics() {
     stopWatching();
     if (s.filter && QCoreApplication::instance() != nullptr) QCoreApplication::instance()->removeNativeEventFilter(s.filter.get());
     if (s.messageHandler) {
-        qInstallMessageHandler(g_previousHandler);
+        qInstallMessageHandler(g_previousHandler.load());
         diag::FileLogger* expected = s.logger;
         g_messageLogger.compare_exchange_strong(expected, nullptr);
     }
@@ -234,7 +258,12 @@ void Diagnostics::markUserExit() {
 
 void Diagnostics::stopWatching() noexcept {
     State& s = *m_state;
-    if (!s.watchThread.joinable()) return;
+    if (!s.watchThread.joinable()) {
+        // Not begun yet (the event loop has not run): the target goes, and the zero timer that would begin it with it.
+        if (s.watch) delete s.watch->target;
+        s.watch.reset();
+        return;
+    }
     s.watchThread.request_stop();
     if (WaitForSingleObject(s.watchThread.native_handle(), WatchJoinMs) == WAIT_OBJECT_0) {
         s.watchThread.join();

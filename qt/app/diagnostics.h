@@ -31,7 +31,8 @@ class Diagnostics final {
 public:
     /// Chooses the log folder (`<appData>\logs`, else `<temp>\xgetsongs-logs`), opens the log file, sends Qt's messages to it (their
     /// paths removed), installs the crash handlers, writes the startup record, says what the marker of the last run says, writes
-    /// this run's marker and starts the hang watch. Call it on the GUI thread, which it names `main`. nullptr only when not even
+    /// this run's marker and sets up the hang watch, which begins once the event loop runs (a zero timer: the startup work before
+    /// app.exec() is not a hang). Call it on the GUI thread, which it names `main`. nullptr only when not even
     /// that could be made (no memory); every other failure (a folder or file that cannot be written) leaves an app that runs.
     static std::unique_ptr<Diagnostics> start(const AppPaths& paths, DiagnosticsOptions options = {}) noexcept;
     /// stopWatching, puts Qt's previous message handler and the previous crash handlers back, closes the log file.
@@ -51,6 +52,7 @@ public:
     /// Ends the hang watch and joins its thread (bounded: a dump that never ends is left behind after 2 s). main calls it as soon
     /// as the event loop has ended, so the teardown that follows (up to about 1.5 s for a job) is never taken for a hang.
     void stopWatching() noexcept;
+    /// True while the hang watch thread runs (not before the event loop has run once, not after stopWatching).
     bool watching() const;
     /// The Windows id of the hang watch thread while it runs (0 when there is none), for a test.
     unsigned long watchThreadId() const;

@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QLoggingCategory>
 #include <QProcess>
@@ -67,6 +68,15 @@ bool isMiniDump(const QString& path) {
 /// Blocks the GUI thread (the test's) without letting it run any event.
 void stall(std::chrono::milliseconds time) {
     std::this_thread::sleep_for(time);
+}
+
+/// The watch begins once the event loop runs (a zero timer posted at the start): the loop is spun until it has (10 s at most, a
+/// safety net only).
+bool waitUntilWatching(Diagnostics& diagnostics) {
+    QElapsedTimer clock;
+    clock.start();
+    while (!diagnostics.watching() && clock.elapsed() < 10'000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    return diagnostics.watching();
 }
 
 bool threadHasEnded(unsigned long id) {
@@ -261,7 +271,7 @@ private slots:
 
     void aStalledGuiThreadIsRecordedOnceWithOneDump() {
         auto diagnostics = Diagnostics::start(m_paths, quickWatch());
-        QVERIFY(diagnostics->watching());
+        QVERIFY(waitUntilWatching(*diagnostics));
 
         stall(1'500ms);
         // The beat runs again; the watch says so within a few ticks.
@@ -284,6 +294,7 @@ private slots:
         // A dialog's exec runs an event loop of its own: the beats are delivered there. (A native file dialog runs the Windows
         // modal loop, which dispatches the message that makes Qt deliver posted calls; that one is not shown in a test.)
         auto diagnostics = Diagnostics::start(m_paths, quickWatch());
+        QVERIFY(waitUntilWatching(*diagnostics));
         QDialog dialog;
         QTimer::singleShot(1'500, &dialog, &QDialog::accept);
         dialog.exec();
@@ -298,6 +309,7 @@ private slots:
     void afterStopWatchingABlockedGuiThreadIsNoHang() {
         // main stops the watch when the event loop ends: the teardown (up to about 1.5 s for a job) is not a hang.
         auto diagnostics = Diagnostics::start(m_paths, quickWatch());
+        QVERIFY(waitUntilWatching(*diagnostics));
         diagnostics->stopWatching();
         QVERIFY(!diagnostics->watching());
         stall(1'200ms);
@@ -307,8 +319,30 @@ private slots:
         QVERIFY(!QFile::exists(logDir() + u"\\xgetsongs-hang.dmp"_s));
     }
 
+    void aSlowStartBeforeTheEventLoopIsNoHang() {
+        // main does its startup work (the work folder, the window) between the start of the diagnostics and app.exec(): the watch
+        // begins with the event loop, so that time is not a hang.
+        auto diagnostics = Diagnostics::start(m_paths, quickWatch());
+        stall(1'200ms);   // three times the test threshold, before any event has run
+        QVERIFY(waitUntilWatching(*diagnostics));
+        QTest::qWait(600);   // a dozen ticks of a running loop
+        diagnostics->stopWatching();
+        QCOMPARE(containing(lines(logFile()), u"xgs.hang"_s).size(), 0);
+        QVERIFY(!QFile::exists(logDir() + u"\\xgetsongs-hang.dmp"_s));
+    }
+
+    void aWatchThatNeverBeganStopsCleanly() {
+        auto diagnostics = Diagnostics::start(m_paths, quickWatch());
+        QVERIFY(!diagnostics->watching());
+        diagnostics->stopWatching();
+        QTest::qWait(200);   // the zero timer would have run here: it went with the stop
+        QVERIFY(!diagnostics->watching());
+        QCOMPARE(diagnostics->watchThreadId(), 0UL);
+    }
+
     void stoppingTheWatchEndsItsThread() {
         auto diagnostics = Diagnostics::start(m_paths, quickWatch());
+        QVERIFY(waitUntilWatching(*diagnostics));
         const unsigned long id = diagnostics->watchThreadId();
         QVERIFY(id != 0);
         QVERIFY(!threadHasEnded(id));
@@ -318,6 +352,7 @@ private slots:
         diagnostics->stopWatching();   // twice is fine
 
         auto again = Diagnostics::start(m_paths, quickWatch());
+        QVERIFY(waitUntilWatching(*again));
         const unsigned long second = again->watchThreadId();
         again.reset();
         QVERIFY2(threadHasEnded(second), "the destructor stops the watch too");
@@ -429,6 +464,8 @@ private slots:
         QVERIFY(kept.open(QIODevice::WriteOnly));
         kept.close();
         QProcess mklink;
+        mklink.setCreateProcessArgumentsModifier(
+            [](QProcess::CreateProcessArguments* arguments) { arguments->flags |= CREATE_NO_WINDOW; });
         mklink.start(u"cmd.exe"_s, {u"/c"_s, u"mklink"_s, u"/J"_s, work + u"\\link"_s, outside});
         QVERIFY(mklink.waitForFinished(10'000));
         QCOMPARE(mklink.exitCode(), 0);
